@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
+import '../providers/theme_provider.dart';
 import '../widgets/add_task_dialog.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/random_result_dialog.dart';
@@ -338,6 +339,17 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       icon: const Icon(Icons.arrow_back),
                       onPressed: () => provider.navigateBack(),
                     ),
+              actions: [
+                Consumer<ThemeProvider>(
+                  builder: (context, themeProvider, _) {
+                    return IconButton(
+                      icon: Icon(themeProvider.icon),
+                      onPressed: themeProvider.toggle,
+                      tooltip: 'Toggle theme',
+                    );
+                  },
+                ),
+              ],
             ),
             body: Column(
               children: [

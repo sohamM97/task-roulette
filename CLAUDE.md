@@ -41,6 +41,8 @@ flutter run -d linux
 
 The goal of this app is **minimal cognitive load**. The user wants a quick place to note down pending tasks in a structured way — but too much hierarchy/linking complexity can become a distraction from the actual tasks. Every feature should reduce friction, not add it. When making design decisions, always ask: "Does this make the user think less or more?"
 
+**Too many choices = cognitive overload.** Don't present the user with options they don't need. Prefer sensible defaults over configuration. If a feature requires the user to make decisions unrelated to their tasks, it's adding friction.
+
 ## UI Conventions
 
 - Do NOT use the word "parent" in any user-facing text. This is a task organizer, not a family tree. Use natural alternatives like "listed under", "show under", etc.
@@ -49,7 +51,7 @@ The goal of this app is **minimal cognitive load**. The user wants a quick place
 
 ## Development Preferences
 
-- Ask user about committing and pushing occasionally — don't wait until asked.
+- Ask user about committing and pushing occasionally — don't wait until asked. But first remind them to review the changes and test before committing.
 - When setup instructions change (new deps, build steps), ask user if they want to update README.
 - Capture any user-mentioned future work items as todo tasks immediately.
 - Keep a persistent TODO list in the Claude memory directory.
