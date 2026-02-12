@@ -90,6 +90,58 @@ class DatabaseHelper {
     return maps.map((m) => Task.fromMap(m)).toList();
   }
 
+  Future<List<Task>> getAllTasks() async {
+    final db = await database;
+    final maps = await db.query('tasks', orderBy: 'created_at ASC');
+    return maps.map((m) => Task.fromMap(m)).toList();
+  }
+
+  /// Returns true if [toId] is reachable from [fromId] via parent→child edges.
+  Future<bool> hasPath(int fromId, int toId) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      WITH RECURSIVE descendants(id) AS (
+        SELECT child_id FROM task_relationships WHERE parent_id = ?
+        UNION
+        SELECT tr.child_id FROM task_relationships tr
+        INNER JOIN descendants d ON tr.parent_id = d.id
+      )
+      SELECT 1 FROM descendants WHERE id = ? LIMIT 1
+    ''', [fromId, toId]);
+    return result.isNotEmpty;
+  }
+
+  Future<List<int>> getParentIds(int childId) async {
+    final db = await database;
+    final maps = await db.query(
+      'task_relationships',
+      columns: ['parent_id'],
+      where: 'child_id = ?',
+      whereArgs: [childId],
+    );
+    return maps.map((m) => m['parent_id'] as int).toList();
+  }
+
+  Future<List<int>> getChildIds(int parentId) async {
+    final db = await database;
+    final maps = await db.query(
+      'task_relationships',
+      columns: ['child_id'],
+      where: 'parent_id = ?',
+      whereArgs: [parentId],
+    );
+    return maps.map((m) => m['child_id'] as int).toList();
+  }
+
+  Future<void> removeRelationship(int parentId, int childId) async {
+    final db = await database;
+    await db.delete(
+      'task_relationships',
+      where: 'parent_id = ? AND child_id = ?',
+      whereArgs: [parentId, childId],
+    );
+  }
+
   Future<void> deleteTask(int taskId) async {
     final db = await database;
     await db.delete('task_relationships',

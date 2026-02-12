@@ -29,7 +29,7 @@ class RandomResultDialog extends StatelessWidget {
         if (hasChildren)
           OutlinedButton.icon(
             onPressed: () => Navigator.pop(context, RandomResultAction.goDeeper),
-            icon: const Icon(Icons.casino),
+            icon: const Icon(Icons.shuffle),
             label: const Text('Go Deeper'),
           ),
         FilledButton.icon(

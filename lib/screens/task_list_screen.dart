@@ -6,6 +6,7 @@ import '../widgets/add_task_dialog.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/random_result_dialog.dart';
 import '../widgets/task_card.dart';
+import '../widgets/task_picker_dialog.dart';
 
 class TaskListScreen extends StatefulWidget {
   const TaskListScreen({super.key});
@@ -29,6 +30,144 @@ class _TaskListScreenState extends State<TaskListScreen> {
     if (name != null && mounted) {
       await context.read<TaskProvider>().addTask(name);
     }
+  }
+
+  void _showFabOptions() {
+    final provider = context.read<TaskProvider>();
+    if (provider.isRoot) {
+      _addTask();
+      return;
+    }
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.add),
+                title: const Text('Create new task'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _addTask();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.link),
+                title: const Text('Link existing task here'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _linkExistingTask();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _linkExistingTask() async {
+    final provider = context.read<TaskProvider>();
+    final currentParent = provider.currentParent;
+    if (currentParent == null) return;
+
+    final allTasks = await provider.getAllTasks();
+    final existingChildIds = await provider.getChildIds(currentParent.id!);
+    final existingChildIdSet = existingChildIds.toSet();
+
+    // Filter out: the current task itself, its existing children
+    final candidates = allTasks.where((t) {
+      if (t.id == currentParent.id) return false;
+      if (existingChildIdSet.contains(t.id)) return false;
+      return true;
+    }).toList();
+
+    if (!mounted) return;
+
+    final selected = await showDialog<Task>(
+      context: context,
+      builder: (_) => TaskPickerDialog(
+        candidates: candidates,
+        title: 'Link task under "${currentParent.name}"',
+      ),
+    );
+
+    if (selected == null || !mounted) return;
+
+    final success = await provider.linkChildToCurrent(selected.id!);
+    if (!success && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cannot link: would create a cycle')),
+      );
+    }
+  }
+
+  Future<void> _addParentToTask(Task task) async {
+    final provider = context.read<TaskProvider>();
+
+    final allTasks = await provider.getAllTasks();
+    final existingParentIds = await provider.getParentIds(task.id!);
+    final existingParentIdSet = existingParentIds.toSet();
+
+    // Filter out: the task itself, its existing parents
+    final candidates = allTasks.where((t) {
+      if (t.id == task.id) return false;
+      if (existingParentIdSet.contains(t.id)) return false;
+      return true;
+    }).toList();
+
+    if (!mounted) return;
+
+    final selected = await showDialog<Task>(
+      context: context,
+      builder: (_) => TaskPickerDialog(
+        candidates: candidates,
+        title: 'Also show "${task.name}" under...',
+      ),
+    );
+
+    if (selected == null || !mounted) return;
+
+    final success = await provider.addParentToTask(task.id!, selected.id!);
+    if (!success && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cannot link: would create a cycle')),
+      );
+    }
+  }
+
+  Future<void> _unlinkTask(Task task) async {
+    final provider = context.read<TaskProvider>();
+    final parentIds = await provider.getParentIds(task.id!);
+
+    if (parentIds.length <= 1) {
+      if (!mounted) return;
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Move to top level?'),
+          content: Text(
+            '"${task.name}" is only listed here. '
+            'Removing it will move it to the top level.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Move to top level'),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true || !mounted) return;
+    }
+
+    await provider.unlinkFromCurrentParent(task.id!);
   }
 
   Future<void> _pickRandom() async {
@@ -76,6 +215,61 @@ class _TaskListScreenState extends State<TaskListScreen> {
     }
   }
 
+  Widget _buildBreadcrumb(TaskProvider provider) {
+    final crumbs = provider.breadcrumb;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(128),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        reverse: true,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (int i = 0; i < crumbs.length; i++) ...[
+              if (i > 0)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Icon(
+                    Icons.chevron_right,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              if (i < crumbs.length - 1)
+                InkWell(
+                  borderRadius: BorderRadius.circular(4),
+                  onTap: () => provider.navigateToLevel(i),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Text(
+                      crumbs[i] == null ? 'TaskRoulette' : crumbs[i]!.name,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Text(
+                    crumbs[i]!.name,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   int _crossAxisCount(double width) {
     if (width >= 900) return 3;
     if (width >= 600) return 2;
@@ -112,51 +306,60 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       onPressed: () => provider.navigateBack(),
                     ),
             ),
-            body: provider.tasks.isEmpty
-                ? EmptyState(isRoot: provider.isRoot)
-                : LayoutBuilder(
+            body: Column(
+              children: [
+                if (!provider.isRoot)
+                  _buildBreadcrumb(provider),
+                Expanded(
+                  child: provider.tasks.isEmpty
+                    ? EmptyState(isRoot: provider.isRoot)
+                    : LayoutBuilder(
                     builder: (context, constraints) {
                       final columns = _crossAxisCount(constraints.maxWidth);
-                      return Column(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-                            child: FilledButton.tonalIcon(
-                              onPressed: _pickRandom,
-                              icon: const Icon(Icons.casino),
-                              label: const Text('Pick Random'),
-                              style: FilledButton.styleFrom(
-                                minimumSize: const Size(double.infinity, 48),
-                              ),
-                            ),
-                          ),
-                          Expanded(
-                            child: GridView.builder(
-                              padding: const EdgeInsets.all(8),
-                              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: columns,
-                                childAspectRatio: _childAspectRatio(columns),
-                                crossAxisSpacing: 8,
-                                mainAxisSpacing: 8,
-                              ),
-                              itemCount: provider.tasks.length,
-                              itemBuilder: (context, index) {
-                                final task = provider.tasks[index];
-                                return TaskCard(
-                                  task: task,
-                                  onTap: () => provider.navigateInto(task),
-                                  onDelete: () => provider.deleteTask(task.id!),
-                                );
-                              },
-                            ),
-                          ),
-                        ],
+                      return GridView.builder(
+                        padding: const EdgeInsets.all(8),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          childAspectRatio: _childAspectRatio(columns),
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                        ),
+                        itemCount: provider.tasks.length,
+                        itemBuilder: (context, index) {
+                          final task = provider.tasks[index];
+                          return TaskCard(
+                            task: task,
+                            onTap: () => provider.navigateInto(task),
+                            onDelete: () => provider.deleteTask(task.id!),
+                            onAddParent: () => _addParentToTask(task),
+                            onUnlink: provider.isRoot
+                                ? null
+                                : () => _unlinkTask(task),
+                          );
+                        },
                       );
                     },
                   ),
-            floatingActionButton: FloatingActionButton(
-              onPressed: _addTask,
-              child: const Icon(Icons.add),
+                ),
+              ],
+            ),
+            floatingActionButton: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (provider.tasks.isNotEmpty)
+                  FloatingActionButton(
+                    heroTag: 'pickRandom',
+                    onPressed: _pickRandom,
+                    child: const Icon(Icons.shuffle),
+                  ),
+                if (provider.tasks.isNotEmpty)
+                  const SizedBox(height: 12),
+                FloatingActionButton(
+                  heroTag: 'addTask',
+                  onPressed: _showFabOptions,
+                  child: const Icon(Icons.add),
+                ),
+              ],
             ),
           );
         },
