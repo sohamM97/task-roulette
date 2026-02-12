@@ -1,9 +1,16 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'providers/task_provider.dart';
 import 'screens/task_list_screen.dart';
 
 void main() {
+  if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
   runApp(const TaskRouletteApp());
 }
 
