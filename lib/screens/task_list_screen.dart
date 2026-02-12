@@ -223,6 +223,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
             provider.restoreTask(deleted.task, deleted.parentIds, deleted.childIds);
           },
         ),
+        showCloseIcon: true,
         duration: const Duration(seconds: 5),
       ),
     );
@@ -244,6 +245,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
             provider.uncompleteTask(task.id!);
           },
         ),
+        showCloseIcon: true,
         duration: const Duration(seconds: 5),
       ),
     );
