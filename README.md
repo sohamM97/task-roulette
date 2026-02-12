@@ -2,6 +2,8 @@
 
 A DAG-based task manager built with Flutter. Tasks can have multiple parents and children, forming a directed acyclic graph. Navigate the hierarchy and randomly pick a task at any level.
 
+> **Note:** This app was vibe-coded — planned and ideated by a human, implemented with AI assistance.
+
 ## Features
 
 - Hierarchical task management (DAG structure)
@@ -32,6 +34,8 @@ flutter pub get
 flutter run -d linux
 ```
 
+While the app is running, press `r` in the terminal for **hot reload** (applies code changes, preserves app state) or `R` for **hot restart** (applies changes and resets state). No need to stop and relaunch.
+
 ## Project Structure
 
 ```
@@ -47,7 +51,8 @@ lib/
 ├── screens/
 │   └── task_list_screen.dart # Main screen
 └── widgets/
-    ├── task_item.dart        # Task row (tap to navigate, swipe to delete)
+    ├── task_card.dart        # Task grid card (tap to navigate, long-press to delete)
+    ├── empty_state.dart      # Empty state placeholder
     ├── add_task_dialog.dart  # New task dialog
     └── random_result_dialog.dart # Random pick result
 ```

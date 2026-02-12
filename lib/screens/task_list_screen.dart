@@ -3,8 +3,9 @@ import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../widgets/add_task_dialog.dart';
+import '../widgets/empty_state.dart';
 import '../widgets/random_result_dialog.dart';
-import '../widgets/task_item.dart';
+import '../widgets/task_card.dart';
 
 class TaskListScreen extends StatefulWidget {
   const TaskListScreen({super.key});
@@ -75,6 +76,17 @@ class _TaskListScreenState extends State<TaskListScreen> {
     }
   }
 
+  int _crossAxisCount(double width) {
+    if (width >= 900) return 3;
+    if (width >= 600) return 2;
+    return 1;
+  }
+
+  double _childAspectRatio(int columns) {
+    if (columns == 1) return 3.0;
+    return 1.0;
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -100,47 +112,48 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       onPressed: () => provider.navigateBack(),
                     ),
             ),
-            body: Column(
-              children: [
-                if (provider.tasks.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: FilledButton.icon(
-                      onPressed: _pickRandom,
-                      icon: const Icon(Icons.casino),
-                      label: const Text('Pick Random'),
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 56),
-                      ),
-                    ),
-                  ),
-                Expanded(
-                  child: provider.tasks.isEmpty
-                      ? Center(
-                          child: Text(
-                            provider.isRoot
-                                ? 'No tasks yet.\nTap + to add one!'
-                                : 'No subtasks yet.\nTap + to add one!',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                ),
+            body: provider.tasks.isEmpty
+                ? EmptyState(isRoot: provider.isRoot)
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      final columns = _crossAxisCount(constraints.maxWidth);
+                      return Column(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                            child: FilledButton.tonalIcon(
+                              onPressed: _pickRandom,
+                              icon: const Icon(Icons.casino),
+                              label: const Text('Pick Random'),
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size(double.infinity, 48),
+                              ),
+                            ),
                           ),
-                        )
-                      : ListView.builder(
-                          itemCount: provider.tasks.length,
-                          itemBuilder: (context, index) {
-                            final task = provider.tasks[index];
-                            return TaskItem(
-                              task: task,
-                              onTap: () => provider.navigateInto(task),
-                              onDelete: () => provider.deleteTask(task.id!),
-                            );
-                          },
-                        ),
-                ),
-              ],
-            ),
+                          Expanded(
+                            child: GridView.builder(
+                              padding: const EdgeInsets.all(8),
+                              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: columns,
+                                childAspectRatio: _childAspectRatio(columns),
+                                crossAxisSpacing: 8,
+                                mainAxisSpacing: 8,
+                              ),
+                              itemCount: provider.tasks.length,
+                              itemBuilder: (context, index) {
+                                final task = provider.tasks[index];
+                                return TaskCard(
+                                  task: task,
+                                  onTap: () => provider.navigateInto(task),
+                                  onDelete: () => provider.deleteTask(task.id!),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
             floatingActionButton: FloatingActionButton(
               onPressed: _addTask,
               child: const Icon(Icons.add),
