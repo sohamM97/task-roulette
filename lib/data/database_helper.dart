@@ -133,6 +133,11 @@ class DatabaseHelper {
     return maps.map((m) => m['child_id'] as int).toList();
   }
 
+  Future<void> updateTaskName(int taskId, String name) async {
+    final db = await database;
+    await db.update('tasks', {'name': name}, where: 'id = ?', whereArgs: [taskId]);
+  }
+
   Future<void> removeRelationship(int parentId, int childId) async {
     final db = await database;
     await db.delete(

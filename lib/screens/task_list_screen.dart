@@ -138,6 +138,35 @@ class _TaskListScreenState extends State<TaskListScreen> {
     }
   }
 
+  Future<void> _renameTask(Task task) async {
+    final controller = TextEditingController(text: task.name);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Rename'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Task name'),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+    if (newName != null && newName.isNotEmpty && newName != task.name && mounted) {
+      await context.read<TaskProvider>().renameTask(task.id!, newName);
+    }
+  }
+
   Future<void> _unlinkTask(Task task) async {
     final provider = context.read<TaskProvider>();
     final parentIds = await provider.getParentIds(task.id!);
@@ -335,6 +364,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                             onUnlink: provider.isRoot
                                 ? null
                                 : () => _unlinkTask(task),
+                            onRename: () => _renameTask(task),
                           );
                         },
                       );

@@ -130,6 +130,11 @@ class TaskProvider extends ChangeNotifier {
     return true;
   }
 
+  Future<void> renameTask(int taskId, String name) async {
+    await _db.updateTaskName(taskId, name);
+    await _refreshCurrentList();
+  }
+
   /// Removes a task from the current parent only (does not delete the task).
   /// If it was the last parent, the task becomes a root task.
   Future<void> unlinkFromCurrentParent(int childId) async {

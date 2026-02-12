@@ -7,6 +7,7 @@ class TaskCard extends StatelessWidget {
   final VoidCallback onDelete;
   final VoidCallback? onAddParent;
   final VoidCallback? onUnlink;
+  final VoidCallback? onRename;
 
   const TaskCard({
     super.key,
@@ -15,6 +16,7 @@ class TaskCard extends StatelessWidget {
     required this.onDelete,
     this.onAddParent,
     this.onUnlink,
+    this.onRename,
   });
 
   void _showDeleteBottomSheet(BuildContext context) {
@@ -25,6 +27,15 @@ class TaskCard extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (onRename != null)
+                ListTile(
+                  leading: const Icon(Icons.edit),
+                  title: const Text('Rename'),
+                  onTap: () {
+                    Navigator.pop(bottomSheetContext);
+                    onRename!();
+                  },
+                ),
               if (onAddParent != null)
                 ListTile(
                   leading: const Icon(Icons.account_tree),
