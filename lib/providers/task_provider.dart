@@ -99,6 +99,25 @@ class TaskProvider extends ChangeNotifier {
     await _refreshCurrentList();
   }
 
+  /// Marks a task as completed (archived) and navigates back.
+  /// Returns the task for undo support.
+  Future<Task> completeTask(int taskId) async {
+    final task = _tasks.firstWhere((t) => t.id == taskId);
+    await _db.completeTask(taskId);
+    await navigateBack();
+    return task;
+  }
+
+  /// Un-completes a task and refreshes the list.
+  Future<void> uncompleteTask(int taskId) async {
+    await _db.uncompleteTask(taskId);
+    await _refreshCurrentList();
+  }
+
+  Future<List<Task>> getParents(int childId) async {
+    return _db.getParents(childId);
+  }
+
   Task? pickRandom() {
     if (_tasks.isEmpty) return null;
     return _tasks[_random.nextInt(_tasks.length)];

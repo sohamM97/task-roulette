@@ -6,6 +6,7 @@ import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
 import '../widgets/add_task_dialog.dart';
 import '../widgets/empty_state.dart';
+import '../widgets/leaf_task_detail.dart';
 import '../widgets/random_result_dialog.dart';
 import '../widgets/task_card.dart';
 import '../widgets/task_picker_dialog.dart';
@@ -226,6 +227,43 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
+  Future<void> _completeTaskWithUndo(Task task) async {
+    final provider = context.read<TaskProvider>();
+    await provider.completeTask(task.id!);
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('"${task.name}" marked done!'),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () {
+            provider.uncompleteTask(task.id!);
+          },
+        ),
+        duration: const Duration(seconds: 5),
+      ),
+    );
+  }
+
+  Widget _buildLeafTaskDetail(TaskProvider provider) {
+    final task = provider.currentParent!;
+    return FutureBuilder<List<Task>>(
+      future: provider.getParents(task.id!),
+      builder: (context, snapshot) {
+        final parentNames = snapshot.data?.map((t) => t.name).toList() ?? [];
+        return LeafTaskDetail(
+          task: task,
+          parentNames: parentNames,
+          onDone: () => _completeTaskWithUndo(task),
+          onAddParent: () => _addParentToTask(task),
+        );
+      },
+    );
+  }
+
   Future<void> _pickRandom() async {
     final provider = context.read<TaskProvider>();
     final picked = provider.pickRandom();
@@ -388,7 +426,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   _buildBreadcrumb(provider),
                 Expanded(
                   child: provider.tasks.isEmpty
-                    ? EmptyState(isRoot: provider.isRoot)
+                    ? (provider.isRoot
+                        ? const EmptyState(isRoot: true)
+                        : _buildLeafTaskDetail(provider))
                     : LayoutBuilder(
                     builder: (context, constraints) {
                       final columns = _crossAxisCount(constraints.maxWidth);

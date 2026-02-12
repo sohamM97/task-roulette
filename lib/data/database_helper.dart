@@ -21,13 +21,14 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            created_at INTEGER NOT NULL
+            created_at INTEGER NOT NULL,
+            completed_at INTEGER
           )
         ''');
         await db.execute('''
@@ -39,6 +40,11 @@ class DatabaseHelper {
             FOREIGN KEY (child_id) REFERENCES tasks(id) ON DELETE CASCADE
           )
         ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('ALTER TABLE tasks ADD COLUMN completed_at INTEGER');
+        }
       },
     );
   }
@@ -63,6 +69,7 @@ class DatabaseHelper {
       WHERE t.id NOT IN (
         SELECT child_id FROM task_relationships
       )
+      AND t.completed_at IS NULL
       ORDER BY t.created_at ASC
     ''');
     return maps.map((m) => Task.fromMap(m)).toList();
@@ -74,6 +81,7 @@ class DatabaseHelper {
       SELECT t.* FROM tasks t
       INNER JOIN task_relationships tr ON t.id = tr.child_id
       WHERE tr.parent_id = ?
+      AND t.completed_at IS NULL
       ORDER BY t.created_at ASC
     ''', [parentId]);
     return maps.map((m) => Task.fromMap(m)).toList();
@@ -85,6 +93,7 @@ class DatabaseHelper {
       SELECT t.* FROM tasks t
       INNER JOIN task_relationships tr ON t.id = tr.parent_id
       WHERE tr.child_id = ?
+      AND t.completed_at IS NULL
       ORDER BY t.created_at ASC
     ''', [childId]);
     return maps.map((m) => Task.fromMap(m)).toList();
@@ -92,7 +101,11 @@ class DatabaseHelper {
 
   Future<List<Task>> getAllTasks() async {
     final db = await database;
-    final maps = await db.query('tasks', orderBy: 'created_at ASC');
+    final maps = await db.rawQuery('''
+      SELECT * FROM tasks
+      WHERE completed_at IS NULL
+      ORDER BY created_at ASC
+    ''');
     return maps.map((m) => Task.fromMap(m)).toList();
   }
 
@@ -103,6 +116,7 @@ class DatabaseHelper {
       SELECT tr.child_id, p.name AS parent_name
       FROM task_relationships tr
       INNER JOIN tasks p ON tr.parent_id = p.id
+      WHERE p.completed_at IS NULL
       ORDER BY p.name ASC
     ''');
     final result = <int, List<String>>{};
@@ -162,6 +176,28 @@ class DatabaseHelper {
       'task_relationships',
       where: 'parent_id = ? AND child_id = ?',
       whereArgs: [parentId, childId],
+    );
+  }
+
+  /// Marks a task as completed by setting completed_at to now.
+  Future<void> completeTask(int taskId) async {
+    final db = await database;
+    await db.update(
+      'tasks',
+      {'completed_at': DateTime.now().millisecondsSinceEpoch},
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
+  /// Un-completes a task by clearing completed_at.
+  Future<void> uncompleteTask(int taskId) async {
+    final db = await database;
+    await db.update(
+      'tasks',
+      {'completed_at': null},
+      where: 'id = ?',
+      whereArgs: [taskId],
     );
   }
 
