@@ -53,6 +53,7 @@ The goal of this app is **minimal cognitive load**. The user wants a quick place
 - When setup instructions change (new deps, build steps), ask user if they want to update README.
 - Capture any user-mentioned future work items as todo tasks immediately.
 - Keep a persistent TODO list in the Claude memory directory.
+- After completing a new feature, ask the user if they want to add test cases for it.
 
 ## GitHub
 
