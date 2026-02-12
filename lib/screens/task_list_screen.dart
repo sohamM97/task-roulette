@@ -204,6 +204,27 @@ class _TaskListScreenState extends State<TaskListScreen> {
     await provider.unlinkFromCurrentParent(task.id!);
   }
 
+  Future<void> _deleteTaskWithUndo(Task task) async {
+    final provider = context.read<TaskProvider>();
+    final deleted = await provider.deleteTask(task.id!);
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Deleted "${task.name}"'),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () {
+            provider.restoreTask(deleted.task, deleted.parentIds, deleted.childIds);
+          },
+        ),
+        duration: const Duration(seconds: 5),
+      ),
+    );
+  }
+
   Future<void> _pickRandom() async {
     final provider = context.read<TaskProvider>();
     final picked = provider.pickRandom();
@@ -375,7 +396,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                           return TaskCard(
                             task: task,
                             onTap: () => provider.navigateInto(task),
-                            onDelete: () => provider.deleteTask(task.id!),
+                            onDelete: () => _deleteTaskWithUndo(task),
                             onAddParent: () => _addParentToTask(task),
                             onUnlink: provider.isRoot
                                 ? null

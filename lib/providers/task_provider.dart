@@ -85,8 +85,17 @@ class TaskProvider extends ChangeNotifier {
     await _refreshCurrentList();
   }
 
-  Future<void> deleteTask(int taskId) async {
-    await _db.deleteTask(taskId);
+  /// Deletes a task and returns info needed for undo.
+  /// Returns a record of (task, parentIds, childIds).
+  Future<({Task task, List<int> parentIds, List<int> childIds})> deleteTask(int taskId) async {
+    final task = _tasks.firstWhere((t) => t.id == taskId);
+    final rels = await _db.deleteTaskWithRelationships(taskId);
+    await _refreshCurrentList();
+    return (task: task, parentIds: rels['parentIds']!, childIds: rels['childIds']!);
+  }
+
+  Future<void> restoreTask(Task task, List<int> parentIds, List<int> childIds) async {
+    await _db.restoreTask(task, parentIds, childIds);
     await _refreshCurrentList();
   }
 

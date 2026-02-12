@@ -165,11 +165,28 @@ class DatabaseHelper {
     );
   }
 
-  Future<void> deleteTask(int taskId) async {
+  /// Deletes a task and returns its relationships for undo support.
+  /// Returns a map with 'parentIds' and 'childIds'.
+  Future<Map<String, List<int>>> deleteTaskWithRelationships(int taskId) async {
     final db = await database;
+    final parentIds = await getParentIds(taskId);
+    final childIds = await getChildIds(taskId);
     await db.delete('task_relationships',
         where: 'parent_id = ? OR child_id = ?',
         whereArgs: [taskId, taskId]);
     await db.delete('tasks', where: 'id = ?', whereArgs: [taskId]);
+    return {'parentIds': parentIds, 'childIds': childIds};
+  }
+
+  /// Restores a previously deleted task with its original ID and relationships.
+  Future<void> restoreTask(Task task, List<int> parentIds, List<int> childIds) async {
+    final db = await database;
+    await db.insert('tasks', task.toMap());
+    for (final parentId in parentIds) {
+      await addRelationship(parentId, task.id!);
+    }
+    for (final childId in childIds) {
+      await addRelationship(task.id!, childId);
+    }
   }
 }

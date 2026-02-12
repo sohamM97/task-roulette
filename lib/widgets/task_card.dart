@@ -68,36 +68,13 @@ class TaskCard extends StatelessWidget {
                 ),
                 onTap: () {
                   Navigator.pop(bottomSheetContext);
-                  _confirmDelete(context);
+                  onDelete();
                 },
               ),
             ],
           ),
         );
       },
-    );
-  }
-
-  void _confirmDelete(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete Task'),
-        content: Text('Delete "${task.name}"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              onDelete();
-            },
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
     );
   }
 
