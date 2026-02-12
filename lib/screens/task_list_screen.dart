@@ -246,7 +246,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                     child: Text(
-                      crumbs[i] == null ? 'TaskRoulette' : crumbs[i]!.name,
+                      crumbs[i] == null ? 'Task Roulette' : crumbs[i]!.name,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.primary,
                       ),
@@ -298,7 +298,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
         builder: (context, provider, _) {
           return Scaffold(
             appBar: AppBar(
-              title: Text(provider.isRoot ? 'TaskRoulette' : provider.currentParent!.name),
+              title: Text(provider.isRoot ? 'Task Roulette' : provider.currentParent!.name),
               leading: provider.isRoot
                   ? null
                   : IconButton(

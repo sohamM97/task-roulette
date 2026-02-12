@@ -24,17 +24,30 @@ A DAG-based task manager built with Flutter. Tasks can have multiple parents and
 
 2. **Linux desktop dependencies** (Ubuntu/Debian)
    ```bash
-   sudo apt install -y clang ninja-build lld libsqlite3-dev
+   sudo apt install -y clang ninja-build lld libsqlite3-dev inotify-tools
    ```
 
-### Install & Run
+### Install dependencies (first time only)
 
 ```bash
 flutter pub get
+```
+
+### Run
+
+```bash
+./dev.sh
+```
+
+This starts the app and watches `lib/` for `.dart` file changes, triggering hot reload automatically — no need to press anything.
+
+To run without auto-reload:
+
+```bash
 flutter run -d linux
 ```
 
-While the app is running, press `r` in the terminal for **hot reload** (applies code changes, preserves app state) or `R` for **hot restart** (applies changes and resets state). No need to stop and relaunch.
+Then press `r` for hot reload or `R` for hot restart manually.
 
 ## Project Structure
 
@@ -51,7 +64,8 @@ lib/
 ├── screens/
 │   └── task_list_screen.dart # Main screen
 └── widgets/
-    ├── task_card.dart        # Task grid card (tap to navigate, long-press to delete)
+    ├── task_card.dart        # Task grid card (tap, long-press for actions)
+    ├── task_picker_dialog.dart # Search/filter dialog for linking tasks
     ├── empty_state.dart      # Empty state placeholder
     ├── add_task_dialog.dart  # New task dialog
     └── random_result_dialog.dart # Random pick result
