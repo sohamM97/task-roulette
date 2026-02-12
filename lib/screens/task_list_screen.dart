@@ -10,6 +10,7 @@ import '../widgets/leaf_task_detail.dart';
 import '../widgets/random_result_dialog.dart';
 import '../widgets/task_card.dart';
 import '../widgets/task_picker_dialog.dart';
+import 'completed_tasks_screen.dart';
 import 'dag_view_screen.dart';
 
 class TaskListScreen extends StatefulWidget {
@@ -412,6 +413,18 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       onPressed: () => provider.navigateBack(),
                     ),
               actions: [
+                IconButton(
+                  icon: const Icon(Icons.archive_outlined),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const CompletedTasksScreen(),
+                      ),
+                    );
+                  },
+                  tooltip: 'Completed tasks',
+                ),
                 IconButton(
                   icon: const Icon(Icons.account_tree_outlined),
                   onPressed: () {

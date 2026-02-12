@@ -9,7 +9,7 @@ Flutter app — a DAG-based task manager where tasks can have multiple parents/c
 - **Framework:** Flutter (SDK at `~/flutter`, added to PATH via `~/.zshrc`)
 - **State management:** Provider + ChangeNotifier
 - **Persistence:** sqflite with `sqflite_common_ffi` for desktop SQLite support
-- **DB location:** `.dart_tool/sqflite_common_ffi/databases/task_roulette.db`
+- **DB location:** `~/.local/share/com.taskroulette.task_roulette/task_roulette.db` (via `path_provider`)
 
 ## Build & Run
 
@@ -56,6 +56,7 @@ The goal of this app is **minimal cognitive load**. The user wants a quick place
 - Capture any user-mentioned future work items as todo tasks immediately.
 - Keep a persistent TODO list in the Claude memory directory.
 - After completing a new feature, ask the user if they want to add test cases for it.
+- When a bug is found and confirmed reproducible, always add a test case for it.
 
 ## GitHub
 

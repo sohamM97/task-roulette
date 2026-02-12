@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/task.dart';
@@ -18,8 +20,20 @@ class DatabaseHelper {
   }
 
   Future<Database> _initDatabase() async {
-    final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'task_roulette.db');
+    final appDir = await getApplicationSupportDirectory();
+    final path = join(appDir.path, 'task_roulette.db');
+
+    // Migrate from old location (.dart_tool/sqflite_common_ffi/databases/)
+    // which gets wiped by flutter clean.
+    if (!File(path).existsSync()) {
+      final oldPath = join(
+        await getDatabasesPath(),
+        'task_roulette.db',
+      );
+      if (File(oldPath).existsSync()) {
+        await File(oldPath).copy(path);
+      }
+    }
 
     return openDatabase(
       path,
@@ -55,8 +69,8 @@ class DatabaseHelper {
   Future<void> reset() async {
     await _database?.close();
     _database = null;
-    final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'task_roulette.db');
+    final appDir = await getApplicationSupportDirectory();
+    final path = join(appDir.path, 'task_roulette.db');
     await deleteDatabase(path);
   }
 
@@ -130,6 +144,39 @@ class DatabaseHelper {
       WHERE p.completed_at IS NULL
       ORDER BY p.name ASC
     ''');
+    final result = <int, List<String>>{};
+    for (final row in maps) {
+      final childId = row['child_id'] as int;
+      final parentName = row['parent_name'] as String;
+      result.putIfAbsent(childId, () => []).add(parentName);
+    }
+    return result;
+  }
+
+  /// Returns all completed tasks, most recent first.
+  Future<List<Task>> getCompletedTasks() async {
+    final db = await database;
+    final maps = await db.rawQuery('''
+      SELECT * FROM tasks
+      WHERE completed_at IS NOT NULL
+      ORDER BY completed_at DESC
+    ''');
+    return maps.map((m) => Task.fromMap(m)).toList();
+  }
+
+  /// Returns a map of task ID → list of parent names for the given task IDs.
+  /// Unlike getParentNamesMap(), this includes completed parents too.
+  Future<Map<int, List<String>>> getParentNamesForTaskIds(List<int> taskIds) async {
+    if (taskIds.isEmpty) return {};
+    final db = await database;
+    final placeholders = taskIds.map((_) => '?').join(',');
+    final maps = await db.rawQuery('''
+      SELECT tr.child_id, p.name AS parent_name
+      FROM task_relationships tr
+      INNER JOIN tasks p ON tr.parent_id = p.id
+      WHERE tr.child_id IN ($placeholders)
+      ORDER BY p.name ASC
+    ''', taskIds);
     final result = <int, List<String>>{};
     for (final row in maps) {
       final childId = row['child_id'] as int;

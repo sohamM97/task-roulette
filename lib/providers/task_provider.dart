@@ -136,6 +136,20 @@ class TaskProvider extends ChangeNotifier {
     return _db.getAllTasks();
   }
 
+  Future<List<Task>> getCompletedTasks() async {
+    return _db.getCompletedTasks();
+  }
+
+  Future<Map<int, List<String>>> getParentNamesForTaskIds(List<int> taskIds) async {
+    return _db.getParentNamesForTaskIds(taskIds);
+  }
+
+  /// Re-completes a task (for undo-restore). Unlike completeTask(), this does
+  /// not call navigateBack() since it's invoked from the archive screen.
+  Future<void> reCompleteTask(int taskId) async {
+    await _db.completeTask(taskId);
+  }
+
   Future<Map<int, List<String>>> getParentNamesMap() async {
     return _db.getParentNamesMap();
   }
