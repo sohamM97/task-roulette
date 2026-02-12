@@ -103,7 +103,11 @@ class TaskProvider extends ChangeNotifier {
   /// Marks a task as completed (archived) and navigates back.
   /// Returns the task for undo support.
   Future<Task> completeTask(int taskId) async {
-    final task = _tasks.firstWhere((t) => t.id == taskId);
+    // The task being completed may be _currentParent (leaf detail view's
+    // Done button) rather than a member of _tasks.
+    final task = _currentParent?.id == taskId
+        ? _currentParent!
+        : _tasks.firstWhere((t) => t.id == taskId);
     await _db.completeTask(taskId);
     await navigateBack();
     return task;
