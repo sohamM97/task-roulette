@@ -49,6 +49,20 @@ flutter run -d linux
 
 Then press `r` for hot reload or `R` for hot restart manually.
 
+### Test
+
+```bash
+flutter test
+```
+
+Run this before committing to catch regressions. Tests cover the Task model, database operations (using sqflite_ffi in-memory), and widget rendering.
+
+To run a specific test file:
+
+```bash
+flutter test test/models/task_test.dart
+```
+
 ## Project Structure
 
 ```
@@ -66,7 +80,16 @@ lib/
 └── widgets/
     ├── task_card.dart        # Task grid card (tap, long-press for actions)
     ├── task_picker_dialog.dart # Search/filter dialog for linking tasks
+    ├── leaf_task_detail.dart  # Leaf task detail view with Done action
     ├── empty_state.dart      # Empty state placeholder
     ├── add_task_dialog.dart  # New task dialog
     └── random_result_dialog.dart # Random pick result
+
+test/
+├── models/
+│   └── task_test.dart        # Task model unit tests
+├── data/
+│   └── database_helper_test.dart # DB completion/filtering tests
+└── widgets/
+    └── leaf_task_detail_test.dart # Leaf detail widget tests
 ```

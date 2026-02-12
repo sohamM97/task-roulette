@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/task.dart';
@@ -47,6 +48,15 @@ class DatabaseHelper {
         }
       },
     );
+  }
+
+  @visibleForTesting
+  Future<void> reset() async {
+    await _database?.close();
+    _database = null;
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, 'task_roulette.db');
+    await deleteDatabase(path);
   }
 
   Future<int> insertTask(Task task) async {
