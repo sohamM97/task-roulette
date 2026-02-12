@@ -27,6 +27,21 @@ A DAG-based task manager built with Flutter. Tasks can have multiple parents and
    sudo apt install -y clang ninja-build lld libsqlite3-dev inotify-tools
    ```
 
+3. **Android build dependencies** (optional, for APK builds)
+   ```bash
+   sudo apt install -y openjdk-17-jdk lib32stdc++6 lib32z1
+   ```
+   Then install the Android SDK command-line tools from https://developer.android.com/studio (under "Command line tools only") and set up:
+   ```bash
+   mkdir -p ~/Android/Sdk/cmdline-tools
+   # Extract downloaded zip, move contents to ~/Android/Sdk/cmdline-tools/latest/
+   export ANDROID_HOME=$HOME/Android/Sdk
+   export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
+   sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0" "build-tools;28.0.3"
+   flutter config --android-sdk $HOME/Android/Sdk
+   flutter doctor --android-licenses
+   ```
+
 ### Install dependencies (first time only)
 
 ```bash
@@ -48,6 +63,14 @@ flutter run -d linux
 ```
 
 Then press `r` for hot reload or `R` for hot restart manually.
+
+### Build debug APK (Android)
+
+```bash
+flutter build apk --debug
+```
+
+Output: `build/app/outputs/flutter-apk/app-debug.apk` — transfer to your phone and install.
 
 ### Test
 
