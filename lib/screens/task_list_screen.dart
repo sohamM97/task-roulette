@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
@@ -353,7 +354,16 @@ class _TaskListScreenState extends State<TaskListScreen> {
         builder: (context, provider, _) {
           return Scaffold(
             appBar: AppBar(
-              title: Text(provider.isRoot ? 'Task Roulette' : provider.currentParent!.name),
+              title: provider.isRoot
+                  ? Text(
+                      'Task Roulette',
+                      style: GoogleFonts.outfit(
+                        fontSize: 30,
+                        fontWeight: FontWeight.w400,
+                        letterSpacing: -0.3,
+                      ),
+                    )
+                  : Text(provider.currentParent!.name),
               leading: provider.isRoot
                   ? null
                   : IconButton(
@@ -364,7 +374,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                 Consumer<ThemeProvider>(
                   builder: (context, themeProvider, _) {
                     return IconButton(
-                      icon: Icon(themeProvider.icon),
+                      icon: Icon(themeProvider.icon, size: 28),
                       onPressed: themeProvider.toggle,
                       tooltip: 'Toggle theme',
                     );
