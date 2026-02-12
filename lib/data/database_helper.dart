@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/task.dart';
+import '../models/task_relationship.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper _instance = DatabaseHelper._internal();
@@ -136,6 +137,19 @@ class DatabaseHelper {
       result.putIfAbsent(childId, () => []).add(parentName);
     }
     return result;
+  }
+
+  /// Returns all relationships where both parent and child are non-completed.
+  Future<List<TaskRelationship>> getAllRelationships() async {
+    final db = await database;
+    final maps = await db.rawQuery('''
+      SELECT tr.parent_id, tr.child_id
+      FROM task_relationships tr
+      INNER JOIN tasks p ON tr.parent_id = p.id
+      INNER JOIN tasks c ON tr.child_id = c.id
+      WHERE p.completed_at IS NULL AND c.completed_at IS NULL
+    ''');
+    return maps.map((m) => TaskRelationship.fromMap(m)).toList();
   }
 
   /// Returns true if [toId] is reachable from [fromId] via parent→child edges.

@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../data/database_helper.dart';
 import '../models/task.dart';
+import '../models/task_relationship.dart';
 
 class TaskProvider extends ChangeNotifier {
   final DatabaseHelper _db = DatabaseHelper();
@@ -181,6 +182,20 @@ class TaskProvider extends ChangeNotifier {
 
   Future<List<int>> getChildIds(int parentId) async {
     return _db.getChildIds(parentId);
+  }
+
+  Future<List<TaskRelationship>> getAllRelationships() async {
+    return _db.getAllRelationships();
+  }
+
+  /// Navigate directly to a task, clearing the stack.
+  /// Sets stack to [null] so back returns to root.
+  Future<void> navigateToTask(Task task) async {
+    _parentStack.clear();
+    _parentStack.add(null);
+    _currentParent = task;
+    _tasks = await _db.getChildren(task.id!);
+    notifyListeners();
   }
 
   Future<void> _refreshCurrentList() async {
