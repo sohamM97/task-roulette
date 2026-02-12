@@ -96,6 +96,24 @@ class DatabaseHelper {
     return maps.map((m) => Task.fromMap(m)).toList();
   }
 
+  /// Returns a map of task ID → list of parent names (for disambiguation).
+  Future<Map<int, List<String>>> getParentNamesMap() async {
+    final db = await database;
+    final maps = await db.rawQuery('''
+      SELECT tr.child_id, p.name AS parent_name
+      FROM task_relationships tr
+      INNER JOIN tasks p ON tr.parent_id = p.id
+      ORDER BY p.name ASC
+    ''');
+    final result = <int, List<String>>{};
+    for (final row in maps) {
+      final childId = row['child_id'] as int;
+      final parentName = row['parent_name'] as String;
+      result.putIfAbsent(childId, () => []).add(parentName);
+    }
+    return result;
+  }
+
   /// Returns true if [toId] is reachable from [fromId] via parent→child edges.
   Future<bool> hasPath(int fromId, int toId) async {
     final db = await database;

@@ -4,11 +4,14 @@ import '../models/task.dart';
 class TaskPickerDialog extends StatefulWidget {
   final List<Task> candidates;
   final String title;
+  /// Map of task ID → list of parent names, for showing context.
+  final Map<int, List<String>> parentNamesMap;
 
   const TaskPickerDialog({
     super.key,
     required this.candidates,
     this.title = 'Select a task',
+    this.parentNamesMap = const {},
   });
 
   @override
@@ -22,8 +25,16 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
     if (_filter.isEmpty) return widget.candidates;
     final lower = _filter.toLowerCase();
     return widget.candidates
-        .where((t) => t.name.toLowerCase().contains(lower))
+        .where((t) =>
+            t.name.toLowerCase().contains(lower) ||
+            (_contextFor(t.id!)?.toLowerCase().contains(lower) ?? false))
         .toList();
+  }
+
+  String? _contextFor(int taskId) {
+    final parents = widget.parentNamesMap[taskId];
+    if (parents == null || parents.isEmpty) return null;
+    return parents.join(', ');
   }
 
   @override
@@ -66,8 +77,15 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
                         itemCount: _filtered.length,
                         itemBuilder: (context, index) {
                           final task = _filtered[index];
+                          final context_ = _contextFor(task.id!);
                           return ListTile(
                             title: Text(task.name),
+                            subtitle: context_ != null
+                                ? Text(
+                                    'under $context_',
+                                    style: Theme.of(context).textTheme.bodySmall,
+                                  )
+                                : null,
                             onTap: () => Navigator.pop(context, task),
                           );
                         },

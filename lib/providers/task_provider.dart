@@ -103,6 +103,10 @@ class TaskProvider extends ChangeNotifier {
     return _db.getAllTasks();
   }
 
+  Future<Map<int, List<String>>> getParentNamesMap() async {
+    return _db.getParentNamesMap();
+  }
+
   /// Links an existing task as a child of the current parent.
   /// Returns false if a cycle would be created.
   Future<bool> linkChildToCurrent(int childId) async {

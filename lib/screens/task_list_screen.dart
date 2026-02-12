@@ -74,6 +74,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     if (currentParent == null) return;
 
     final allTasks = await provider.getAllTasks();
+    final parentNamesMap = await provider.getParentNamesMap();
     final existingChildIds = await provider.getChildIds(currentParent.id!);
     final existingChildIdSet = existingChildIds.toSet();
 
@@ -91,6 +92,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
       builder: (_) => TaskPickerDialog(
         candidates: candidates,
         title: 'Link task under "${currentParent.name}"',
+        parentNamesMap: parentNamesMap,
       ),
     );
 
@@ -108,6 +110,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final provider = context.read<TaskProvider>();
 
     final allTasks = await provider.getAllTasks();
+    final parentNamesMap = await provider.getParentNamesMap();
     final existingParentIds = await provider.getParentIds(task.id!);
     final existingParentIdSet = existingParentIds.toSet();
 
@@ -125,6 +128,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
       builder: (_) => TaskPickerDialog(
         candidates: candidates,
         title: 'Also show "${task.name}" under...',
+        parentNamesMap: parentNamesMap,
       ),
     );
 
