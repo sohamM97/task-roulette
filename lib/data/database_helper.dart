@@ -340,27 +340,29 @@ class DatabaseHelper {
 
   /// Returns the set of task IDs (from the given list) that have at least one
   /// descendant which is in progress (started_at IS NOT NULL AND completed_at IS NULL).
+  /// Uses a single query with a recursive CTE from all started tasks upward
+  /// to find which ancestors have started descendants.
   Future<Set<int>> getTaskIdsWithStartedDescendants(List<int> taskIds) async {
     if (taskIds.isEmpty) return {};
     final db = await database;
-    final result = <int>{};
-    for (final taskId in taskIds) {
-      final rows = await db.rawQuery('''
-        WITH RECURSIVE descendants(id) AS (
-          SELECT child_id FROM task_relationships WHERE parent_id = ?
-          UNION
-          SELECT tr.child_id FROM task_relationships tr
-          INNER JOIN descendants d ON tr.parent_id = d.id
-        )
-        SELECT 1 FROM descendants
-        INNER JOIN tasks t ON descendants.id = t.id
+    // Walk upward from all started tasks to find their ancestors,
+    // then intersect with the requested taskIds.
+    final placeholders = taskIds.map((_) => '?').join(',');
+    final rows = await db.rawQuery('''
+      WITH RECURSIVE ancestors(id) AS (
+        -- Start from parents of all in-progress tasks
+        SELECT tr.parent_id FROM task_relationships tr
+        INNER JOIN tasks t ON tr.child_id = t.id
         WHERE t.started_at IS NOT NULL AND t.completed_at IS NULL
-        LIMIT 1
-      ''', [taskId]);
-      if (rows.isNotEmpty) {
-        result.add(taskId);
-      }
-    }
-    return result;
+        UNION
+        -- Walk upward through parent relationships
+        SELECT tr.parent_id
+        FROM task_relationships tr
+        INNER JOIN ancestors a ON tr.child_id = a.id
+      )
+      SELECT DISTINCT id FROM ancestors
+      WHERE id IN ($placeholders)
+    ''', taskIds);
+    return rows.map((r) => r['id'] as int).toSet();
   }
 }

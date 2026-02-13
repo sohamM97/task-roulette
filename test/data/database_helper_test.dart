@@ -226,5 +226,41 @@ void main() {
       expect(result, contains(parent1));
       expect(result, isNot(contains(parent2)));
     });
+
+    test('grandparent and parent both flagged when grandchild is started', () async {
+      final gp = await db.insertTask(Task(name: 'Grandparent'));
+      final p = await db.insertTask(Task(name: 'Parent'));
+      final c = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(gp, p);
+      await db.addRelationship(p, c);
+      await db.startTask(c);
+
+      final result = await db.getTaskIdsWithStartedDescendants([gp, p]);
+      expect(result, contains(gp));
+      expect(result, contains(p));
+    });
+
+    test('does not flag task as its own started descendant', () async {
+      final taskId = await db.insertTask(Task(name: 'Self'));
+      await db.startTask(taskId);
+
+      // A started task should not appear as having started *descendants*
+      // (it IS started, but it has no descendants that are started)
+      final result = await db.getTaskIdsWithStartedDescendants([taskId]);
+      expect(result, isEmpty);
+    });
+
+    test('multi-parent DAG: shared child started flags both parents', () async {
+      final parent1 = await db.insertTask(Task(name: 'Parent A'));
+      final parent2 = await db.insertTask(Task(name: 'Parent B'));
+      final child = await db.insertTask(Task(name: 'Shared Child'));
+      await db.addRelationship(parent1, child);
+      await db.addRelationship(parent2, child);
+      await db.startTask(child);
+
+      final result = await db.getTaskIdsWithStartedDescendants([parent1, parent2]);
+      expect(result, contains(parent1));
+      expect(result, contains(parent2));
+    });
   });
 }
