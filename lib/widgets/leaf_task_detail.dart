@@ -132,6 +132,15 @@ class LeafTaskDetail extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: () => showEditUrlDialog(context, task.url, onUpdateUrl),
+              child: Icon(
+                Icons.edit_outlined,
+                size: 14,
+                color: colorScheme.onSurfaceVariant.withAlpha(180),
+              ),
+            ),
           ],
         ),
       ),
