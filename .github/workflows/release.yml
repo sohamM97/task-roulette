@@ -42,7 +42,7 @@ jobs:
           storePassword=${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword=${{ secrets.KEYSTORE_PASSWORD }}
           keyAlias=upload
-          storeFile=../android/upload-keystore.jks
+          storeFile=../upload-keystore.jks
           EOF
 
       - name: Build APK
