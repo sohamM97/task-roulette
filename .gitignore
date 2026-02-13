@@ -48,3 +48,9 @@ app.*.map.json
 
 # Flutter DevTools
 devtools_options.yaml
+
+# Unused platform folders (can regenerate with: flutter create --platforms=<platform> .)
+/ios/
+/macos/
+/web/
+/windows/
