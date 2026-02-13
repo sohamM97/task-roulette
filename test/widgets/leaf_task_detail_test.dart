@@ -200,6 +200,26 @@ void main() {
       expect(toggled, isTrue);
     });
 
+    testWidgets('shows Skip button', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+      ));
+
+      expect(find.text('Skip'), findsOneWidget);
+      expect(find.byIcon(Icons.not_interested), findsOneWidget);
+    });
+
+    testWidgets('Skip button fires onSkip callback', (tester) async {
+      var skipped = false;
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+        onSkip: () => skipped = true,
+      ));
+
+      await tester.tap(find.text('Skip'));
+      expect(skipped, isTrue);
+    });
+
     testWidgets('shows edit icon next to task name', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),

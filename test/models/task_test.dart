@@ -156,5 +156,66 @@ void main() {
       expect(restored.startedAt, original.startedAt);
       expect(restored.isStarted, isTrue);
     });
+
+    test('isSkipped returns true when skippedAt is set', () {
+      final task = Task(name: 'Nah', skippedAt: 12345);
+      expect(task.isSkipped, isTrue);
+    });
+
+    test('isSkipped returns false when skippedAt is null', () {
+      final task = Task(name: 'Active');
+      expect(task.isSkipped, isFalse);
+    });
+
+    test('toMap includes skippedAt', () {
+      final task = Task(id: 1, name: 'T', createdAt: 100, skippedAt: 400);
+      final map = task.toMap();
+
+      expect(map['skipped_at'], 400);
+    });
+
+    test('toMap includes null skippedAt', () {
+      final task = Task(id: 1, name: 'T', createdAt: 100);
+      final map = task.toMap();
+
+      expect(map.containsKey('skipped_at'), isTrue);
+      expect(map['skipped_at'], isNull);
+    });
+
+    test('fromMap parses skippedAt', () {
+      final task = Task.fromMap({
+        'id': 5,
+        'name': 'Skipped',
+        'created_at': 1000,
+        'completed_at': null,
+        'started_at': null,
+        'skipped_at': 2000,
+      });
+
+      expect(task.skippedAt, 2000);
+      expect(task.isSkipped, isTrue);
+    });
+
+    test('fromMap handles null skippedAt', () {
+      final task = Task.fromMap({
+        'id': 5,
+        'name': 'Open',
+        'created_at': 1000,
+        'completed_at': null,
+        'started_at': null,
+        'skipped_at': null,
+      });
+
+      expect(task.skippedAt, isNull);
+      expect(task.isSkipped, isFalse);
+    });
+
+    test('toMap/fromMap round-trip preserves skippedAt', () {
+      final original = Task(id: 9, name: 'Round trip', createdAt: 999, skippedAt: 1800);
+      final restored = Task.fromMap(original.toMap());
+
+      expect(restored.skippedAt, original.skippedAt);
+      expect(restored.isSkipped, isTrue);
+    });
   });
 }

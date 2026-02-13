@@ -165,6 +165,120 @@ void main() {
     });
   });
 
+  group('Task skip', () {
+    test('skipTask sets skipped_at', () async {
+      final id = await db.insertTask(Task(name: 'Boring task'));
+      await db.skipTask(id);
+
+      // Skipped task should be excluded from getAllTasks
+      final tasks = await db.getAllTasks();
+      expect(tasks.where((t) => t.id == id), isEmpty);
+    });
+
+    test('unskipTask clears skipped_at', () async {
+      final id = await db.insertTask(Task(name: 'Boring task'));
+      await db.skipTask(id);
+      await db.unskipTask(id);
+
+      final tasks = await db.getAllTasks();
+      expect(tasks.where((t) => t.id == id), hasLength(1));
+      expect(tasks.first.isSkipped, isFalse);
+    });
+
+    test('skipped tasks excluded from getRootTasks', () async {
+      final id1 = await db.insertTask(Task(name: 'Task A'));
+      final id2 = await db.insertTask(Task(name: 'Task B'));
+      await db.skipTask(id1);
+
+      final roots = await db.getRootTasks();
+      final rootIds = roots.map((t) => t.id).toList();
+      expect(rootIds, contains(id2));
+      expect(rootIds, isNot(contains(id1)));
+    });
+
+    test('skipped tasks excluded from getChildren', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final child1 = await db.insertTask(Task(name: 'Child 1'));
+      final child2 = await db.insertTask(Task(name: 'Child 2'));
+      await db.addRelationship(parentId, child1);
+      await db.addRelationship(parentId, child2);
+      await db.skipTask(child1);
+
+      final children = await db.getChildren(parentId);
+      final childIds = children.map((t) => t.id).toList();
+      expect(childIds, contains(child2));
+      expect(childIds, isNot(contains(child1)));
+    });
+
+    test('skipped tasks excluded from getParents', () async {
+      final parent1 = await db.insertTask(Task(name: 'Parent 1'));
+      final parent2 = await db.insertTask(Task(name: 'Parent 2'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent1, child);
+      await db.addRelationship(parent2, child);
+      await db.skipTask(parent1);
+
+      final parents = await db.getParents(child);
+      final parentIds = parents.map((t) => t.id).toList();
+      expect(parentIds, contains(parent2));
+      expect(parentIds, isNot(contains(parent1)));
+    });
+
+    test('skipped tasks excluded from getParentNamesMap', () async {
+      final parent = await db.insertTask(Task(name: 'Visible Parent'));
+      final hiddenParent = await db.insertTask(Task(name: 'Hidden Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+      await db.addRelationship(hiddenParent, child);
+      await db.skipTask(hiddenParent);
+
+      final map = await db.getParentNamesMap();
+      expect(map[child], ['Visible Parent']);
+    });
+
+    test('skip and unskip round-trip', () async {
+      final id = await db.insertTask(Task(name: 'Flip flop'));
+
+      // Initially visible
+      expect((await db.getAllTasks()).map((t) => t.id), contains(id));
+
+      // Skip — hidden
+      await db.skipTask(id);
+      expect((await db.getAllTasks()).map((t) => t.id), isNot(contains(id)));
+
+      // Unskip — visible again
+      await db.unskipTask(id);
+      final tasks = await db.getAllTasks();
+      final restored = tasks.firstWhere((t) => t.id == id);
+      expect(restored.isSkipped, isFalse);
+    });
+
+    test('getArchivedTasks includes both completed and skipped tasks', () async {
+      final id1 = await db.insertTask(Task(name: 'Completed'));
+      final id2 = await db.insertTask(Task(name: 'Skipped'));
+      final id3 = await db.insertTask(Task(name: 'Active'));
+      await db.completeTask(id1);
+      await db.skipTask(id2);
+
+      final archived = await db.getArchivedTasks();
+      final archivedIds = archived.map((t) => t.id).toList();
+      expect(archivedIds, contains(id1));
+      expect(archivedIds, contains(id2));
+      expect(archivedIds, isNot(contains(id3)));
+    });
+
+    test('skipped started descendant not flagged in getTaskIdsWithStartedDescendants', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+      await db.startTask(childId);
+      await db.skipTask(childId);
+
+      final result = await db.getTaskIdsWithStartedDescendants([parentId]);
+      expect(result, isEmpty);
+    });
+  });
+
   group('getTaskIdsWithStartedDescendants', () {
     test('returns empty set for tasks with no started descendants', () async {
       final parentId = await db.insertTask(Task(name: 'Parent'));
