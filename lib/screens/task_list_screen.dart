@@ -80,12 +80,17 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
     if (!mounted) return;
 
+    final siblingIds = provider.tasks
+        .map((t) => t.id!)
+        .toSet();
+
     final selected = await showDialog<Task>(
       context: context,
       builder: (_) => TaskPickerDialog(
         candidates: candidates,
         title: 'Link task under "${currentParent.name}"',
         parentNamesMap: parentNamesMap,
+        priorityIds: siblingIds,
       ),
     );
 
@@ -116,12 +121,18 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
     if (!mounted) return;
 
+    final siblingIds = provider.tasks
+        .map((t) => t.id!)
+        .where((id) => id != task.id)
+        .toSet();
+
     final selected = await showDialog<Task>(
       context: context,
       builder: (_) => TaskPickerDialog(
         candidates: candidates,
         title: 'Also show "${task.name}" under...',
         parentNamesMap: parentNamesMap,
+        priorityIds: siblingIds,
       ),
     );
 
@@ -185,12 +196,18 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
     if (!mounted) return;
 
+    final siblingIds = provider.tasks
+        .map((t) => t.id!)
+        .where((id) => id != task.id && id != currentParent.id)
+        .toSet();
+
     final selected = await showDialog<Task>(
       context: context,
       builder: (_) => TaskPickerDialog(
         candidates: candidates,
         title: 'Move "${task.name}" to...',
         parentNamesMap: parentNamesMap,
+        priorityIds: siblingIds,
       ),
     );
 

@@ -6,12 +6,15 @@ class TaskPickerDialog extends StatefulWidget {
   final String title;
   /// Map of task ID → list of parent names, for showing context.
   final Map<int, List<String>> parentNamesMap;
+  /// Task IDs to show first (e.g. current siblings).
+  final Set<int> priorityIds;
 
   const TaskPickerDialog({
     super.key,
     required this.candidates,
     this.title = 'Select a task',
     this.parentNamesMap = const {},
+    this.priorityIds = const {},
   });
 
   @override
@@ -22,13 +25,24 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
   String _filter = '';
 
   List<Task> get _filtered {
-    if (_filter.isEmpty) return widget.candidates;
-    final lower = _filter.toLowerCase();
-    return widget.candidates
-        .where((t) =>
-            t.name.toLowerCase().contains(lower) ||
-            (_contextFor(t.id!)?.toLowerCase().contains(lower) ?? false))
-        .toList();
+    final base = _filter.isEmpty
+        ? widget.candidates
+        : widget.candidates
+            .where((t) =>
+                t.name.toLowerCase().contains(_filter.toLowerCase()) ||
+                (_contextFor(t.id!)?.toLowerCase().contains(_filter.toLowerCase()) ?? false))
+            .toList();
+    if (widget.priorityIds.isEmpty) return base;
+    final priority = <Task>[];
+    final rest = <Task>[];
+    for (final t in base) {
+      if (widget.priorityIds.contains(t.id)) {
+        priority.add(t);
+      } else {
+        rest.add(t);
+      }
+    }
+    return [...priority, ...rest];
   }
 
   String? _contextFor(int taskId) {
