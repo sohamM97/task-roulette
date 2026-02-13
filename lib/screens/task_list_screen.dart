@@ -179,6 +179,14 @@ class _TaskListScreenState extends State<TaskListScreen> {
     await context.read<TaskProvider>().updateTaskUrl(task.id!, url);
   }
 
+  Future<void> _updatePriority(Task task, int priority) async {
+    await context.read<TaskProvider>().updateTaskPriority(task.id!, priority);
+  }
+
+  Future<void> _updateDifficulty(Task task, int difficulty) async {
+    await context.read<TaskProvider>().updateTaskDifficulty(task.id!, difficulty);
+  }
+
   Future<void> _moveTask(Task task) async {
     final provider = context.read<TaskProvider>();
     final currentParent = provider.currentParent;
@@ -346,6 +354,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
           onToggleStarted: () => _toggleStarted(task),
           onRename: () => _renameTask(task),
           onUpdateUrl: (url) => _updateUrl(task, url),
+          onUpdatePriority: (p) => _updatePriority(task, p),
+          onUpdateDifficulty: (d) => _updateDifficulty(task, d),
         );
       },
     );

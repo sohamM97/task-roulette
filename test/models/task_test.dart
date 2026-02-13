@@ -217,5 +217,89 @@ void main() {
       expect(restored.skippedAt, original.skippedAt);
       expect(restored.isSkipped, isTrue);
     });
+
+    test('defaults priority to 1 (Medium)', () {
+      final task = Task(name: 'Test');
+      expect(task.priority, 1);
+      expect(task.priorityLabel, 'Medium');
+    });
+
+    test('defaults difficulty to 1 (Medium)', () {
+      final task = Task(name: 'Test');
+      expect(task.difficulty, 1);
+      expect(task.difficultyLabel, 'Medium');
+    });
+
+    test('creates with explicit priority and difficulty', () {
+      final task = Task(id: 1, name: 'Hard task', createdAt: 1000, priority: 2, difficulty: 2);
+      expect(task.priority, 2);
+      expect(task.difficulty, 2);
+      expect(task.priorityLabel, 'High');
+      expect(task.difficultyLabel, 'Hard');
+    });
+
+    test('priorityLabel returns correct labels', () {
+      expect(Task(name: 'T', priority: 0).priorityLabel, 'Low');
+      expect(Task(name: 'T', priority: 1).priorityLabel, 'Medium');
+      expect(Task(name: 'T', priority: 2).priorityLabel, 'High');
+    });
+
+    test('difficultyLabel returns correct labels', () {
+      expect(Task(name: 'T', difficulty: 0).difficultyLabel, 'Easy');
+      expect(Task(name: 'T', difficulty: 1).difficultyLabel, 'Medium');
+      expect(Task(name: 'T', difficulty: 2).difficultyLabel, 'Hard');
+    });
+
+    test('toMap includes priority and difficulty', () {
+      final task = Task(id: 1, name: 'T', createdAt: 100, priority: 2, difficulty: 0);
+      final map = task.toMap();
+
+      expect(map['priority'], 2);
+      expect(map['difficulty'], 0);
+    });
+
+    test('toMap includes default priority and difficulty', () {
+      final task = Task(id: 1, name: 'T', createdAt: 100);
+      final map = task.toMap();
+
+      expect(map['priority'], 1);
+      expect(map['difficulty'], 1);
+    });
+
+    test('fromMap parses priority and difficulty', () {
+      final task = Task.fromMap({
+        'id': 5,
+        'name': 'Hard',
+        'created_at': 1000,
+        'completed_at': null,
+        'started_at': null,
+        'skipped_at': null,
+        'priority': 2,
+        'difficulty': 2,
+      });
+
+      expect(task.priority, 2);
+      expect(task.difficulty, 2);
+    });
+
+    test('fromMap defaults priority and difficulty when missing', () {
+      final task = Task.fromMap({
+        'id': 5,
+        'name': 'Old',
+        'created_at': 1000,
+        'completed_at': null,
+      });
+
+      expect(task.priority, 1);
+      expect(task.difficulty, 1);
+    });
+
+    test('toMap/fromMap round-trip preserves priority and difficulty', () {
+      final original = Task(id: 10, name: 'Round trip', createdAt: 999, priority: 0, difficulty: 2);
+      final restored = Task.fromMap(original.toMap());
+
+      expect(restored.priority, original.priority);
+      expect(restored.difficulty, original.difficulty);
+    });
   });
 }

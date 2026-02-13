@@ -46,7 +46,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE tasks (
@@ -56,7 +56,9 @@ class DatabaseHelper {
             completed_at INTEGER,
             started_at INTEGER,
             url TEXT,
-            skipped_at INTEGER
+            skipped_at INTEGER,
+            priority INTEGER NOT NULL DEFAULT 1,
+            difficulty INTEGER NOT NULL DEFAULT 1
           )
         ''');
         await db.execute('''
@@ -81,6 +83,10 @@ class DatabaseHelper {
         }
         if (oldVersion < 5) {
           await db.execute('ALTER TABLE tasks ADD COLUMN skipped_at INTEGER');
+        }
+        if (oldVersion < 6) {
+          await db.execute('ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 1');
+          await db.execute('ALTER TABLE tasks ADD COLUMN difficulty INTEGER NOT NULL DEFAULT 1');
         }
       },
     );
@@ -268,6 +274,16 @@ class DatabaseHelper {
   Future<void> updateTaskUrl(int taskId, String? url) async {
     final db = await database;
     await db.update('tasks', {'url': url}, where: 'id = ?', whereArgs: [taskId]);
+  }
+
+  Future<void> updateTaskPriority(int taskId, int priority) async {
+    final db = await database;
+    await db.update('tasks', {'priority': priority}, where: 'id = ?', whereArgs: [taskId]);
+  }
+
+  Future<void> updateTaskDifficulty(int taskId, int difficulty) async {
+    final db = await database;
+    await db.update('tasks', {'difficulty': difficulty}, where: 'id = ?', whereArgs: [taskId]);
   }
 
   Future<void> removeRelationship(int parentId, int childId) async {

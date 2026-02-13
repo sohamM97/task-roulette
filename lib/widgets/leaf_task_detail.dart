@@ -11,6 +11,8 @@ class LeafTaskDetail extends StatelessWidget {
   final VoidCallback onToggleStarted;
   final VoidCallback onRename;
   final void Function(String?) onUpdateUrl;
+  final ValueChanged<int> onUpdatePriority;
+  final ValueChanged<int> onUpdateDifficulty;
 
   const LeafTaskDetail({
     super.key,
@@ -22,6 +24,8 @@ class LeafTaskDetail extends StatelessWidget {
     required this.onToggleStarted,
     required this.onRename,
     required this.onUpdateUrl,
+    required this.onUpdatePriority,
+    required this.onUpdateDifficulty,
   });
 
   String _formatDate(int millis) {
@@ -174,6 +178,45 @@ class LeafTaskDetail extends StatelessWidget {
     return display.length > 40 ? '${display.substring(0, 40)}...' : display;
   }
 
+  Widget _buildSegmentedRow(
+    BuildContext context, {
+    required String label,
+    required List<String> labels,
+    required int selected,
+    required ValueChanged<int> onChanged,
+  }) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 72,
+          child: Text(
+            label,
+            style: textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        SegmentedButton<int>(
+          segments: [
+            for (int i = 0; i < labels.length; i++)
+              ButtonSegment(value: i, label: Text(labels[i])),
+          ],
+          selected: {selected},
+          onSelectionChanged: (values) => onChanged(values.first),
+          showSelectedIcon: false,
+          style: ButtonStyle(
+            visualDensity: VisualDensity.compact,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            textStyle: WidgetStatePropertyAll(textTheme.bodySmall),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -251,6 +294,22 @@ class LeafTaskDetail extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             _buildUrlSection(context, colorScheme, textTheme),
+            const SizedBox(height: 20),
+            _buildSegmentedRow(
+              context,
+              label: 'Priority',
+              labels: Task.priorityLabels,
+              selected: task.priority,
+              onChanged: onUpdatePriority,
+            ),
+            const SizedBox(height: 12),
+            _buildSegmentedRow(
+              context,
+              label: 'Difficulty',
+              labels: Task.difficultyLabels,
+              selected: task.difficulty,
+              onChanged: onUpdateDifficulty,
+            ),
             const SizedBox(height: 24),
             if (!task.isStarted)
               OutlinedButton.icon(

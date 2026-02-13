@@ -204,6 +204,8 @@ class TaskProvider extends ChangeNotifier {
         completedAt: _currentParent!.completedAt,
         startedAt: DateTime.now().millisecondsSinceEpoch,
         url: _currentParent!.url,
+        priority: _currentParent!.priority,
+        difficulty: _currentParent!.difficulty,
       );
     }
     await _refreshCurrentList();
@@ -220,6 +222,8 @@ class TaskProvider extends ChangeNotifier {
         completedAt: _currentParent!.completedAt,
         startedAt: null,
         url: _currentParent!.url,
+        priority: _currentParent!.priority,
+        difficulty: _currentParent!.difficulty,
       );
     }
     await _refreshCurrentList();
@@ -279,6 +283,8 @@ class TaskProvider extends ChangeNotifier {
         completedAt: _currentParent!.completedAt,
         startedAt: _currentParent!.startedAt,
         url: _currentParent!.url,
+        priority: _currentParent!.priority,
+        difficulty: _currentParent!.difficulty,
       );
     }
     await _refreshCurrentList();
@@ -294,6 +300,42 @@ class TaskProvider extends ChangeNotifier {
         completedAt: _currentParent!.completedAt,
         startedAt: _currentParent!.startedAt,
         url: url,
+        priority: _currentParent!.priority,
+        difficulty: _currentParent!.difficulty,
+      );
+    }
+    await _refreshCurrentList();
+  }
+
+  Future<void> updateTaskPriority(int taskId, int priority) async {
+    await _db.updateTaskPriority(taskId, priority);
+    if (_currentParent?.id == taskId) {
+      _currentParent = Task(
+        id: _currentParent!.id,
+        name: _currentParent!.name,
+        createdAt: _currentParent!.createdAt,
+        completedAt: _currentParent!.completedAt,
+        startedAt: _currentParent!.startedAt,
+        url: _currentParent!.url,
+        priority: priority,
+        difficulty: _currentParent!.difficulty,
+      );
+    }
+    await _refreshCurrentList();
+  }
+
+  Future<void> updateTaskDifficulty(int taskId, int difficulty) async {
+    await _db.updateTaskDifficulty(taskId, difficulty);
+    if (_currentParent?.id == taskId) {
+      _currentParent = Task(
+        id: _currentParent!.id,
+        name: _currentParent!.name,
+        createdAt: _currentParent!.createdAt,
+        completedAt: _currentParent!.completedAt,
+        startedAt: _currentParent!.startedAt,
+        url: _currentParent!.url,
+        priority: _currentParent!.priority,
+        difficulty: difficulty,
       );
     }
     await _refreshCurrentList();
