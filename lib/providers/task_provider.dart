@@ -181,6 +181,19 @@ class TaskProvider extends ChangeNotifier {
     return true;
   }
 
+  /// Moves a task from the current parent to a new parent.
+  /// Returns false if a cycle would be created.
+  Future<bool> moveTask(int taskId, int newParentId) async {
+    if (_currentParent == null) return false;
+    final wouldCycle = await _db.hasPath(taskId, newParentId);
+    if (wouldCycle) return false;
+
+    await _db.addRelationship(newParentId, taskId);
+    await _db.removeRelationship(_currentParent!.id!, taskId);
+    await _refreshCurrentList();
+    return true;
+  }
+
   Future<void> renameTask(int taskId, String name) async {
     await _db.updateTaskName(taskId, name);
     await _refreshCurrentList();

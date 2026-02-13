@@ -143,6 +143,42 @@ class _TaskListScreenState extends State<TaskListScreen> {
     }
   }
 
+  Future<void> _moveTask(Task task) async {
+    final provider = context.read<TaskProvider>();
+    final currentParent = provider.currentParent;
+    if (currentParent == null) return;
+
+    final allTasks = await provider.getAllTasks();
+    final parentNamesMap = await provider.getParentNamesMap();
+
+    // Filter out: the task itself, the current parent (already here)
+    final candidates = allTasks.where((t) {
+      if (t.id == task.id) return false;
+      if (t.id == currentParent.id) return false;
+      return true;
+    }).toList();
+
+    if (!mounted) return;
+
+    final selected = await showDialog<Task>(
+      context: context,
+      builder: (_) => TaskPickerDialog(
+        candidates: candidates,
+        title: 'Move "${task.name}" to...',
+        parentNamesMap: parentNamesMap,
+      ),
+    );
+
+    if (selected == null || !mounted) return;
+
+    final success = await provider.moveTask(task.id!, selected.id!);
+    if (!success && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cannot move: would create a cycle')),
+      );
+    }
+  }
+
   Future<void> _unlinkTask(Task task) async {
     final provider = context.read<TaskProvider>();
     final parentIds = await provider.getParentIds(task.id!);
@@ -447,6 +483,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
                             onUnlink: provider.isRoot
                                 ? null
                                 : () => _unlinkTask(task),
+                            onMove: provider.isRoot
+                                ? null
+                                : () => _moveTask(task),
                             onRename: () => _renameTask(task),
                           );
                         },

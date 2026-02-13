@@ -7,6 +7,7 @@ class TaskCard extends StatelessWidget {
   final VoidCallback onDelete;
   final VoidCallback? onAddParent;
   final VoidCallback? onUnlink;
+  final VoidCallback? onMove;
   final VoidCallback? onRename;
 
   const TaskCard({
@@ -16,6 +17,7 @@ class TaskCard extends StatelessWidget {
     required this.onDelete,
     this.onAddParent,
     this.onUnlink,
+    this.onMove,
     this.onRename,
   });
 
@@ -43,6 +45,16 @@ class TaskCard extends StatelessWidget {
                   onTap: () {
                     Navigator.pop(bottomSheetContext);
                     onAddParent!();
+                  },
+                ),
+              if (onMove != null)
+                ListTile(
+                  leading: const Icon(Icons.drive_file_move_outline),
+                  title: const Text('Move to...'),
+                  subtitle: const Text('Move from here to another list'),
+                  onTap: () {
+                    Navigator.pop(bottomSheetContext);
+                    onMove!();
                   },
                 ),
               if (onUnlink != null)
