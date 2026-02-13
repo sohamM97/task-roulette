@@ -11,6 +11,10 @@ class TaskProvider extends ChangeNotifier {
   List<Task> _tasks = [];
   List<Task> get tasks => _tasks;
 
+  /// Task IDs that have at least one in-progress descendant.
+  Set<int> _startedDescendantIds = {};
+  Set<int> get startedDescendantIds => _startedDescendantIds;
+
   /// null means we're at the root level
   Task? _currentParent;
   Task? get currentParent => _currentParent;
@@ -22,6 +26,8 @@ class TaskProvider extends ChangeNotifier {
     _currentParent = null;
     _parentStack.clear();
     _tasks = await _db.getRootTasks();
+    final taskIds = _tasks.map((t) => t.id!).toList();
+    _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
     notifyListeners();
   }
 
@@ -29,6 +35,8 @@ class TaskProvider extends ChangeNotifier {
     _parentStack.add(_currentParent);
     _currentParent = task;
     _tasks = await _db.getChildren(task.id!);
+    final taskIds = _tasks.map((t) => t.id!).toList();
+    _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
     notifyListeners();
   }
 
@@ -40,6 +48,8 @@ class TaskProvider extends ChangeNotifier {
     } else {
       _tasks = await _db.getChildren(_currentParent!.id!);
     }
+    final taskIds = _tasks.map((t) => t.id!).toList();
+    _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
     notifyListeners();
     return true;
   }
@@ -64,6 +74,8 @@ class TaskProvider extends ChangeNotifier {
     } else {
       _tasks = await _db.getChildren(_currentParent!.id!);
     }
+    final taskIds = _tasks.map((t) => t.id!).toList();
+    _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
     notifyListeners();
   }
 
@@ -150,6 +162,38 @@ class TaskProvider extends ChangeNotifier {
     await _db.completeTask(taskId);
   }
 
+  /// Marks a task as started (in progress).
+  Future<void> startTask(int taskId) async {
+    await _db.startTask(taskId);
+    // Update _currentParent in place so the leaf detail view reflects the change
+    // immediately without needing to navigate away and back.
+    if (_currentParent?.id == taskId) {
+      _currentParent = Task(
+        id: _currentParent!.id,
+        name: _currentParent!.name,
+        createdAt: _currentParent!.createdAt,
+        completedAt: _currentParent!.completedAt,
+        startedAt: DateTime.now().millisecondsSinceEpoch,
+      );
+    }
+    await _refreshCurrentList();
+  }
+
+  /// Un-starts a task (removes in-progress state).
+  Future<void> unstartTask(int taskId) async {
+    await _db.unstartTask(taskId);
+    if (_currentParent?.id == taskId) {
+      _currentParent = Task(
+        id: _currentParent!.id,
+        name: _currentParent!.name,
+        createdAt: _currentParent!.createdAt,
+        completedAt: _currentParent!.completedAt,
+        startedAt: null,
+      );
+    }
+    await _refreshCurrentList();
+  }
+
   Future<Map<int, List<String>>> getParentNamesMap() async {
     return _db.getParentNamesMap();
   }
@@ -226,6 +270,8 @@ class TaskProvider extends ChangeNotifier {
     _parentStack.add(null);
     _currentParent = task;
     _tasks = await _db.getChildren(task.id!);
+    final taskIds = _tasks.map((t) => t.id!).toList();
+    _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
     notifyListeners();
   }
 
@@ -235,6 +281,8 @@ class TaskProvider extends ChangeNotifier {
     } else {
       _tasks = await _db.getChildren(_currentParent!.id!);
     }
+    final taskIds = _tasks.map((t) => t.id!).toList();
+    _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
     notifyListeners();
   }
 }

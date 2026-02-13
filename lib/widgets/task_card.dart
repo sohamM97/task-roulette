@@ -9,6 +9,8 @@ class TaskCard extends StatelessWidget {
   final VoidCallback? onUnlink;
   final VoidCallback? onMove;
   final VoidCallback? onRename;
+  final bool hasStartedDescendant;
+  final int indicatorStyle;
 
   const TaskCard({
     super.key,
@@ -19,6 +21,8 @@ class TaskCard extends StatelessWidget {
     this.onUnlink,
     this.onMove,
     this.onRename,
+    this.hasStartedDescendant = false,
+    this.indicatorStyle = 2,
   });
 
   void _showDeleteBottomSheet(BuildContext context) {
@@ -118,25 +122,78 @@ class TaskCard extends StatelessWidget {
     return colors[(task.id ?? 0) % colors.length];
   }
 
+  bool get _showIndicator => task.isStarted || hasStartedDescendant;
+
+  Color _indicatorColor(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return isDark ? const Color(0xFFFFB74D) : const Color(0xFFE65100);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final showIndicator = _showIndicator;
+    final indicatorColor = _indicatorColor(context);
+
     return Card(
       color: _cardColor(context),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: onTap,
         onLongPress: () => _showDeleteBottomSheet(context),
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(
-              task.name,
-              style: Theme.of(context).textTheme.titleMedium,
-              textAlign: TextAlign.center,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
+        child: Stack(
+          children: [
+            // Style 1: colored left border strip
+            if (showIndicator && indicatorStyle == 1)
+              Positioned(
+                left: 0,
+                top: 8,
+                bottom: 8,
+                child: Container(
+                  width: 4,
+                  decoration: BoxDecoration(
+                    color: indicatorColor,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  task.name,
+                  style: Theme.of(context).textTheme.titleMedium,
+                  textAlign: TextAlign.center,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ),
-          ),
+            // Style 0: dot in top-right corner
+            if (showIndicator && indicatorStyle == 0)
+              Positioned(
+                right: 8,
+                top: 8,
+                child: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: indicatorColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+            // Style 2: play icon in top-right corner
+            if (showIndicator && indicatorStyle == 2)
+              Positioned(
+                right: 6,
+                top: 6,
+                child: Icon(
+                  Icons.play_circle_filled,
+                  size: 18,
+                  color: indicatorColor,
+                ),
+              ),
+          ],
         ),
       ),
     );

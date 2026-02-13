@@ -3,15 +3,18 @@ class Task {
   final String name;
   final int createdAt;
   final int? completedAt;
+  final int? startedAt;
 
   Task({
     this.id,
     required this.name,
     int? createdAt,
     this.completedAt,
+    this.startedAt,
   }) : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch;
 
   bool get isCompleted => completedAt != null;
+  bool get isStarted => startedAt != null && !isCompleted;
 
   Map<String, dynamic> toMap() {
     return {
@@ -19,6 +22,7 @@ class Task {
       'name': name,
       'created_at': createdAt,
       'completed_at': completedAt,
+      'started_at': startedAt,
     };
   }
 
@@ -28,6 +32,7 @@ class Task {
       name: map['name'] as String,
       createdAt: map['created_at'] as int,
       completedAt: map['completed_at'] as int?,
+      startedAt: map['started_at'] as int?,
     );
   }
 }

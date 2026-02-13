@@ -9,6 +9,7 @@ void main() {
     List<String> parentNames = const [],
     VoidCallback? onDone,
     VoidCallback? onAddParent,
+    VoidCallback? onToggleStarted,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -17,6 +18,7 @@ void main() {
           parentNames: parentNames,
           onDone: onDone ?? () {},
           onAddParent: onAddParent ?? () {},
+          onToggleStarted: onToggleStarted ?? () {},
         ),
       ),
     );

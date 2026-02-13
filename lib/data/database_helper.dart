@@ -46,14 +46,15 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             created_at INTEGER NOT NULL,
-            completed_at INTEGER
+            completed_at INTEGER,
+            started_at INTEGER
           )
         ''');
         await db.execute('''
@@ -69,6 +70,9 @@ class DatabaseHelper {
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE tasks ADD COLUMN completed_at INTEGER');
+        }
+        if (oldVersion < 3) {
+          await db.execute('ALTER TABLE tasks ADD COLUMN started_at INTEGER');
         }
       },
     );
@@ -301,5 +305,53 @@ class DatabaseHelper {
     for (final childId in childIds) {
       await addRelationship(task.id!, childId);
     }
+  }
+
+  /// Marks a task as started by setting started_at to now.
+  Future<void> startTask(int taskId) async {
+    final db = await database;
+    await db.update(
+      'tasks',
+      {'started_at': DateTime.now().millisecondsSinceEpoch},
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
+  /// Un-starts a task by clearing started_at.
+  Future<void> unstartTask(int taskId) async {
+    final db = await database;
+    await db.update(
+      'tasks',
+      {'started_at': null},
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
+  /// Returns the set of task IDs (from the given list) that have at least one
+  /// descendant which is in progress (started_at IS NOT NULL AND completed_at IS NULL).
+  Future<Set<int>> getTaskIdsWithStartedDescendants(List<int> taskIds) async {
+    if (taskIds.isEmpty) return {};
+    final db = await database;
+    final result = <int>{};
+    for (final taskId in taskIds) {
+      final rows = await db.rawQuery('''
+        WITH RECURSIVE descendants(id) AS (
+          SELECT child_id FROM task_relationships WHERE parent_id = ?
+          UNION
+          SELECT tr.child_id FROM task_relationships tr
+          INNER JOIN descendants d ON tr.parent_id = d.id
+        )
+        SELECT 1 FROM descendants
+        INNER JOIN tasks t ON descendants.id = t.id
+        WHERE t.started_at IS NOT NULL AND t.completed_at IS NULL
+        LIMIT 1
+      ''', [taskId]);
+      if (rows.isNotEmpty) {
+        result.add(taskId);
+      }
+    }
+    return result;
   }
 }

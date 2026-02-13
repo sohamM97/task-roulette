@@ -233,6 +233,15 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
+  Future<void> _toggleStarted(Task task) async {
+    final provider = context.read<TaskProvider>();
+    if (task.isStarted) {
+      await provider.unstartTask(task.id!);
+    } else {
+      await provider.startTask(task.id!);
+    }
+  }
+
   Future<void> _completeTaskWithUndo(Task task) async {
     final provider = context.read<TaskProvider>();
     await provider.completeTask(task.id!);
@@ -266,6 +275,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           parentNames: parentNames,
           onDone: () => _completeTaskWithUndo(task),
           onAddParent: () => _addParentToTask(task),
+          onToggleStarted: () => _toggleStarted(task),
         );
       },
     );
@@ -487,6 +497,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                                 ? null
                                 : () => _moveTask(task),
                             onRename: () => _renameTask(task),
+                            hasStartedDescendant: provider.startedDescendantIds.contains(task.id),
                           );
                         },
                       );

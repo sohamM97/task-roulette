@@ -6,6 +6,7 @@ class LeafTaskDetail extends StatelessWidget {
   final List<String> parentNames;
   final VoidCallback onDone;
   final VoidCallback onAddParent;
+  final VoidCallback onToggleStarted;
 
   const LeafTaskDetail({
     super.key,
@@ -13,6 +14,7 @@ class LeafTaskDetail extends StatelessWidget {
     required this.parentNames,
     required this.onDone,
     required this.onAddParent,
+    required this.onToggleStarted,
   });
 
   String _formatDate(int millis) {
@@ -31,6 +33,21 @@ class LeafTaskDetail extends StatelessWidget {
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ];
     return 'Created ${months[date.month - 1]} ${date.day}, ${date.year}';
+  }
+
+  String _formatTimeAgo(int millis) {
+    final started = DateTime.fromMillisecondsSinceEpoch(millis);
+    final diff = DateTime.now().difference(started);
+    if (diff.inDays > 0) {
+      return 'Started ${diff.inDays} ${diff.inDays == 1 ? 'day' : 'days'} ago';
+    }
+    if (diff.inHours > 0) {
+      return 'Started ${diff.inHours} ${diff.inHours == 1 ? 'hour' : 'hours'} ago';
+    }
+    if (diff.inMinutes > 0) {
+      return 'Started ${diff.inMinutes} ${diff.inMinutes == 1 ? 'minute' : 'minutes'} ago';
+    }
+    return 'Started just now';
   }
 
   @override
@@ -89,6 +106,35 @@ class LeafTaskDetail extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 32),
+            if (!task.isStarted)
+              OutlinedButton.icon(
+                onPressed: onToggleStarted,
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('Start working'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  textStyle: textTheme.titleMedium,
+                ),
+              )
+            else ...[
+              FilledButton.tonalIcon(
+                onPressed: onToggleStarted,
+                icon: const Icon(Icons.check),
+                label: const Text('Started'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  textStyle: textTheme.titleMedium,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _formatTimeAgo(task.startedAt!),
+                style: textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: onDone,
               icon: const Icon(Icons.check),
