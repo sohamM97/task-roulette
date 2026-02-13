@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
@@ -399,7 +398,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
               title: provider.isRoot
                   ? Text(
                       'Task Roulette',
-                      style: GoogleFonts.outfit(
+                      style: const TextStyle(
+                        fontFamily: 'Outfit',
                         fontSize: 30,
                         fontWeight: FontWeight.w400,
                         letterSpacing: -0.3,
