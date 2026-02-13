@@ -9,6 +9,7 @@ void main() {
   setUpAll(() {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
+    DatabaseHelper.testDatabasePath = inMemoryDatabasePath;
   });
 
   setUp(() async {

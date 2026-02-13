@@ -1,4 +1,4 @@
-# TaskRoulette
+# Task Roulette
 
 A DAG-based task manager built with Flutter. Tasks can have multiple parents and children, forming a directed acyclic graph. Navigate the hierarchy and randomly pick a task at any level.
 

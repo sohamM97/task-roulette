@@ -13,6 +13,10 @@ class DatabaseHelper {
 
   Database? _database;
 
+  /// Override in tests to use inMemoryDatabasePath instead of the real DB.
+  @visibleForTesting
+  static String? testDatabasePath;
+
   Future<Database> get database async {
     if (_database != null) return _database!;
     _database = await _initDatabase();
@@ -20,18 +24,23 @@ class DatabaseHelper {
   }
 
   Future<Database> _initDatabase() async {
-    final appDir = await getApplicationSupportDirectory();
-    final path = join(appDir.path, 'task_roulette.db');
+    final String path;
+    if (testDatabasePath != null) {
+      path = testDatabasePath!;
+    } else {
+      final appDir = await getApplicationSupportDirectory();
+      path = join(appDir.path, 'task_roulette.db');
 
-    // Migrate from old location (.dart_tool/sqflite_common_ffi/databases/)
-    // which gets wiped by flutter clean.
-    if (!File(path).existsSync()) {
-      final oldPath = join(
-        await getDatabasesPath(),
-        'task_roulette.db',
-      );
-      if (File(oldPath).existsSync()) {
-        await File(oldPath).copy(path);
+      // Migrate from old location (.dart_tool/sqflite_common_ffi/databases/)
+      // which gets wiped by flutter clean.
+      if (!File(path).existsSync()) {
+        final oldPath = join(
+          await getDatabasesPath(),
+          'task_roulette.db',
+        );
+        if (File(oldPath).existsSync()) {
+          await File(oldPath).copy(path);
+        }
       }
     }
 
@@ -69,9 +78,6 @@ class DatabaseHelper {
   Future<void> reset() async {
     await _database?.close();
     _database = null;
-    final appDir = await getApplicationSupportDirectory();
-    final path = join(appDir.path, 'task_roulette.db');
-    await deleteDatabase(path);
   }
 
   Future<int> insertTask(Task task) async {

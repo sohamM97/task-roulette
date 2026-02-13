@@ -458,6 +458,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
             ),
             floatingActionButton: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 if (provider.tasks.isNotEmpty)
                   FloatingActionButton(
@@ -468,21 +469,30 @@ class _TaskListScreenState extends State<TaskListScreen> {
                 if (provider.tasks.isNotEmpty)
                   const SizedBox(height: 12),
                 if (!provider.isRoot)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: FloatingActionButton.small(
-                      heroTag: 'linkTask',
-                      onPressed: _linkExistingTask,
-                      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                      foregroundColor: Theme.of(context).colorScheme.onSurface,
-                      child: const Icon(Icons.link),
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      FloatingActionButton(
+                        heroTag: 'linkTask',
+                        onPressed: _linkExistingTask,
+                        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        foregroundColor: Theme.of(context).colorScheme.onSurface,
+                        child: const Icon(Icons.link),
+                      ),
+                      const SizedBox(width: 12),
+                      FloatingActionButton(
+                        heroTag: 'addTask',
+                        onPressed: _showFabOptions,
+                        child: const Icon(Icons.add),
+                      ),
+                    ],
+                  )
+                else
+                  FloatingActionButton(
+                    heroTag: 'addTask',
+                    onPressed: _showFabOptions,
+                    child: const Icon(Icons.add),
                   ),
-                FloatingActionButton(
-                  heroTag: 'addTask',
-                  onPressed: _showFabOptions,
-                  child: const Icon(Icons.add),
-                ),
               ],
             ),
           );
