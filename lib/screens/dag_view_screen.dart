@@ -29,6 +29,9 @@ class _DagViewScreenState extends State<DagViewScreen> {
   // Task IDs that appear in at least one relationship (as parent or child).
   Set<int> _connectedIds = {};
 
+  final TransformationController _transformController =
+      TransformationController();
+
   static const _nodeColors = [
     Color(0xFFE8DEF8), // purple
     Color(0xFFD0E8FF), // blue
@@ -55,6 +58,40 @@ class _DagViewScreenState extends State<DagViewScreen> {
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _transformController.dispose();
+    super.dispose();
+  }
+
+  void _zoom(double factor) {
+    final currentScale =
+        _transformController.value.getMaxScaleOnAxis();
+    final newScale = (currentScale * factor).clamp(0.2, 3.0);
+    final scaleFactor = newScale / currentScale;
+
+    // Scale around the center of the viewport.
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+    final center = renderBox.size.center(Offset.zero);
+
+    // Build: translate to center, scale, translate back.
+    final toCenter = Matrix4.identity()
+      ..setTranslationRaw(center.dx, center.dy, 0);
+    final scale = Matrix4.identity()
+      ..setEntry(0, 0, scaleFactor)
+      ..setEntry(1, 1, scaleFactor);
+    final fromCenter = Matrix4.identity()
+      ..setTranslationRaw(-center.dx, -center.dy, 0);
+
+    _transformController.value =
+        toCenter * scale * fromCenter * _transformController.value;
+  }
+
+  void _resetZoom() {
+    _transformController.value = Matrix4.identity();
   }
 
   Future<void> _loadData() async {
@@ -153,7 +190,7 @@ class _DagViewScreenState extends State<DagViewScreen> {
             ),
           ),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 150),
+            constraints: const BoxConstraints(maxWidth: 120),
             child: Text(
               task.name,
               style: Theme.of(context).textTheme.bodyMedium,
@@ -202,41 +239,82 @@ class _DagViewScreenState extends State<DagViewScreen> {
                   ? _buildUnrelatedOnly()
                   : !hasConnected
                       ? _buildEmptyState()
-                      : InteractiveViewer(
-                          constrained: false,
-                          boundaryMargin: const EdgeInsets.all(200),
-                          minScale: 0.2,
-                          maxScale: 3.0,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              GraphView(
-                                graph: _graph!,
-                                algorithm: SugiyamaAlgorithm(
-                                  SugiyamaConfiguration()
-                                    ..nodeSeparation = 40
-                                    ..levelSeparation = 60
-                                    ..orientation = SugiyamaConfiguration
-                                        .ORIENTATION_TOP_BOTTOM,
-                                ),
-                                paint: Paint()
-                                  ..color =
-                                      isDark ? Colors.white54 : Colors.black45
-                                  ..strokeWidth = 2.0
-                                  ..style = PaintingStyle.stroke,
-                                builder: (Node node) {
-                                  final taskId = node.key!.value as int;
-                                  final task = _connectedTaskMap[taskId];
-                                  if (task == null) {
-                                    return const SizedBox.shrink();
-                                  }
-                                  return _buildNodeWidget(task);
-                                },
+                      : Stack(
+                          children: [
+                            InteractiveViewer(
+                              transformationController: _transformController,
+                              constrained: false,
+                              panEnabled: false,
+                              boundaryMargin: const EdgeInsets.all(200),
+                              minScale: 0.2,
+                              maxScale: 3.0,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  GraphView(
+                                    graph: _graph!,
+                                    algorithm: SugiyamaAlgorithm(
+                                      SugiyamaConfiguration()
+                                        ..nodeSeparation = 25
+                                        ..levelSeparation = 80
+                                        ..orientation = SugiyamaConfiguration
+                                            .ORIENTATION_TOP_BOTTOM,
+                                    ),
+                                    paint: Paint()
+                                      ..color = isDark
+                                          ? Colors.white54
+                                          : Colors.black45
+                                      ..strokeWidth = 2.0
+                                      ..style = PaintingStyle.stroke,
+                                    builder: (Node node) {
+                                      final taskId = node.key!.value as int;
+                                      final task = _connectedTaskMap[taskId];
+                                      if (task == null) {
+                                        return const SizedBox.shrink();
+                                      }
+                                      return _buildNodeWidget(task);
+                                    },
+                                  ),
+                                  if (_showUnrelated &&
+                                      _unrelatedTasks.isNotEmpty)
+                                    _buildUnrelatedSection(),
+                                ],
                               ),
-                              if (_showUnrelated && _unrelatedTasks.isNotEmpty)
-                                _buildUnrelatedSection(),
-                            ],
-                          ),
+                            ),
+                            Positioned(
+                              left: 12,
+                              bottom: 12,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _ZoomButton(
+                                    icon: Icons.add,
+                                    tooltip: 'Zoom in',
+                                    onPressed: () => _zoom(1.3),
+                                    borderRadius: const BorderRadius.vertical(
+                                      top: Radius.circular(8),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 1),
+                                  _ZoomButton(
+                                    icon: Icons.fit_screen_outlined,
+                                    tooltip: 'Reset zoom',
+                                    onPressed: _resetZoom,
+                                    borderRadius: BorderRadius.zero,
+                                  ),
+                                  const SizedBox(height: 1),
+                                  _ZoomButton(
+                                    icon: Icons.remove,
+                                    tooltip: 'Zoom out',
+                                    onPressed: () => _zoom(0.7),
+                                    borderRadius: const BorderRadius.vertical(
+                                      bottom: Radius.circular(8),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
     );
   }
@@ -308,6 +386,41 @@ class _DagViewScreenState extends State<DagViewScreen> {
                 .toList(),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ZoomButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+  final BorderRadius borderRadius;
+
+  const _ZoomButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+    required this.borderRadius,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: colorScheme.surfaceContainerHigh,
+        borderRadius: borderRadius,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: borderRadius,
+          child: SizedBox(
+            width: 40,
+            height: 40,
+            child: Icon(icon, size: 20, color: colorScheme.onSurface),
+          ),
+        ),
       ),
     );
   }
