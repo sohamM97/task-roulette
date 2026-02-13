@@ -4,10 +4,8 @@ import '../models/task.dart';
 
 class LeafTaskDetail extends StatelessWidget {
   final Task task;
-  final List<String> parentNames;
   final VoidCallback onDone;
   final VoidCallback onSkip;
-  final VoidCallback onAddParent;
   final VoidCallback onToggleStarted;
   final VoidCallback onRename;
   final void Function(String?) onUpdateUrl;
@@ -15,46 +13,20 @@ class LeafTaskDetail extends StatelessWidget {
   const LeafTaskDetail({
     super.key,
     required this.task,
-    required this.parentNames,
     required this.onDone,
     required this.onSkip,
-    required this.onAddParent,
     required this.onToggleStarted,
     required this.onRename,
     required this.onUpdateUrl,
   });
 
-  String _formatDate(int millis) {
-    final date = DateTime.fromMillisecondsSinceEpoch(millis);
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final taskDay = DateTime(date.year, date.month, date.day);
-    final diff = today.difference(taskDay).inDays;
-
-    if (diff == 0) return 'Created today';
-    if (diff == 1) return 'Created yesterday';
-    if (diff < 7) return 'Created $diff days ago';
-
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    return 'Created ${months[date.month - 1]} ${date.day}, ${date.year}';
-  }
-
   String _formatTimeAgo(int millis) {
     final started = DateTime.fromMillisecondsSinceEpoch(millis);
     final diff = DateTime.now().difference(started);
-    if (diff.inDays > 0) {
-      return 'Started ${diff.inDays} ${diff.inDays == 1 ? 'day' : 'days'} ago';
-    }
-    if (diff.inHours > 0) {
-      return 'Started ${diff.inHours} ${diff.inHours == 1 ? 'hour' : 'hours'} ago';
-    }
-    if (diff.inMinutes > 0) {
-      return 'Started ${diff.inMinutes} ${diff.inMinutes == 1 ? 'minute' : 'minutes'} ago';
-    }
-    return 'Started just now';
+    if (diff.inDays > 0) return '${diff.inDays}d ago';
+    if (diff.inHours > 0) return '${diff.inHours}h ago';
+    if (diff.inMinutes > 0) return '${diff.inMinutes}m ago';
+    return 'just now';
   }
 
   Future<void> _openUrl(BuildContext context) async {
@@ -83,8 +55,12 @@ class LeafTaskDetail extends StatelessWidget {
     }
   }
 
-  void _editUrl(BuildContext context) {
-    final controller = TextEditingController(text: task.url ?? '');
+  static void showEditUrlDialog(
+    BuildContext context,
+    String? currentUrl,
+    void Function(String?) onUpdateUrl,
+  ) {
+    final controller = TextEditingController(text: currentUrl ?? '');
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -104,7 +80,7 @@ class LeafTaskDetail extends StatelessWidget {
           },
         ),
         actions: [
-          if (task.hasUrl)
+          if (currentUrl != null && currentUrl.isNotEmpty)
             TextButton(
               onPressed: () {
                 Navigator.pop(dialogContext);
@@ -131,50 +107,29 @@ class LeafTaskDetail extends StatelessWidget {
     );
   }
 
-  Widget _buildUrlSection(
+  Widget _buildUrlRow(
       BuildContext context, ColorScheme colorScheme, TextTheme textTheme) {
-    if (task.hasUrl) {
-      return InkWell(
-        onTap: () => _openUrl(context),
-        onLongPress: () => _editUrl(context),
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.link, size: 18, color: colorScheme.primary),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  _displayUrl(task.url!),
-                  style: textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.primary,
-                    decoration: TextDecoration.underline,
-                    decorationColor: colorScheme.primary,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+    if (!task.hasUrl) return const SizedBox.shrink();
     return InkWell(
-      onTap: () => _editUrl(context),
+      onTap: () => _openUrl(context),
+      onLongPress: () => showEditUrlDialog(context, task.url, onUpdateUrl),
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.add_link, size: 18, color: colorScheme.onSurfaceVariant),
+            Icon(Icons.link, size: 18, color: colorScheme.primary),
             const SizedBox(width: 6),
-            Text(
-              'Add link',
-              style: textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
+            Flexible(
+              child: Text(
+                _displayUrl(task.url!),
+                style: textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.primary,
+                  decoration: TextDecoration.underline,
+                  decorationColor: colorScheme.primary,
+                ),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
@@ -200,6 +155,7 @@ class LeafTaskDetail extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Task name with pencil icon — tappable to rename
             InkWell(
               onTap: onRename,
               borderRadius: BorderRadius.circular(8),
@@ -217,115 +173,59 @@ class LeafTaskDetail extends StatelessWidget {
                         textAlign: TextAlign.center,
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 5),
                     Icon(
-                      Icons.edit,
-                      size: 18,
-                      color: colorScheme.onSurfaceVariant,
+                      Icons.edit_outlined,
+                      size: 16,
+                      color: colorScheme.onSurfaceVariant.withAlpha(180),
                     ),
                   ],
                 ),
               ),
             ),
             const SizedBox(height: 8),
-            Text(
-              _formatDate(task.createdAt),
-              style: textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 4),
-            InkWell(
-              onTap: onAddParent,
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        parentNames.isNotEmpty
-                            ? 'Listed under ${parentNames.join(', ')}'
-                            : 'Top-level task',
-                        style: textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Icon(
-                      Icons.add_circle_outline,
-                      size: 20,
-                      color: colorScheme.primary,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildUrlSection(context, colorScheme, textTheme),
-            const SizedBox(height: 24),
-            if (!task.isStarted)
-              OutlinedButton.icon(
-                onPressed: onToggleStarted,
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Start working'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                  textStyle: textTheme.titleMedium,
-                ),
-              )
-            else ...[
-              FilledButton.tonalIcon(
-                onPressed: onToggleStarted,
-                icon: const Icon(Icons.check),
-                label: const Text('Started'),
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                  textStyle: textTheme.titleMedium,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                _formatTimeAgo(task.startedAt!),
-                style: textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            Row(
-              mainAxisSize: MainAxisSize.min,
+            // URL row — only if URL exists
+            _buildUrlRow(context, colorScheme, textTheme),
+            if (task.hasUrl) const SizedBox(height: 12),
+            // Start chip in a Wrap (future chips slot in here)
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
               children: [
-                TextButton.icon(
-                  onPressed: onSkip,
-                  icon: const Icon(Icons.not_interested),
-                  label: const Text('Skip'),
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                    textStyle: textTheme.titleMedium,
+                if (!task.isStarted)
+                  ActionChip(
+                    avatar: const Icon(Icons.play_arrow, size: 18),
+                    label: const Text('Start working'),
+                    onPressed: onToggleStarted,
+                  )
+                else
+                  ActionChip(
+                    avatar: const Icon(Icons.check, size: 18),
+                    label: Text('Started ${_formatTimeAgo(task.startedAt!)}'),
+                    onPressed: onToggleStarted,
+                    backgroundColor: colorScheme.secondaryContainer,
                   ),
-                ),
-                const SizedBox(width: 12),
-                FilledButton.icon(
-                  onPressed: onDone,
-                  icon: const Icon(Icons.check),
-                  label: const Text('Done'),
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                    textStyle: textTheme.titleMedium,
-                  ),
-                ),
               ],
             ),
-            const SizedBox(height: 24),
-            Text(
-              'Tap + to break this into subtasks',
-              style: textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+            const SizedBox(height: 20),
+            // Done button — primary, moderately prominent
+            FilledButton.icon(
+              onPressed: onDone,
+              icon: const Icon(Icons.check),
+              label: const Text('Done'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                textStyle: textTheme.titleMedium,
               ),
+            ),
+            const SizedBox(height: 8),
+            // Skip — de-emphasized
+            TextButton(
+              onPressed: onSkip,
+              style: TextButton.styleFrom(
+                textStyle: textTheme.bodyMedium,
+              ),
+              child: const Text('Skip'),
             ),
           ],
         ),

@@ -6,10 +6,8 @@ import 'package:task_roulette/widgets/leaf_task_detail.dart';
 void main() {
   Widget buildTestWidget({
     required Task task,
-    List<String> parentNames = const [],
     VoidCallback? onDone,
     VoidCallback? onSkip,
-    VoidCallback? onAddParent,
     VoidCallback? onToggleStarted,
     VoidCallback? onRename,
     void Function(String?)? onUpdateUrl,
@@ -18,10 +16,8 @@ void main() {
       home: Scaffold(
         body: LeafTaskDetail(
           task: task,
-          parentNames: parentNames,
           onDone: onDone ?? () {},
           onSkip: onSkip ?? () {},
-          onAddParent: onAddParent ?? () {},
           onToggleStarted: onToggleStarted ?? () {},
           onRename: onRename ?? () {},
           onUpdateUrl: onUpdateUrl ?? (_) {},
@@ -31,6 +27,14 @@ void main() {
   }
 
   group('LeafTaskDetail', () {
+    testWidgets('does not show creation date', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+      ));
+
+      expect(find.textContaining('Created'), findsNothing);
+    });
+
     testWidgets('displays task name', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Write report', createdAt: DateTime.now().millisecondsSinceEpoch),
@@ -39,48 +43,32 @@ void main() {
       expect(find.text('Write report'), findsOneWidget);
     });
 
-    testWidgets('displays "Created today" for today\'s task', (tester) async {
+    testWidgets('tapping task name fires onRename callback', (tester) async {
+      var renamed = false;
       await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'New task', createdAt: DateTime.now().millisecondsSinceEpoch),
+        task: Task(id: 1, name: 'My Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+        onRename: () => renamed = true,
       ));
 
-      expect(find.text('Created today'), findsOneWidget);
+      await tester.tap(find.text('My Task'));
+      expect(renamed, isTrue);
     });
 
-    testWidgets('displays "Created yesterday" for yesterday\'s task', (tester) async {
-      final yesterday = DateTime.now().subtract(const Duration(days: 1));
+    testWidgets('does not show Add link placeholder when no URL', (tester) async {
       await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Old task', createdAt: yesterday.millisecondsSinceEpoch),
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
       ));
 
-      expect(find.text('Created yesterday'), findsOneWidget);
+      expect(find.text('Add link'), findsNothing);
+      expect(find.byIcon(Icons.add_link), findsNothing);
     });
 
-    testWidgets('displays relative days for recent tasks', (tester) async {
-      final threeDaysAgo = DateTime.now().subtract(const Duration(days: 3));
+    testWidgets('URL row hidden when no URL', (tester) async {
       await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Task', createdAt: threeDaysAgo.millisecondsSinceEpoch),
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
       ));
 
-      expect(find.text('Created 3 days ago'), findsOneWidget);
-    });
-
-    testWidgets('displays parent names with "Listed under"', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Sub task', createdAt: DateTime.now().millisecondsSinceEpoch),
-        parentNames: ['Project A', 'Sprint 1'],
-      ));
-
-      expect(find.text('Listed under Project A, Sprint 1'), findsOneWidget);
-    });
-
-    testWidgets('displays "Top-level task" when no parents', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Root task', createdAt: DateTime.now().millisecondsSinceEpoch),
-        parentNames: [],
-      ));
-
-      expect(find.text('Top-level task'), findsOneWidget);
+      expect(find.byIcon(Icons.link), findsNothing);
     });
 
     testWidgets('Done button fires onDone callback', (tester) async {
@@ -94,45 +82,15 @@ void main() {
       expect(doneTapped, isTrue);
     });
 
-    testWidgets('tapping parent area fires onAddParent callback', (tester) async {
-      var addParentTapped = false;
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
-        parentNames: ['Parent A'],
-        onAddParent: () => addParentTapped = true,
-      ));
-
-      await tester.tap(find.text('Listed under Parent A'));
-      expect(addParentTapped, isTrue);
-    });
-
-    testWidgets('shows subtask hint', (tester) async {
+    testWidgets('shows Start working as ActionChip when task is not started', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
       ));
 
-      expect(find.text('Tap + to break this into subtasks'), findsOneWidget);
+      expect(find.widgetWithText(ActionChip, 'Start working'), findsOneWidget);
     });
 
-    testWidgets('shows add parent icon', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
-      ));
-
-      expect(find.byIcon(Icons.add_circle_outline), findsOneWidget);
-    });
-
-    testWidgets('shows "Start working" button when task is not started', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
-      ));
-
-      expect(find.text('Start working'), findsOneWidget);
-      expect(find.text('Started'), findsNothing);
-      expect(find.byIcon(Icons.play_arrow), findsOneWidget);
-    });
-
-    testWidgets('shows "Started" button when task is started', (tester) async {
+    testWidgets('shows Started chip when task is started', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(
           id: 1,
@@ -142,11 +100,11 @@ void main() {
         ),
       ));
 
-      expect(find.text('Started'), findsOneWidget);
+      expect(find.textContaining('Started'), findsOneWidget);
       expect(find.text('Start working'), findsNothing);
     });
 
-    testWidgets('shows "Started just now" for recently started task', (tester) async {
+    testWidgets('shows "Started just now" inside chip for recently started task', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(
           id: 1,
@@ -156,10 +114,10 @@ void main() {
         ),
       ));
 
-      expect(find.text('Started just now'), findsOneWidget);
+      expect(find.textContaining('just now'), findsOneWidget);
     });
 
-    testWidgets('shows time ago for started task', (tester) async {
+    testWidgets('shows compact time ago for started task', (tester) async {
       final twoHoursAgo = DateTime.now().subtract(const Duration(hours: 2));
       await tester.pumpWidget(buildTestWidget(
         task: Task(
@@ -170,21 +128,21 @@ void main() {
         ),
       ));
 
-      expect(find.text('Started 2 hours ago'), findsOneWidget);
+      expect(find.textContaining('2h ago'), findsOneWidget);
     });
 
-    testWidgets('Start working button fires onToggleStarted', (tester) async {
+    testWidgets('Start working chip fires onToggleStarted', (tester) async {
       var toggled = false;
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
         onToggleStarted: () => toggled = true,
       ));
 
-      await tester.tap(find.text('Start working'));
+      await tester.tap(find.widgetWithText(ActionChip, 'Start working'));
       expect(toggled, isTrue);
     });
 
-    testWidgets('Started button fires onToggleStarted', (tester) async {
+    testWidgets('Started chip fires onToggleStarted', (tester) async {
       var toggled = false;
       await tester.pumpWidget(buildTestWidget(
         task: Task(
@@ -196,17 +154,17 @@ void main() {
         onToggleStarted: () => toggled = true,
       ));
 
-      await tester.tap(find.text('Started'));
+      await tester.tap(find.textContaining('Started'));
       expect(toggled, isTrue);
     });
 
-    testWidgets('shows Skip button', (tester) async {
+    testWidgets('shows Skip as plain TextButton without icon', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
       ));
 
       expect(find.text('Skip'), findsOneWidget);
-      expect(find.byIcon(Icons.not_interested), findsOneWidget);
+      expect(find.byIcon(Icons.not_interested), findsNothing);
     });
 
     testWidgets('Skip button fires onSkip callback', (tester) async {
@@ -218,25 +176,6 @@ void main() {
 
       await tester.tap(find.text('Skip'));
       expect(skipped, isTrue);
-    });
-
-    testWidgets('shows edit icon next to task name', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
-      ));
-
-      expect(find.byIcon(Icons.edit), findsOneWidget);
-    });
-
-    testWidgets('tapping task name fires onRename callback', (tester) async {
-      var renamed = false;
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'My Task', createdAt: DateTime.now().millisecondsSinceEpoch),
-        onRename: () => renamed = true,
-      ));
-
-      await tester.tap(find.text('My Task'));
-      expect(renamed, isTrue);
     });
 
     testWidgets('displays URL when task has one', (tester) async {
@@ -253,17 +192,47 @@ void main() {
       expect(find.byIcon(Icons.link), findsOneWidget);
     });
 
-    testWidgets('shows "Add link" when task has no URL', (tester) async {
+    testWidgets('start chip is inside a Wrap widget', (tester) async {
       await tester.pumpWidget(buildTestWidget(
-        task: Task(
-          id: 1,
-          name: 'Task',
-          createdAt: DateTime.now().millisecondsSinceEpoch,
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+      ));
+
+      final chipFinder = find.widgetWithText(ActionChip, 'Start working');
+      expect(chipFinder, findsOneWidget);
+
+      // Verify the ActionChip has a Wrap ancestor
+      final wrapFinder = find.ancestor(
+        of: chipFinder,
+        matching: find.byType(Wrap),
+      );
+      expect(wrapFinder, findsOneWidget);
+    });
+
+    testWidgets('showEditUrlDialog static method shows dialog', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () {
+                LeafTaskDetail.showEditUrlDialog(
+                  context,
+                  'https://test.com',
+                  (_) {},
+                );
+              },
+              child: const Text('Open dialog'),
+            ),
+          ),
         ),
       ));
 
-      expect(find.text('Add link'), findsOneWidget);
-      expect(find.byIcon(Icons.add_link), findsOneWidget);
+      await tester.tap(find.text('Open dialog'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Link'), findsOneWidget);
+      expect(find.text('Save'), findsOneWidget);
+      expect(find.text('Cancel'), findsOneWidget);
+      expect(find.text('Remove'), findsOneWidget);
     });
   });
 }

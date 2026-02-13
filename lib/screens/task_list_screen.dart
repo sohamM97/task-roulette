@@ -334,21 +334,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   Widget _buildLeafTaskDetail(TaskProvider provider) {
     final task = provider.currentParent!;
-    return FutureBuilder<List<Task>>(
-      future: provider.getParents(task.id!),
-      builder: (context, snapshot) {
-        final parentNames = snapshot.data?.map((t) => t.name).toList() ?? [];
-        return LeafTaskDetail(
-          task: task,
-          parentNames: parentNames,
-          onDone: () => _completeTaskWithUndo(task),
-          onSkip: () => _skipTaskWithUndo(task),
-          onAddParent: () => _addParentToTask(task),
-          onToggleStarted: () => _toggleStarted(task),
-          onRename: () => _renameTask(task),
-          onUpdateUrl: (url) => _updateUrl(task, url),
-        );
-      },
+    return LeafTaskDetail(
+      task: task,
+      onDone: () => _completeTaskWithUndo(task),
+      onSkip: () => _skipTaskWithUndo(task),
+      onToggleStarted: () => _toggleStarted(task),
+      onRename: () => _renameTask(task),
+      onUpdateUrl: (url) => _updateUrl(task, url),
     );
   }
 
@@ -534,7 +526,20 @@ class _TaskListScreenState extends State<TaskListScreen> {
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert),
                   onSelected: (value) {
+                    final task = provider.currentParent;
                     switch (value) {
+                      case 'rename':
+                        if (task != null) _renameTask(task);
+                      case 'add_parent':
+                        if (task != null) _addParentToTask(task);
+                      case 'edit_link':
+                        if (task != null) {
+                          LeafTaskDetail.showEditUrlDialog(
+                            context,
+                            task.url,
+                            (url) => _updateUrl(task, url),
+                          );
+                        }
                       case 'export':
                         BackupService.exportDatabase(context);
                       case 'import':
@@ -545,6 +550,25 @@ class _TaskListScreenState extends State<TaskListScreen> {
                     }
                   },
                   itemBuilder: (_) => [
+                    if (!provider.isRoot && provider.tasks.isEmpty) ...[
+                      const PopupMenuItem(
+                        value: 'rename',
+                        child: Text('Rename'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'add_parent',
+                        child: Text('Also show under...'),
+                      ),
+                      PopupMenuItem(
+                        value: 'edit_link',
+                        child: Text(
+                          provider.currentParent?.hasUrl == true
+                              ? 'Edit link'
+                              : 'Add link',
+                        ),
+                      ),
+                      const PopupMenuDivider(),
+                    ],
                     const PopupMenuItem(
                       value: 'export',
                       child: Text('Export backup'),
