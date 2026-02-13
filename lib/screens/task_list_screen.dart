@@ -279,37 +279,14 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
     if (!mounted) return;
 
-    // Only offer "Pick another" if there are tasks to pick from
-    final hasTasks = provider.tasks.isNotEmpty;
-
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Row(
-          children: [
-            Expanded(child: Text('"${task.name}" done!')),
-            GestureDetector(
-              onTap: () {
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                provider.uncompleteTask(task.id!);
-              },
-              child: Text(
-                'Undo',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.inversePrimary,
-                  decoration: TextDecoration.underline,
-                  decorationColor: Theme.of(context).colorScheme.inversePrimary,
-                ),
-              ),
-            ),
-          ],
+        content: Text('"${task.name}" done!'),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () => provider.uncompleteTask(task.id!),
         ),
-        action: hasTasks
-            ? SnackBarAction(
-                label: 'Pick another',
-                onPressed: () => _pickRandom(),
-              )
-            : null,
         showCloseIcon: true,
         duration: const Duration(seconds: 5),
       ),
