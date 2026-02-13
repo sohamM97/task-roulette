@@ -86,6 +86,43 @@ class DatabaseHelper {
     );
   }
 
+  /// Returns the path to the current database file.
+  Future<String> getDatabasePath() async {
+    if (testDatabasePath != null) return testDatabasePath!;
+    final appDir = await getApplicationSupportDirectory();
+    return join(appDir.path, 'task_roulette.db');
+  }
+
+  /// Validates that [sourcePath] is a SQLite database with a `tasks` table.
+  /// Throws [FormatException] if it isn't.
+  Future<void> _validateBackup(String sourcePath) async {
+    Database? testDb;
+    try {
+      testDb = await openDatabase(sourcePath, readOnly: true);
+      final tables = await testDb.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'",
+      );
+      if (tables.isEmpty) {
+        throw const FormatException('Not a valid TaskRoulette backup');
+      }
+    } on DatabaseException {
+      throw const FormatException('Not a valid database file');
+    } finally {
+      await testDb?.close();
+    }
+  }
+
+  /// Validates [sourcePath], then closes the current DB, copies source over
+  /// it, and clears the cached instance so the next access reopens fresh.
+  /// Throws [FormatException] if the file is not a valid backup.
+  Future<void> importDatabase(String sourcePath) async {
+    await _validateBackup(sourcePath);
+    final dbPath = await getDatabasePath();
+    await _database?.close();
+    _database = null;
+    await File(sourcePath).copy(dbPath);
+  }
+
   @visibleForTesting
   Future<void> reset() async {
     await _database?.close();

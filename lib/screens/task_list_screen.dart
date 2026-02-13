@@ -11,6 +11,7 @@ import '../widgets/leaf_task_detail.dart';
 import '../widgets/random_result_dialog.dart';
 import '../widgets/task_card.dart';
 import '../widgets/task_picker_dialog.dart';
+import '../services/backup_service.dart';
 import 'completed_tasks_screen.dart';
 import 'dag_view_screen.dart';
 
@@ -529,6 +530,30 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       tooltip: 'Toggle theme',
                     );
                   },
+                ),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: (value) {
+                    switch (value) {
+                      case 'export':
+                        BackupService.exportDatabase(context);
+                      case 'import':
+                        BackupService.importDatabase(
+                          context,
+                          context.read<TaskProvider>(),
+                        );
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(
+                      value: 'export',
+                      child: Text('Export backup'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'import',
+                      child: Text('Import backup'),
+                    ),
+                  ],
                 ),
               ],
             ),
