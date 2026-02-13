@@ -7,6 +7,7 @@ class LeafTaskDetail extends StatelessWidget {
   final VoidCallback onDone;
   final VoidCallback onAddParent;
   final VoidCallback onToggleStarted;
+  final VoidCallback onRename;
 
   const LeafTaskDetail({
     super.key,
@@ -15,6 +16,7 @@ class LeafTaskDetail extends StatelessWidget {
     required this.onDone,
     required this.onAddParent,
     required this.onToggleStarted,
+    required this.onRename,
   });
 
   String _formatDate(int millis) {
@@ -61,12 +63,32 @@ class LeafTaskDetail extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              task.name,
-              style: textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.bold,
+            InkWell(
+              onTap: onRename,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        task.name,
+                        style: textTheme.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Icon(
+                      Icons.edit,
+                      size: 18,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ],
+                ),
               ),
-              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
             Text(

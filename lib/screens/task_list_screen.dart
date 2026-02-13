@@ -276,6 +276,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           onDone: () => _completeTaskWithUndo(task),
           onAddParent: () => _addParentToTask(task),
           onToggleStarted: () => _toggleStarted(task),
+          onRename: () => _renameTask(task),
         );
       },
     );

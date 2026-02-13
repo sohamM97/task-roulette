@@ -240,6 +240,15 @@ class TaskProvider extends ChangeNotifier {
 
   Future<void> renameTask(int taskId, String name) async {
     await _db.updateTaskName(taskId, name);
+    if (_currentParent?.id == taskId) {
+      _currentParent = Task(
+        id: _currentParent!.id,
+        name: name,
+        createdAt: _currentParent!.createdAt,
+        completedAt: _currentParent!.completedAt,
+        startedAt: _currentParent!.startedAt,
+      );
+    }
     await _refreshCurrentList();
   }
 

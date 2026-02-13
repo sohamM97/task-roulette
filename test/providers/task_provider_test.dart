@@ -167,4 +167,57 @@ void main() {
       expect(provider.startedDescendantIds, isNot(contains(parentId)));
     });
   });
+
+  group('renameTask', () {
+    test('updates currentParent name immediately on leaf view', () async {
+      final leafId = await db.insertTask(Task(name: 'Old name'));
+
+      await provider.loadRootTasks();
+      final leaf = provider.tasks.firstWhere((t) => t.id == leafId);
+      await provider.navigateInto(leaf);
+
+      expect(provider.currentParent!.name, 'Old name');
+
+      await provider.renameTask(leafId, 'New name');
+
+      expect(provider.currentParent!.name, 'New name');
+      expect(provider.currentParent!.id, leafId);
+    });
+
+    test('preserves other fields when renaming currentParent', () async {
+      final leafId = await db.insertTask(Task(name: 'Task'));
+      await db.startTask(leafId);
+
+      await provider.loadRootTasks();
+      final leaf = provider.tasks.firstWhere((t) => t.id == leafId);
+      await provider.navigateInto(leaf);
+
+      expect(provider.currentParent!.isStarted, isTrue);
+
+      await provider.renameTask(leafId, 'Renamed');
+
+      expect(provider.currentParent!.name, 'Renamed');
+      expect(provider.currentParent!.isStarted, isTrue);
+      expect(provider.currentParent!.startedAt, isNotNull);
+    });
+
+    test('does not affect currentParent when renaming a different task', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      expect(provider.currentParent!.name, 'Parent');
+
+      await provider.renameTask(childId, 'Renamed child');
+
+      // Parent name unchanged
+      expect(provider.currentParent!.name, 'Parent');
+      // Child renamed in tasks list
+      expect(provider.tasks.firstWhere((t) => t.id == childId).name, 'Renamed child');
+    });
+  });
 }

@@ -10,6 +10,7 @@ void main() {
     VoidCallback? onDone,
     VoidCallback? onAddParent,
     VoidCallback? onToggleStarted,
+    VoidCallback? onRename,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -19,6 +20,7 @@ void main() {
           onDone: onDone ?? () {},
           onAddParent: onAddParent ?? () {},
           onToggleStarted: onToggleStarted ?? () {},
+          onRename: onRename ?? () {},
         ),
       ),
     );
@@ -192,6 +194,25 @@ void main() {
 
       await tester.tap(find.text('Started'));
       expect(toggled, isTrue);
+    });
+
+    testWidgets('shows edit icon next to task name', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+      ));
+
+      expect(find.byIcon(Icons.edit), findsOneWidget);
+    });
+
+    testWidgets('tapping task name fires onRename callback', (tester) async {
+      var renamed = false;
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'My Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+        onRename: () => renamed = true,
+      ));
+
+      await tester.tap(find.text('My Task'));
+      expect(renamed, isTrue);
     });
   });
 }
