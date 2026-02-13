@@ -115,5 +115,83 @@ void main() {
 
       expect(find.byIcon(Icons.add_circle_outline), findsOneWidget);
     });
+
+    testWidgets('shows "Start working" button when task is not started', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+      ));
+
+      expect(find.text('Start working'), findsOneWidget);
+      expect(find.text('Started'), findsNothing);
+      expect(find.byIcon(Icons.play_arrow), findsOneWidget);
+    });
+
+    testWidgets('shows "Started" button when task is started', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(
+          id: 1,
+          name: 'Task',
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          startedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      ));
+
+      expect(find.text('Started'), findsOneWidget);
+      expect(find.text('Start working'), findsNothing);
+    });
+
+    testWidgets('shows "Started just now" for recently started task', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(
+          id: 1,
+          name: 'Task',
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          startedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      ));
+
+      expect(find.text('Started just now'), findsOneWidget);
+    });
+
+    testWidgets('shows time ago for started task', (tester) async {
+      final twoHoursAgo = DateTime.now().subtract(const Duration(hours: 2));
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(
+          id: 1,
+          name: 'Task',
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          startedAt: twoHoursAgo.millisecondsSinceEpoch,
+        ),
+      ));
+
+      expect(find.text('Started 2 hours ago'), findsOneWidget);
+    });
+
+    testWidgets('Start working button fires onToggleStarted', (tester) async {
+      var toggled = false;
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+        onToggleStarted: () => toggled = true,
+      ));
+
+      await tester.tap(find.text('Start working'));
+      expect(toggled, isTrue);
+    });
+
+    testWidgets('Started button fires onToggleStarted', (tester) async {
+      var toggled = false;
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(
+          id: 1,
+          name: 'Task',
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          startedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+        onToggleStarted: () => toggled = true,
+      ));
+
+      await tester.tap(find.text('Started'));
+      expect(toggled, isTrue);
+    });
   });
 }

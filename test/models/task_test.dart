@@ -91,5 +91,70 @@ void main() {
       expect(restored.createdAt, original.createdAt);
       expect(restored.completedAt, original.completedAt);
     });
+
+    test('isStarted returns true when startedAt is set and not completed', () {
+      final task = Task(name: 'In progress', startedAt: 12345);
+      expect(task.isStarted, isTrue);
+    });
+
+    test('isStarted returns false when startedAt is null', () {
+      final task = Task(name: 'Not started');
+      expect(task.isStarted, isFalse);
+    });
+
+    test('isStarted returns false when both startedAt and completedAt are set', () {
+      final task = Task(name: 'Done', startedAt: 1000, completedAt: 2000);
+      expect(task.isStarted, isFalse);
+      expect(task.isCompleted, isTrue);
+    });
+
+    test('toMap includes startedAt', () {
+      final task = Task(id: 1, name: 'T', createdAt: 100, startedAt: 300);
+      final map = task.toMap();
+
+      expect(map['started_at'], 300);
+    });
+
+    test('toMap includes null startedAt', () {
+      final task = Task(id: 1, name: 'T', createdAt: 100);
+      final map = task.toMap();
+
+      expect(map.containsKey('started_at'), isTrue);
+      expect(map['started_at'], isNull);
+    });
+
+    test('fromMap parses startedAt', () {
+      final task = Task.fromMap({
+        'id': 5,
+        'name': 'WIP',
+        'created_at': 1000,
+        'completed_at': null,
+        'started_at': 1500,
+      });
+
+      expect(task.startedAt, 1500);
+      expect(task.isStarted, isTrue);
+    });
+
+    test('fromMap handles null startedAt', () {
+      final task = Task.fromMap({
+        'id': 5,
+        'name': 'Open',
+        'created_at': 1000,
+        'completed_at': null,
+        'started_at': null,
+      });
+
+      expect(task.startedAt, isNull);
+      expect(task.isStarted, isFalse);
+    });
+
+    test('toMap/fromMap round-trip preserves startedAt', () {
+      final original = Task(id: 8, name: 'Round trip', createdAt: 999, startedAt: 1200);
+      final restored = Task.fromMap(original.toMap());
+
+      expect(restored.startedAt, original.startedAt);
+      expect(restored.isStarted, isTrue);
+    });
   });
 }

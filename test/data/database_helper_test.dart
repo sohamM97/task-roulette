@@ -111,4 +111,120 @@ void main() {
       expect(restored.isCompleted, isFalse);
     });
   });
+
+  group('Task started state', () {
+    test('startTask sets started_at', () async {
+      final id = await db.insertTask(Task(name: 'WIP'));
+      await db.startTask(id);
+
+      final tasks = await db.getAllTasks();
+      final task = tasks.firstWhere((t) => t.id == id);
+      expect(task.startedAt, isNotNull);
+      expect(task.isStarted, isTrue);
+    });
+
+    test('unstartTask clears started_at', () async {
+      final id = await db.insertTask(Task(name: 'WIP'));
+      await db.startTask(id);
+      await db.unstartTask(id);
+
+      final tasks = await db.getAllTasks();
+      final task = tasks.firstWhere((t) => t.id == id);
+      expect(task.startedAt, isNull);
+      expect(task.isStarted, isFalse);
+    });
+
+    test('start and unstart round-trip', () async {
+      final id = await db.insertTask(Task(name: 'Toggle'));
+
+      // Initially not started
+      var tasks = await db.getAllTasks();
+      expect(tasks.firstWhere((t) => t.id == id).isStarted, isFalse);
+
+      // Start
+      await db.startTask(id);
+      tasks = await db.getAllTasks();
+      expect(tasks.firstWhere((t) => t.id == id).isStarted, isTrue);
+
+      // Unstart
+      await db.unstartTask(id);
+      tasks = await db.getAllTasks();
+      expect(tasks.firstWhere((t) => t.id == id).isStarted, isFalse);
+    });
+
+    test('completing a started task makes isStarted false', () async {
+      final id = await db.insertTask(Task(name: 'Started then done'));
+      await db.startTask(id);
+      await db.completeTask(id);
+
+      final completed = await db.getCompletedTasks();
+      final task = completed.firstWhere((t) => t.id == id);
+      expect(task.startedAt, isNotNull);
+      expect(task.isCompleted, isTrue);
+      expect(task.isStarted, isFalse);
+    });
+  });
+
+  group('getTaskIdsWithStartedDescendants', () {
+    test('returns empty set for tasks with no started descendants', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      final result = await db.getTaskIdsWithStartedDescendants([parentId]);
+      expect(result, isEmpty);
+    });
+
+    test('returns parent ID when direct child is started', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+      await db.startTask(childId);
+
+      final result = await db.getTaskIdsWithStartedDescendants([parentId]);
+      expect(result, contains(parentId));
+    });
+
+    test('returns parent ID when deep descendant is started', () async {
+      final grandparent = await db.insertTask(Task(name: 'Grandparent'));
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(grandparent, parent);
+      await db.addRelationship(parent, child);
+      await db.startTask(child);
+
+      final result = await db.getTaskIdsWithStartedDescendants([grandparent]);
+      expect(result, contains(grandparent));
+    });
+
+    test('does not include parent when started descendant is completed', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+      await db.startTask(childId);
+      await db.completeTask(childId);
+
+      final result = await db.getTaskIdsWithStartedDescendants([parentId]);
+      expect(result, isEmpty);
+    });
+
+    test('returns empty set for empty input', () async {
+      final result = await db.getTaskIdsWithStartedDescendants([]);
+      expect(result, isEmpty);
+    });
+
+    test('handles multiple parents with mixed started descendants', () async {
+      final parent1 = await db.insertTask(Task(name: 'Parent 1'));
+      final parent2 = await db.insertTask(Task(name: 'Parent 2'));
+      final child1 = await db.insertTask(Task(name: 'Child 1'));
+      final child2 = await db.insertTask(Task(name: 'Child 2'));
+      await db.addRelationship(parent1, child1);
+      await db.addRelationship(parent2, child2);
+      await db.startTask(child1);
+
+      final result = await db.getTaskIdsWithStartedDescendants([parent1, parent2]);
+      expect(result, contains(parent1));
+      expect(result, isNot(contains(parent2)));
+    });
+  });
 }
