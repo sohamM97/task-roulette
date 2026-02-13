@@ -344,6 +344,26 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
+  Future<void> _searchTask() async {
+    final provider = context.read<TaskProvider>();
+    final allTasks = await provider.getAllTasks();
+    final parentNamesMap = await provider.getParentNamesMap();
+
+    if (!mounted) return;
+
+    final selected = await showDialog<Task>(
+      context: context,
+      builder: (_) => TaskPickerDialog(
+        candidates: allTasks,
+        title: 'Search tasks',
+        parentNamesMap: parentNamesMap,
+      ),
+    );
+
+    if (selected == null || !mounted) return;
+    await provider.navigateToTask(selected);
+  }
+
   Future<void> _pickRandom() async {
     final provider = context.read<TaskProvider>();
     final picked = provider.pickRandom();
@@ -490,6 +510,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       onPressed: () => provider.navigateBack(),
                     ),
               actions: [
+                IconButton(
+                  icon: const Icon(Icons.search),
+                  onPressed: _searchTask,
+                  tooltip: 'Search',
+                ),
                 IconButton(
                   icon: const Icon(Icons.archive_outlined),
                   onPressed: () {
