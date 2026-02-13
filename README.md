@@ -1,6 +1,10 @@
-# Task Roulette
+<p align="center">
+  <img src="assets/icon/app_icon.png" width="120" alt="Task Roulette icon">
+</p>
 
-A DAG-based task manager built with Flutter. Tasks can have multiple parents and children, forming a directed acyclic graph. Navigate the hierarchy and randomly pick a task at any level.
+<h1 align="center">Task Roulette</h1>
+
+<p align="center">A DAG-based task manager built with Flutter. Tasks can have multiple parents and children, forming a directed acyclic graph. Navigate the hierarchy and randomly pick a task at any level.</p>
 
 > **Note:** This app was vibe-coded — planned and ideated by a human, implemented with AI assistance.
 
@@ -110,9 +114,12 @@ lib/
 
 test/
 ├── models/
-│   └── task_test.dart        # Task model unit tests
+│   └── task_test.dart              # Task model unit tests
 ├── data/
-│   └── database_helper_test.dart # DB completion/filtering tests
+│   └── database_helper_test.dart   # DB operations tests
+├── providers/
+│   └── task_provider_test.dart     # Provider state management tests
 └── widgets/
-    └── leaf_task_detail_test.dart # Leaf detail widget tests
+    ├── leaf_task_detail_test.dart   # Leaf detail widget tests
+    └── task_card_test.dart         # Task card widget tests
 ```
