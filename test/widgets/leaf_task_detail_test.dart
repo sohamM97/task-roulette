@@ -238,5 +238,32 @@ void main() {
       await tester.tap(find.text('My Task'));
       expect(renamed, isTrue);
     });
+
+    testWidgets('displays URL when task has one', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(
+          id: 1,
+          name: 'Task',
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          url: 'https://example.com',
+        ),
+      ));
+
+      expect(find.textContaining('example.com'), findsOneWidget);
+      expect(find.byIcon(Icons.link), findsOneWidget);
+    });
+
+    testWidgets('shows "Add link" when task has no URL', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(
+          id: 1,
+          name: 'Task',
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      ));
+
+      expect(find.text('Add link'), findsOneWidget);
+      expect(find.byIcon(Icons.add_link), findsOneWidget);
+    });
   });
 }
