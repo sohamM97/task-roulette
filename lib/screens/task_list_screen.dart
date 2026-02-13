@@ -37,39 +37,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   void _showFabOptions() {
-    final provider = context.read<TaskProvider>();
-    if (provider.isRoot) {
-      _addTask();
-      return;
-    }
-    showModalBottomSheet(
-      context: context,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.add),
-                title: const Text('Create new task'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _addTask();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.link),
-                title: const Text('Link existing task here'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _linkExistingTask();
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
+    _addTask();
   }
 
   Future<void> _linkExistingTask() async {
@@ -499,6 +467,17 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   ),
                 if (provider.tasks.isNotEmpty)
                   const SizedBox(height: 12),
+                if (!provider.isRoot)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: FloatingActionButton.small(
+                      heroTag: 'linkTask',
+                      onPressed: _linkExistingTask,
+                      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      foregroundColor: Theme.of(context).colorScheme.onSurface,
+                      child: const Icon(Icons.link),
+                    ),
+                  ),
                 FloatingActionButton(
                   heroTag: 'addTask',
                   onPressed: _showFabOptions,
