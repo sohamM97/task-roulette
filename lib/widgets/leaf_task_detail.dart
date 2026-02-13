@@ -6,6 +6,7 @@ class LeafTaskDetail extends StatelessWidget {
   final Task task;
   final List<String> parentNames;
   final VoidCallback onDone;
+  final VoidCallback onSkip;
   final VoidCallback onAddParent;
   final VoidCallback onToggleStarted;
   final VoidCallback onRename;
@@ -16,6 +17,7 @@ class LeafTaskDetail extends StatelessWidget {
     required this.task,
     required this.parentNames,
     required this.onDone,
+    required this.onSkip,
     required this.onAddParent,
     required this.onToggleStarted,
     required this.onRename,
@@ -279,14 +281,29 @@ class LeafTaskDetail extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: onDone,
-              icon: const Icon(Icons.check),
-              label: const Text('Done'),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                textStyle: textTheme.titleMedium,
-              ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton.icon(
+                  onPressed: onSkip,
+                  icon: const Icon(Icons.not_interested),
+                  label: const Text('Skip'),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                    textStyle: textTheme.titleMedium,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  onPressed: onDone,
+                  icon: const Icon(Icons.check),
+                  label: const Text('Done'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                    textStyle: textTheme.titleMedium,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 24),
             Text(

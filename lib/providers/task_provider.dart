@@ -125,6 +125,29 @@ class TaskProvider extends ChangeNotifier {
     return task;
   }
 
+  /// Marks a task as skipped and navigates back.
+  /// Returns the task for undo support.
+  Future<Task> skipTask(int taskId) async {
+    final task = _currentParent?.id == taskId
+        ? _currentParent!
+        : _tasks.firstWhere((t) => t.id == taskId);
+    await _db.skipTask(taskId);
+    await navigateBack();
+    return task;
+  }
+
+  /// Un-skips a task and refreshes the list.
+  Future<void> unskipTask(int taskId) async {
+    await _db.unskipTask(taskId);
+    await _refreshCurrentList();
+  }
+
+  /// Re-skips a task (for undo-restore). Unlike skipTask(), this does
+  /// not call navigateBack() since it's invoked from the archive screen.
+  Future<void> reSkipTask(int taskId) async {
+    await _db.skipTask(taskId);
+  }
+
   /// Un-completes a task and refreshes the list.
   Future<void> uncompleteTask(int taskId) async {
     await _db.uncompleteTask(taskId);
@@ -148,8 +171,8 @@ class TaskProvider extends ChangeNotifier {
     return _db.getAllTasks();
   }
 
-  Future<List<Task>> getCompletedTasks() async {
-    return _db.getCompletedTasks();
+  Future<List<Task>> getArchivedTasks() async {
+    return _db.getArchivedTasks();
   }
 
   Future<Map<int, List<String>>> getParentNamesForTaskIds(List<int> taskIds) async {

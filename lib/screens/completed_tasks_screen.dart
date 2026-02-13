@@ -11,7 +11,7 @@ class CompletedTasksScreen extends StatefulWidget {
 }
 
 class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
-  List<Task> _completedTasks = [];
+  List<Task> _archivedTasks = [];
   Map<int, List<String>> _parentNamesMap = {};
   bool _loading = true;
 
@@ -45,13 +45,13 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
 
   Future<void> _loadData() async {
     final provider = context.read<TaskProvider>();
-    final tasks = await provider.getCompletedTasks();
+    final tasks = await provider.getArchivedTasks();
     final taskIds = tasks.map((t) => t.id!).toList();
     final parentNames = await provider.getParentNamesForTaskIds(taskIds);
 
     if (!mounted) return;
     setState(() {
-      _completedTasks = tasks;
+      _archivedTasks = tasks;
       _parentNamesMap = parentNames;
       _loading = false;
     });
@@ -63,31 +63,29 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
     return colors[taskId % colors.length];
   }
 
-  String _completedLabel(int completedAtMs) {
-    final completedDate = DateTime.fromMillisecondsSinceEpoch(completedAtMs);
+  String _archivedLabel(Task task) {
+    final isSkipped = task.isSkipped;
+    final prefix = isSkipped ? 'Skipped' : 'Completed';
+    final timestampMs = isSkipped ? task.skippedAt! : task.completedAt!;
+    final date = DateTime.fromMillisecondsSinceEpoch(timestampMs);
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final completedDay = DateTime(
-      completedDate.year,
-      completedDate.month,
-      completedDate.day,
-    );
-    final diff = today.difference(completedDay).inDays;
+    final taskDay = DateTime(date.year, date.month, date.day);
+    final diff = today.difference(taskDay).inDays;
 
-    if (diff == 0) return 'Completed today';
-    if (diff == 1) return 'Completed yesterday';
-    if (diff < 7) return 'Completed $diff days ago';
+    if (diff == 0) return '$prefix today';
+    if (diff == 1) return '$prefix yesterday';
+    if (diff < 7) return '$prefix $diff days ago';
 
-    // For older dates, show the date
     final months = [
       'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ];
-    final month = months[completedDate.month - 1];
-    if (completedDate.year == now.year) {
-      return 'Completed $month ${completedDate.day}';
+    final month = months[date.month - 1];
+    if (date.year == now.year) {
+      return '$prefix $month ${date.day}';
     }
-    return 'Completed $month ${completedDate.day}, ${completedDate.year}';
+    return '$prefix $month ${date.day}, ${date.year}';
   }
 
   Future<void> _permanentlyDeleteTask(Task task) async {
@@ -97,7 +95,7 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
     if (!mounted) return;
 
     setState(() {
-      _completedTasks.removeWhere((t) => t.id == task.id);
+      _archivedTasks.removeWhere((t) => t.id == task.id);
     });
 
     ScaffoldMessenger.of(context).clearSnackBars();
@@ -108,7 +106,11 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
           label: 'Undo',
           onPressed: () async {
             await provider.restoreTask(deleted.task, deleted.parentIds, deleted.childIds);
-            await provider.reCompleteTask(task.id!);
+            if (task.isSkipped) {
+              await provider.reSkipTask(task.id!);
+            } else {
+              await provider.reCompleteTask(task.id!);
+            }
             await _loadData();
           },
         ),
@@ -120,12 +122,16 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
 
   Future<void> _restoreTask(Task task) async {
     final provider = context.read<TaskProvider>();
-    await provider.uncompleteTask(task.id!);
+    if (task.isSkipped) {
+      await provider.unskipTask(task.id!);
+    } else {
+      await provider.uncompleteTask(task.id!);
+    }
 
     if (!mounted) return;
 
     setState(() {
-      _completedTasks.removeWhere((t) => t.id == task.id);
+      _archivedTasks.removeWhere((t) => t.id == task.id);
     });
 
     ScaffoldMessenger.of(context).clearSnackBars();
@@ -135,7 +141,11 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () async {
-            await provider.reCompleteTask(task.id!);
+            if (task.isSkipped) {
+              await provider.reSkipTask(task.id!);
+            } else {
+              await provider.reCompleteTask(task.id!);
+            }
             await _loadData();
           },
         ),
@@ -149,11 +159,11 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Completed Tasks'),
+        title: const Text('Archive'),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _completedTasks.isEmpty
+          : _archivedTasks.isEmpty
               ? _buildEmptyState()
               : _buildList(),
     );
@@ -171,7 +181,7 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            'No completed tasks',
+            'No archived tasks',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   color: Theme.of(context)
                       .colorScheme
@@ -181,7 +191,7 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Tasks you mark as done will appear here',
+            'Tasks you complete or skip will appear here',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context)
                       .colorScheme
@@ -197,9 +207,9 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
   Widget _buildList() {
     return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: _completedTasks.length,
+      itemCount: _archivedTasks.length,
       itemBuilder: (context, index) {
-        final task = _completedTasks[index];
+        final task = _archivedTasks[index];
         final parentNames = _parentNamesMap[task.id];
         return _buildTaskItem(task, parentNames);
       },
@@ -207,7 +217,7 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
   }
 
   Widget _buildTaskItem(Task task, List<String>? parentNames) {
-    final completedLabel = _completedLabel(task.completedAt!);
+    final archivedLabel = _archivedLabel(task);
     final parentLabel = parentNames != null && parentNames.isNotEmpty
         ? 'Was under ${parentNames.join(', ')}'
         : null;
@@ -216,11 +226,17 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         color: _cardColor(task.id!),
         child: ListTile(
+          leading: Icon(
+            task.isSkipped ? Icons.not_interested : Icons.task_alt,
+            color: task.isSkipped
+                ? Theme.of(context).colorScheme.onSurfaceVariant
+                : Theme.of(context).colorScheme.primary,
+          ),
           title: Text(task.name),
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(completedLabel),
+              Text(archivedLabel),
               if (parentLabel != null) Text(parentLabel),
             ],
           ),

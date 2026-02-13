@@ -267,6 +267,27 @@ class _TaskListScreenState extends State<TaskListScreen> {
     }
   }
 
+  Future<void> _skipTaskWithUndo(Task task) async {
+    final provider = context.read<TaskProvider>();
+
+    await provider.skipTask(task.id!);
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Skipped "${task.name}"'),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () => provider.unskipTask(task.id!),
+        ),
+        showCloseIcon: true,
+        duration: const Duration(seconds: 5),
+      ),
+    );
+  }
+
   Future<void> _completeTaskWithUndo(Task task) async {
     final provider = context.read<TaskProvider>();
 
@@ -303,6 +324,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           task: task,
           parentNames: parentNames,
           onDone: () => _completeTaskWithUndo(task),
+          onSkip: () => _skipTaskWithUndo(task),
           onAddParent: () => _addParentToTask(task),
           onToggleStarted: () => _toggleStarted(task),
           onRename: () => _renameTask(task),
@@ -468,7 +490,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       ),
                     );
                   },
-                  tooltip: 'Completed tasks',
+                  tooltip: 'Archive',
                 ),
                 IconButton(
                   icon: const Icon(Icons.account_tree_outlined),

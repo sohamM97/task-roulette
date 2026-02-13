@@ -157,7 +157,7 @@ void main() {
       await db.startTask(id);
       await db.completeTask(id);
 
-      final completed = await db.getCompletedTasks();
+      final completed = await db.getArchivedTasks();
       final task = completed.firstWhere((t) => t.id == id);
       expect(task.startedAt, isNotNull);
       expect(task.isCompleted, isTrue);

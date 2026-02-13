@@ -5,6 +5,7 @@ class Task {
   final int? completedAt;
   final int? startedAt;
   final String? url;
+  final int? skippedAt;
 
   Task({
     this.id,
@@ -13,9 +14,11 @@ class Task {
     this.completedAt,
     this.startedAt,
     this.url,
+    this.skippedAt,
   }) : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch;
 
   bool get isCompleted => completedAt != null;
+  bool get isSkipped => skippedAt != null;
   bool get isStarted => startedAt != null && !isCompleted;
   bool get hasUrl => url != null && url!.isNotEmpty;
 
@@ -27,6 +30,7 @@ class Task {
       'completed_at': completedAt,
       'started_at': startedAt,
       'url': url,
+      'skipped_at': skippedAt,
     };
   }
 
@@ -38,6 +42,7 @@ class Task {
       completedAt: map['completed_at'] as int?,
       startedAt: map['started_at'] as int?,
       url: map['url'] as String?,
+      skippedAt: map['skipped_at'] as int?,
     );
   }
 }

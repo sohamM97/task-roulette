@@ -46,7 +46,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE tasks (
@@ -55,7 +55,8 @@ class DatabaseHelper {
             created_at INTEGER NOT NULL,
             completed_at INTEGER,
             started_at INTEGER,
-            url TEXT
+            url TEXT,
+            skipped_at INTEGER
           )
         ''');
         await db.execute('''
@@ -77,6 +78,9 @@ class DatabaseHelper {
         }
         if (oldVersion < 4) {
           await db.execute('ALTER TABLE tasks ADD COLUMN url TEXT');
+        }
+        if (oldVersion < 5) {
+          await db.execute('ALTER TABLE tasks ADD COLUMN skipped_at INTEGER');
         }
       },
     );
@@ -109,6 +113,7 @@ class DatabaseHelper {
         SELECT child_id FROM task_relationships
       )
       AND t.completed_at IS NULL
+      AND t.skipped_at IS NULL
       ORDER BY t.created_at ASC
     ''');
     return maps.map((m) => Task.fromMap(m)).toList();
@@ -121,6 +126,7 @@ class DatabaseHelper {
       INNER JOIN task_relationships tr ON t.id = tr.child_id
       WHERE tr.parent_id = ?
       AND t.completed_at IS NULL
+      AND t.skipped_at IS NULL
       ORDER BY t.created_at ASC
     ''', [parentId]);
     return maps.map((m) => Task.fromMap(m)).toList();
@@ -133,6 +139,7 @@ class DatabaseHelper {
       INNER JOIN task_relationships tr ON t.id = tr.parent_id
       WHERE tr.child_id = ?
       AND t.completed_at IS NULL
+      AND t.skipped_at IS NULL
       ORDER BY t.created_at ASC
     ''', [childId]);
     return maps.map((m) => Task.fromMap(m)).toList();
@@ -143,6 +150,7 @@ class DatabaseHelper {
     final maps = await db.rawQuery('''
       SELECT * FROM tasks
       WHERE completed_at IS NULL
+      AND skipped_at IS NULL
       ORDER BY created_at ASC
     ''');
     return maps.map((m) => Task.fromMap(m)).toList();
@@ -156,6 +164,7 @@ class DatabaseHelper {
       FROM task_relationships tr
       INNER JOIN tasks p ON tr.parent_id = p.id
       WHERE p.completed_at IS NULL
+      AND p.skipped_at IS NULL
       ORDER BY p.name ASC
     ''');
     final result = <int, List<String>>{};
@@ -167,13 +176,13 @@ class DatabaseHelper {
     return result;
   }
 
-  /// Returns all completed tasks, most recent first.
-  Future<List<Task>> getCompletedTasks() async {
+  /// Returns all archived tasks (completed or skipped), most recent first.
+  Future<List<Task>> getArchivedTasks() async {
     final db = await database;
     final maps = await db.rawQuery('''
       SELECT * FROM tasks
-      WHERE completed_at IS NOT NULL
-      ORDER BY completed_at DESC
+      WHERE completed_at IS NOT NULL OR skipped_at IS NOT NULL
+      ORDER BY COALESCE(completed_at, skipped_at) DESC
     ''');
     return maps.map((m) => Task.fromMap(m)).toList();
   }
@@ -209,6 +218,7 @@ class DatabaseHelper {
       INNER JOIN tasks p ON tr.parent_id = p.id
       INNER JOIN tasks c ON tr.child_id = c.id
       WHERE p.completed_at IS NULL AND c.completed_at IS NULL
+      AND p.skipped_at IS NULL AND c.skipped_at IS NULL
     ''');
     return maps.map((m) => TaskRelationship.fromMap(m)).toList();
   }
@@ -275,6 +285,28 @@ class DatabaseHelper {
     await db.update(
       'tasks',
       {'completed_at': DateTime.now().millisecondsSinceEpoch},
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
+  /// Marks a task as skipped by setting skipped_at to now.
+  Future<void> skipTask(int taskId) async {
+    final db = await database;
+    await db.update(
+      'tasks',
+      {'skipped_at': DateTime.now().millisecondsSinceEpoch},
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
+  /// Un-skips a task by clearing skipped_at.
+  Future<void> unskipTask(int taskId) async {
+    final db = await database;
+    await db.update(
+      'tasks',
+      {'skipped_at': null},
       where: 'id = ?',
       whereArgs: [taskId],
     );
@@ -353,7 +385,7 @@ class DatabaseHelper {
         -- Start from parents of all in-progress tasks
         SELECT tr.parent_id FROM task_relationships tr
         INNER JOIN tasks t ON tr.child_id = t.id
-        WHERE t.started_at IS NOT NULL AND t.completed_at IS NULL
+        WHERE t.started_at IS NOT NULL AND t.completed_at IS NULL AND t.skipped_at IS NULL
         UNION
         -- Walk upward through parent relationships
         SELECT tr.parent_id
