@@ -4,6 +4,8 @@ import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
 import '../widgets/add_task_dialog.dart';
+import '../widgets/brain_dump_dialog.dart';
+import '../widgets/completion_animation.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/leaf_task_detail.dart';
 import '../widgets/random_result_dialog.dart';
@@ -38,6 +40,25 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   void _showFabOptions() {
     _addTask();
+  }
+
+  Future<void> _brainDump() async {
+    final names = await showDialog<List<String>>(
+      context: context,
+      builder: (_) => const BrainDumpDialog(),
+    );
+    if (names != null && names.isNotEmpty && mounted) {
+      final provider = context.read<TaskProvider>();
+      for (final name in names) {
+        await provider.addTask(name);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Added ${names.length} tasks')),
+        );
+      }
+    }
   }
 
   Future<void> _linkExistingTask() async {
@@ -143,6 +164,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
     }
   }
 
+  Future<void> _updateUrl(Task task, String? url) async {
+    await context.read<TaskProvider>().updateTaskUrl(task.id!, url);
+  }
+
   Future<void> _moveTask(Task task) async {
     final provider = context.read<TaskProvider>();
     final currentParent = provider.currentParent;
@@ -244,20 +269,47 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   Future<void> _completeTaskWithUndo(Task task) async {
     final provider = context.read<TaskProvider>();
+
+    // Show celebratory animation before completing
+    await showCompletionAnimation(context);
+
+    if (!mounted) return;
+
     await provider.completeTask(task.id!);
 
     if (!mounted) return;
 
+    // Only offer "Pick another" if there are tasks to pick from
+    final hasTasks = provider.tasks.isNotEmpty;
+
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('"${task.name}" marked done!'),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () {
-            provider.uncompleteTask(task.id!);
-          },
+        content: Row(
+          children: [
+            Expanded(child: Text('"${task.name}" done!')),
+            GestureDetector(
+              onTap: () {
+                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                provider.uncompleteTask(task.id!);
+              },
+              child: Text(
+                'Undo',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.inversePrimary,
+                  decoration: TextDecoration.underline,
+                  decorationColor: Theme.of(context).colorScheme.inversePrimary,
+                ),
+              ),
+            ),
+          ],
         ),
+        action: hasTasks
+            ? SnackBarAction(
+                label: 'Pick another',
+                onPressed: () => _pickRandom(),
+              )
+            : null,
         showCloseIcon: true,
         duration: const Duration(seconds: 5),
       ),
@@ -277,6 +329,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           onAddParent: () => _addParentToTask(task),
           onToggleStarted: () => _toggleStarted(task),
           onRename: () => _renameTask(task),
+          onUpdateUrl: (url) => _updateUrl(task, url),
         );
       },
     );
@@ -531,18 +584,24 @@ class _TaskListScreenState extends State<TaskListScreen> {
                         child: const Icon(Icons.link),
                       ),
                       const SizedBox(width: 12),
-                      FloatingActionButton(
-                        heroTag: 'addTask',
-                        onPressed: _showFabOptions,
-                        child: const Icon(Icons.add),
+                      GestureDetector(
+                        onLongPress: _brainDump,
+                        child: FloatingActionButton(
+                          heroTag: 'addTask',
+                          onPressed: _showFabOptions,
+                          child: const Icon(Icons.add),
+                        ),
                       ),
                     ],
                   )
                 else
-                  FloatingActionButton(
-                    heroTag: 'addTask',
-                    onPressed: _showFabOptions,
-                    child: const Icon(Icons.add),
+                  GestureDetector(
+                    onLongPress: _brainDump,
+                    child: FloatingActionButton(
+                      heroTag: 'addTask',
+                      onPressed: _showFabOptions,
+                      child: const Icon(Icons.add),
+                    ),
                   ),
               ],
             ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/task.dart';
 
 class LeafTaskDetail extends StatelessWidget {
@@ -8,6 +9,7 @@ class LeafTaskDetail extends StatelessWidget {
   final VoidCallback onAddParent;
   final VoidCallback onToggleStarted;
   final VoidCallback onRename;
+  final void Function(String?) onUpdateUrl;
 
   const LeafTaskDetail({
     super.key,
@@ -17,6 +19,7 @@ class LeafTaskDetail extends StatelessWidget {
     required this.onAddParent,
     required this.onToggleStarted,
     required this.onRename,
+    required this.onUpdateUrl,
   });
 
   String _formatDate(int millis) {
@@ -50,6 +53,123 @@ class LeafTaskDetail extends StatelessWidget {
       return 'Started ${diff.inMinutes} ${diff.inMinutes == 1 ? 'minute' : 'minutes'} ago';
     }
     return 'Started just now';
+  }
+
+  Future<void> _openUrl(BuildContext context) async {
+    final uri = Uri.tryParse(task.url!);
+    if (uri != null && await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open link')),
+      );
+    }
+  }
+
+  void _editUrl(BuildContext context) {
+    final controller = TextEditingController(text: task.url ?? '');
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Link'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: 'https://...',
+            border: OutlineInputBorder(),
+          ),
+          keyboardType: TextInputType.url,
+          autofocus: true,
+          onSubmitted: (value) {
+            final url = value.trim().isEmpty ? null : value.trim();
+            Navigator.pop(dialogContext);
+            onUpdateUrl(url);
+          },
+        ),
+        actions: [
+          if (task.hasUrl)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                onUpdateUrl(null);
+              },
+              child: const Text('Remove'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final url = controller.text.trim().isEmpty
+                  ? null
+                  : controller.text.trim();
+              Navigator.pop(dialogContext);
+              onUpdateUrl(url);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUrlSection(
+      BuildContext context, ColorScheme colorScheme, TextTheme textTheme) {
+    if (task.hasUrl) {
+      return InkWell(
+        onTap: () => _openUrl(context),
+        onLongPress: () => _editUrl(context),
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.link, size: 18, color: colorScheme.primary),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  _displayUrl(task.url!),
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.primary,
+                    decoration: TextDecoration.underline,
+                    decorationColor: colorScheme.primary,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return InkWell(
+      onTap: () => _editUrl(context),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.add_link, size: 18, color: colorScheme.onSurfaceVariant),
+            const SizedBox(width: 6),
+            Text(
+              'Add link',
+              style: textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _displayUrl(String url) {
+    var display = url.replaceFirst(RegExp(r'^https?://'), '');
+    if (display.endsWith('/')) display = display.substring(0, display.length - 1);
+    return display.length > 40 ? '${display.substring(0, 40)}...' : display;
   }
 
   @override
@@ -127,7 +247,9 @@ class LeafTaskDetail extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 12),
+            _buildUrlSection(context, colorScheme, textTheme),
+            const SizedBox(height: 24),
             if (!task.isStarted)
               OutlinedButton.icon(
                 onPressed: onToggleStarted,

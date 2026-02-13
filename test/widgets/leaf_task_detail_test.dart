@@ -11,6 +11,7 @@ void main() {
     VoidCallback? onAddParent,
     VoidCallback? onToggleStarted,
     VoidCallback? onRename,
+    void Function(String?)? onUpdateUrl,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -21,6 +22,7 @@ void main() {
           onAddParent: onAddParent ?? () {},
           onToggleStarted: onToggleStarted ?? () {},
           onRename: onRename ?? () {},
+          onUpdateUrl: onUpdateUrl ?? (_) {},
         ),
       ),
     );

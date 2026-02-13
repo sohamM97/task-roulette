@@ -4,6 +4,7 @@ class Task {
   final int createdAt;
   final int? completedAt;
   final int? startedAt;
+  final String? url;
 
   Task({
     this.id,
@@ -11,10 +12,12 @@ class Task {
     int? createdAt,
     this.completedAt,
     this.startedAt,
+    this.url,
   }) : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch;
 
   bool get isCompleted => completedAt != null;
   bool get isStarted => startedAt != null && !isCompleted;
+  bool get hasUrl => url != null && url!.isNotEmpty;
 
   Map<String, dynamic> toMap() {
     return {
@@ -23,6 +26,7 @@ class Task {
       'created_at': createdAt,
       'completed_at': completedAt,
       'started_at': startedAt,
+      'url': url,
     };
   }
 
@@ -33,6 +37,7 @@ class Task {
       createdAt: map['created_at'] as int,
       completedAt: map['completed_at'] as int?,
       startedAt: map['started_at'] as int?,
+      url: map['url'] as String?,
     );
   }
 }

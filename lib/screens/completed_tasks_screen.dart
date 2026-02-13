@@ -90,6 +90,34 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
     return 'Completed $month ${completedDate.day}, ${completedDate.year}';
   }
 
+  Future<void> _permanentlyDeleteTask(Task task) async {
+    final provider = context.read<TaskProvider>();
+    final deleted = await provider.permanentlyDeleteTask(task.id!, task);
+
+    if (!mounted) return;
+
+    setState(() {
+      _completedTasks.removeWhere((t) => t.id == task.id);
+    });
+
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Permanently deleted "${task.name}"'),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () async {
+            await provider.restoreTask(deleted.task, deleted.parentIds, deleted.childIds);
+            await provider.reCompleteTask(task.id!);
+            await _loadData();
+          },
+        ),
+        showCloseIcon: true,
+        duration: const Duration(seconds: 5),
+      ),
+    );
+  }
+
   Future<void> _restoreTask(Task task) async {
     final provider = context.read<TaskProvider>();
     await provider.uncompleteTask(task.id!);
@@ -184,20 +212,7 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
         ? 'Was under ${parentNames.join(', ')}'
         : null;
 
-    return Dismissible(
-      key: ValueKey(task.id),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 24),
-        color: Theme.of(context).colorScheme.primary,
-        child: Icon(
-          Icons.restore,
-          color: Theme.of(context).colorScheme.onPrimary,
-        ),
-      ),
-      onDismissed: (_) => _restoreTask(task),
-      child: Card(
+    return Card(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         color: _cardColor(task.id!),
         child: ListTile(
@@ -209,13 +224,43 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
               if (parentLabel != null) Text(parentLabel),
             ],
           ),
-          trailing: IconButton(
-            icon: const Icon(Icons.restore),
-            tooltip: 'Restore',
-            onPressed: () => _restoreTask(task),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.delete_outline),
+                tooltip: 'Delete permanently',
+                onPressed: () async {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                      title: const Text('Delete permanently?'),
+                      content: Text('"${task.name}" will be gone forever.'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          child: const Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, true),
+                          child: const Text('Delete'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirm == true) {
+                    _permanentlyDeleteTask(task);
+                  }
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.restore),
+                tooltip: 'Restore',
+                onPressed: () => _restoreTask(task),
+              ),
+            ],
           ),
         ),
-      ),
     );
   }
 }

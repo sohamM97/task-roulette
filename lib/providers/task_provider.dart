@@ -162,6 +162,12 @@ class TaskProvider extends ChangeNotifier {
     await _db.completeTask(taskId);
   }
 
+  /// Permanently deletes a completed task. Returns info needed for undo.
+  Future<({Task task, List<int> parentIds, List<int> childIds})> permanentlyDeleteTask(int taskId, Task task) async {
+    final rels = await _db.deleteTaskWithRelationships(taskId);
+    return (task: task, parentIds: rels['parentIds']!, childIds: rels['childIds']!);
+  }
+
   /// Marks a task as started (in progress).
   Future<void> startTask(int taskId) async {
     await _db.startTask(taskId);
@@ -174,6 +180,7 @@ class TaskProvider extends ChangeNotifier {
         createdAt: _currentParent!.createdAt,
         completedAt: _currentParent!.completedAt,
         startedAt: DateTime.now().millisecondsSinceEpoch,
+        url: _currentParent!.url,
       );
     }
     await _refreshCurrentList();
@@ -189,6 +196,7 @@ class TaskProvider extends ChangeNotifier {
         createdAt: _currentParent!.createdAt,
         completedAt: _currentParent!.completedAt,
         startedAt: null,
+        url: _currentParent!.url,
       );
     }
     await _refreshCurrentList();
@@ -247,6 +255,22 @@ class TaskProvider extends ChangeNotifier {
         createdAt: _currentParent!.createdAt,
         completedAt: _currentParent!.completedAt,
         startedAt: _currentParent!.startedAt,
+        url: _currentParent!.url,
+      );
+    }
+    await _refreshCurrentList();
+  }
+
+  Future<void> updateTaskUrl(int taskId, String? url) async {
+    await _db.updateTaskUrl(taskId, url);
+    if (_currentParent?.id == taskId) {
+      _currentParent = Task(
+        id: _currentParent!.id,
+        name: _currentParent!.name,
+        createdAt: _currentParent!.createdAt,
+        completedAt: _currentParent!.completedAt,
+        startedAt: _currentParent!.startedAt,
+        url: url,
       );
     }
     await _refreshCurrentList();

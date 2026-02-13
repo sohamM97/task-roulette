@@ -46,7 +46,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE tasks (
@@ -54,7 +54,8 @@ class DatabaseHelper {
             name TEXT NOT NULL,
             created_at INTEGER NOT NULL,
             completed_at INTEGER,
-            started_at INTEGER
+            started_at INTEGER,
+            url TEXT
           )
         ''');
         await db.execute('''
@@ -73,6 +74,9 @@ class DatabaseHelper {
         }
         if (oldVersion < 3) {
           await db.execute('ALTER TABLE tasks ADD COLUMN started_at INTEGER');
+        }
+        if (oldVersion < 4) {
+          await db.execute('ALTER TABLE tasks ADD COLUMN url TEXT');
         }
       },
     );
@@ -249,6 +253,11 @@ class DatabaseHelper {
   Future<void> updateTaskName(int taskId, String name) async {
     final db = await database;
     await db.update('tasks', {'name': name}, where: 'id = ?', whereArgs: [taskId]);
+  }
+
+  Future<void> updateTaskUrl(int taskId, String? url) async {
+    final db = await database;
+    await db.update('tasks', {'url': url}, where: 'id = ?', whereArgs: [taskId]);
   }
 
   Future<void> removeRelationship(int parentId, int childId) async {
