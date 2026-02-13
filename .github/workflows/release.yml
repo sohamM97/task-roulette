@@ -29,6 +29,22 @@ jobs:
       - name: Test
         run: flutter test
 
+      # Signing: Android requires a consistent keystore across releases.
+      # Without this, each CI run generates a random debug key, causing
+      # "app not installed" errors when updating (signature mismatch).
+      # The keystore is stored as a base64-encoded GitHub secret.
+      - name: Decode keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/upload-keystore.jks
+
+      - name: Create key.properties
+        run: |
+          cat > android/key.properties << EOF
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyPassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyAlias=upload
+          storeFile=../android/upload-keystore.jks
+          EOF
+
       - name: Build APK
         run: flutter build apk --release
 
