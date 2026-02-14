@@ -161,9 +161,43 @@ class DatabaseHelper {
     _database = null;
   }
 
+  /// Shared conversion: maps DB rows to Task objects.
+  static List<Task> _tasksFromMaps(List<Map<String, Object?>> maps) {
+    return maps.map((m) => Task.fromMap(m)).toList();
+  }
+
+  /// Shared conversion: groups parent-name rows into a map of childId → names.
+  static Map<int, List<String>> _parentNamesFromRows(
+      List<Map<String, Object?>> rows) {
+    final result = <int, List<String>>{};
+    for (final row in rows) {
+      final childId = row['child_id'] as int;
+      final parentName = row['parent_name'] as String;
+      result.putIfAbsent(childId, () => []).add(parentName);
+    }
+    return result;
+  }
+
   Future<int> insertTask(Task task) async {
     final db = await database;
     return db.insert('tasks', task.toMap());
+  }
+
+  /// Inserts multiple tasks in a single transaction.
+  /// If [parentId] is non-null, each task is added as a child of that parent.
+  Future<void> insertTasksBatch(List<Task> tasks, int? parentId) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final task in tasks) {
+        final id = await txn.insert('tasks', task.toMap());
+        if (parentId != null) {
+          await txn.insert('task_relationships', {
+            'parent_id': parentId,
+            'child_id': id,
+          });
+        }
+      }
+    });
   }
 
   Future<void> addRelationship(int parentId, int childId) async {
@@ -185,7 +219,7 @@ class DatabaseHelper {
       AND t.skipped_at IS NULL
       ORDER BY t.created_at ASC
     ''');
-    return maps.map((m) => Task.fromMap(m)).toList();
+    return _tasksFromMaps(maps);
   }
 
   Future<List<Task>> getChildren(int parentId) async {
@@ -198,7 +232,7 @@ class DatabaseHelper {
       AND t.skipped_at IS NULL
       ORDER BY t.created_at ASC
     ''', [parentId]);
-    return maps.map((m) => Task.fromMap(m)).toList();
+    return _tasksFromMaps(maps);
   }
 
   Future<List<Task>> getParents(int childId) async {
@@ -211,7 +245,7 @@ class DatabaseHelper {
       AND t.skipped_at IS NULL
       ORDER BY t.created_at ASC
     ''', [childId]);
-    return maps.map((m) => Task.fromMap(m)).toList();
+    return _tasksFromMaps(maps);
   }
 
   Future<List<Task>> getAllTasks() async {
@@ -222,7 +256,7 @@ class DatabaseHelper {
       AND skipped_at IS NULL
       ORDER BY created_at ASC
     ''');
-    return maps.map((m) => Task.fromMap(m)).toList();
+    return _tasksFromMaps(maps);
   }
 
   /// Returns a map of task ID → list of parent names (for disambiguation).
@@ -236,13 +270,7 @@ class DatabaseHelper {
       AND p.skipped_at IS NULL
       ORDER BY p.name ASC
     ''');
-    final result = <int, List<String>>{};
-    for (final row in maps) {
-      final childId = row['child_id'] as int;
-      final parentName = row['parent_name'] as String;
-      result.putIfAbsent(childId, () => []).add(parentName);
-    }
-    return result;
+    return _parentNamesFromRows(maps);
   }
 
   /// Returns all archived tasks (completed or skipped), most recent first.
@@ -253,7 +281,7 @@ class DatabaseHelper {
       WHERE completed_at IS NOT NULL OR skipped_at IS NOT NULL
       ORDER BY COALESCE(completed_at, skipped_at) DESC
     ''');
-    return maps.map((m) => Task.fromMap(m)).toList();
+    return _tasksFromMaps(maps);
   }
 
   /// Returns a map of task ID → list of parent names for the given task IDs.
@@ -269,13 +297,7 @@ class DatabaseHelper {
       WHERE tr.child_id IN ($placeholders)
       ORDER BY p.name ASC
     ''', taskIds);
-    final result = <int, List<String>>{};
-    for (final row in maps) {
-      final childId = row['child_id'] as int;
-      final parentName = row['parent_name'] as String;
-      result.putIfAbsent(childId, () => []).add(parentName);
-    }
-    return result;
+    return _parentNamesFromRows(maps);
   }
 
   /// Returns all relationships where both parent and child are non-completed.
@@ -527,7 +549,7 @@ class DatabaseHelper {
       WHERE td.task_id = ?
       ORDER BY t.name ASC
     ''', [taskId]);
-    return maps.map((m) => Task.fromMap(m)).toList();
+    return _tasksFromMaps(maps);
   }
 
   /// Returns the subset of [taskIds] that have at least one unresolved

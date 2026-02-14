@@ -30,35 +30,19 @@ class TaskProvider extends ChangeNotifier {
   Future<void> loadRootTasks() async {
     _currentParent = null;
     _parentStack.clear();
-    _tasks = await _db.getRootTasks();
-    final taskIds = _tasks.map((t) => t.id!).toList();
-    _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
-    _blockedByNames = await _db.getBlockedTaskInfo(taskIds);
-    notifyListeners();
+    await _refreshCurrentList();
   }
 
   Future<void> navigateInto(Task task) async {
     _parentStack.add(_currentParent);
     _currentParent = task;
-    _tasks = await _db.getChildren(task.id!);
-    final taskIds = _tasks.map((t) => t.id!).toList();
-    _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
-    _blockedByNames = await _db.getBlockedTaskInfo(taskIds);
-    notifyListeners();
+    await _refreshCurrentList();
   }
 
   Future<bool> navigateBack() async {
     if (_parentStack.isEmpty) return false;
     _currentParent = _parentStack.removeLast();
-    if (_currentParent == null) {
-      _tasks = await _db.getRootTasks();
-    } else {
-      _tasks = await _db.getChildren(_currentParent!.id!);
-    }
-    final taskIds = _tasks.map((t) => t.id!).toList();
-    _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
-    _blockedByNames = await _db.getBlockedTaskInfo(taskIds);
-    notifyListeners();
+    await _refreshCurrentList();
     return true;
   }
 
@@ -77,15 +61,14 @@ class TaskProvider extends ChangeNotifier {
     // Trim the stack to just the entries before the target level
     _parentStack.removeRange(level, _parentStack.length);
     _currentParent = target;
-    if (_currentParent == null) {
-      _tasks = await _db.getRootTasks();
-    } else {
-      _tasks = await _db.getChildren(_currentParent!.id!);
-    }
-    final taskIds = _tasks.map((t) => t.id!).toList();
-    _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
-    _blockedByNames = await _db.getBlockedTaskInfo(taskIds);
-    notifyListeners();
+    await _refreshCurrentList();
+  }
+
+  /// Inserts multiple tasks in a single transaction, refreshes once at the end.
+  Future<void> addTasksBatch(List<String> names) async {
+    final tasks = names.map((name) => Task(name: name)).toList();
+    await _db.insertTasksBatch(tasks, _currentParent?.id);
+    await _refreshCurrentList();
   }
 
   Future<void> addTask(String name, {List<int>? additionalParentIds}) async {
@@ -384,11 +367,21 @@ class TaskProvider extends ChangeNotifier {
     _parentStack.clear();
     _parentStack.add(null);
     _currentParent = task;
-    _tasks = await _db.getChildren(task.id!);
+    await _refreshCurrentList();
+  }
+
+  /// Loads started-descendant and blocked-task info for the current _tasks.
+  /// The two queries are independent, so they run concurrently.
+  Future<void> _loadAuxiliaryData() async {
     final taskIds = _tasks.map((t) => t.id!).toList();
-    _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
-    _blockedByNames = await _db.getBlockedTaskInfo(taskIds);
-    notifyListeners();
+    late Set<int> startedIds;
+    late Map<int, String> blockedNames;
+    await Future.wait([
+      _db.getTaskIdsWithStartedDescendants(taskIds).then((v) => startedIds = v),
+      _db.getBlockedTaskInfo(taskIds).then((v) => blockedNames = v),
+    ]);
+    _startedDescendantIds = startedIds;
+    _blockedByNames = blockedNames;
   }
 
   Future<void> _refreshCurrentList() async {
@@ -397,9 +390,7 @@ class TaskProvider extends ChangeNotifier {
     } else {
       _tasks = await _db.getChildren(_currentParent!.id!);
     }
-    final taskIds = _tasks.map((t) => t.id!).toList();
-    _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
-    _blockedByNames = await _db.getBlockedTaskInfo(taskIds);
+    await _loadAuxiliaryData();
     notifyListeners();
   }
 }

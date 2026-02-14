@@ -24,6 +24,11 @@ class TaskListScreen extends StatefulWidget {
 }
 
 class _TaskListScreenState extends State<TaskListScreen> {
+  // Cached deps Future for the leaf detail view — avoids recreating on every
+  // Consumer rebuild. Invalidated when dependency mutations occur.
+  int? _leafDepsTaskId;
+  Future<List<Task>>? _leafDepsFuture;
+
   @override
   void initState() {
     super.initState();
@@ -50,9 +55,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
     if (names != null && names.isNotEmpty && mounted) {
       final provider = context.read<TaskProvider>();
-      for (final name in names) {
-        await provider.addTask(name);
-      }
+      await provider.addTasksBatch(names);
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
@@ -62,13 +65,24 @@ class _TaskListScreenState extends State<TaskListScreen> {
     }
   }
 
+  /// Fetches allTasks and parentNamesMap concurrently.
+  Future<(List<Task>, Map<int, List<String>>)> _fetchCandidateData() async {
+    final provider = context.read<TaskProvider>();
+    late List<Task> allTasks;
+    late Map<int, List<String>> parentNamesMap;
+    await Future.wait([
+      provider.getAllTasks().then((v) => allTasks = v),
+      provider.getParentNamesMap().then((v) => parentNamesMap = v),
+    ]);
+    return (allTasks, parentNamesMap);
+  }
+
   Future<void> _linkExistingTask() async {
     final provider = context.read<TaskProvider>();
     final currentParent = provider.currentParent;
     if (currentParent == null) return;
 
-    final allTasks = await provider.getAllTasks();
-    final parentNamesMap = await provider.getParentNamesMap();
+    final (allTasks, parentNamesMap) = await _fetchCandidateData();
     final existingChildIds = await provider.getChildIds(currentParent.id!);
     final existingChildIdSet = existingChildIds.toSet();
 
@@ -108,8 +122,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   Future<void> _addParentToTask(Task task) async {
     final provider = context.read<TaskProvider>();
 
-    final allTasks = await provider.getAllTasks();
-    final parentNamesMap = await provider.getParentNamesMap();
+    final (allTasks, parentNamesMap) = await _fetchCandidateData();
     final existingParentIds = await provider.getParentIds(task.id!);
     final existingParentIdSet = existingParentIds.toSet();
 
@@ -185,8 +198,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final currentParent = provider.currentParent;
     if (currentParent == null) return;
 
-    final allTasks = await provider.getAllTasks();
-    final parentNamesMap = await provider.getParentNamesMap();
+    final (allTasks, parentNamesMap) = await _fetchCandidateData();
 
     // Filter out: the task itself, the current parent (already here)
     final candidates = allTasks.where((t) {
@@ -340,8 +352,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   Widget _buildLeafTaskDetail(TaskProvider provider) {
     final task = provider.currentParent!;
+    // Reuse cached Future unless the task changed or deps were invalidated.
+    if (_leafDepsTaskId != task.id) {
+      _leafDepsTaskId = task.id;
+      _leafDepsFuture = provider.getDependencies(task.id!);
+    }
     return FutureBuilder<List<Task>>(
-      future: provider.getDependencies(task.id!),
+      future: _leafDepsFuture,
       builder: (context, snapshot) {
         final deps = snapshot.data ?? [];
         return LeafTaskDetail(
@@ -353,9 +370,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
           onUpdateUrl: (url) => _updateUrl(task, url),
           dependencies: deps,
           onRemoveDependency: (depId) async {
+            _leafDepsTaskId = null; // invalidate before await
             await provider.removeDependency(task.id!, depId);
           },
-          onAddDependency: () => _addDependencyToTask(task),
+          onAddDependency: () async {
+            await _addDependencyToTask(task);
+            _leafDepsTaskId = null; // invalidate — may have added a dep
+          },
         );
       },
     );
@@ -363,8 +384,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   Future<void> _searchTask() async {
     final provider = context.read<TaskProvider>();
-    final allTasks = await provider.getAllTasks();
-    final parentNamesMap = await provider.getParentNamesMap();
+    final (allTasks, parentNamesMap) = await _fetchCandidateData();
 
     if (!mounted) return;
 
@@ -486,8 +506,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   Future<void> _addDependencyToTask(Task task) async {
     final provider = context.read<TaskProvider>();
-    final allTasks = await provider.getAllTasks();
-    final parentNamesMap = await provider.getParentNamesMap();
+    final (allTasks, parentNamesMap) = await _fetchCandidateData();
 
     // Filter out: the task itself
     final candidates = allTasks.where((t) => t.id != task.id).toList();
