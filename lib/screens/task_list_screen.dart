@@ -193,6 +193,19 @@ class _TaskListScreenState extends State<TaskListScreen> {
     await context.read<TaskProvider>().updateTaskUrl(task.id!, url);
   }
 
+  Future<void> _updatePriority(Task task, int priority) async {
+    await context.read<TaskProvider>().updateTaskPriority(task.id!, priority);
+  }
+
+  Future<void> _updateQuickTask(Task task, int quickTask) async {
+    await context.read<TaskProvider>().updateQuickTask(task.id!, quickTask);
+  }
+
+  Future<void> _workedOn(Task task) async {
+    final provider = context.read<TaskProvider>();
+    await provider.markWorkedOn(task.id!);
+  }
+
   Future<void> _moveTask(Task task) async {
     final provider = context.read<TaskProvider>();
     final currentParent = provider.currentParent;
@@ -333,13 +346,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
     if (!mounted) return;
 
     await provider.completeTask(task.id!);
-
     if (!mounted) return;
-
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('"${task.name}" done!'),
+        content: Text('"${task.name}" done for good!'),
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () => provider.uncompleteTask(task.id!),
@@ -368,6 +379,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
           onToggleStarted: () => _toggleStarted(task),
           onRename: () => _renameTask(task),
           onUpdateUrl: (url) => _updateUrl(task, url),
+          onUpdatePriority: (p) => _updatePriority(task, p),
+          onUpdateQuickTask: (q) => _updateQuickTask(task, q),
+          onWorkedOn: () => _workedOn(task),
           dependencies: deps,
           onRemoveDependency: (depId) async {
             _leafDepsTaskId = null; // invalidate before await

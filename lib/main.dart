@@ -6,6 +6,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'providers/task_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/task_list_screen.dart';
+import 'screens/todays_five_screen.dart';
 
 void main() {
   if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
@@ -54,9 +55,57 @@ class TaskRouletteApp extends StatelessWidget {
               ),
             ),
             themeMode: themeProvider.themeMode,
-            home: const TaskListScreen(),
+            home: const AppShell(),
           );
         },
+      ),
+    );
+  }
+}
+
+class AppShell extends StatefulWidget {
+  const AppShell({super.key});
+
+  @override
+  State<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<AppShell> {
+  int _currentIndex = 0;
+  final _todaysFiveKey = GlobalKey<TodaysFiveScreenState>();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(
+        index: _currentIndex,
+        children: [
+          TodaysFiveScreen(key: _todaysFiveKey),
+          const TaskListScreen(),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _currentIndex,
+        onDestinationSelected: (index) {
+          if (index == 0) {
+            _todaysFiveKey.currentState?.refreshSnapshots();
+          }
+          setState(() {
+            _currentIndex = index;
+          });
+        },
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.today_outlined),
+            selectedIcon: Icon(Icons.today),
+            label: 'Today',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.list_outlined),
+            selectedIcon: Icon(Icons.list),
+            label: 'All Tasks',
+          ),
+        ],
       ),
     );
   }

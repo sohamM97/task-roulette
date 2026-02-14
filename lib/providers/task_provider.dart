@@ -163,14 +163,106 @@ class TaskProvider extends ChangeNotifier {
     return _db.getParents(childId);
   }
 
+  double _taskWeight(Task t) {
+    double w = 1.0;
+
+    // Priority: high = 3x
+    if (t.isHighPriority) w *= 3.0;
+
+    // Quick task: momentum starter = 1.5x
+    if (t.isQuickTask) w *= 1.5;
+
+    // Started: committed tasks = 2x
+    if (t.isStarted) w *= 2.0;
+
+    // Staleness: +10% per day untouched, max 4x at 30 days
+    final lastTouched = t.lastWorkedAt ?? t.startedAt ?? t.createdAt;
+    final daysSince = DateTime.now()
+        .difference(DateTime.fromMillisecondsSinceEpoch(lastTouched))
+        .inDays;
+    w *= 1.0 + (daysSince.clamp(0, 30) * 0.1);
+
+    // Novelty: added in last 3 days = 1.3x
+    final daysOld = DateTime.now()
+        .difference(DateTime.fromMillisecondsSinceEpoch(t.createdAt))
+        .inDays;
+    if (daysOld <= 3) w *= 1.3;
+
+    return w;
+  }
+
   Task? pickRandom() {
-    final eligible = _tasks.where((t) => !_blockedByNames.containsKey(t.id)).toList();
+    final eligible = _tasks.where((t) =>
+      !_blockedByNames.containsKey(t.id) &&
+      !t.isWorkedOnToday
+    ).toList();
     if (eligible.isEmpty) return null;
-    return eligible[_random.nextInt(eligible.length)];
+
+    final weights = eligible.map(_taskWeight).toList();
+    final total = weights.fold(0.0, (a, b) => a + b);
+    var roll = _random.nextDouble() * total;
+    for (int i = 0; i < eligible.length; i++) {
+      roll -= weights[i];
+      if (roll <= 0) return eligible[i];
+    }
+    return eligible.last;
   }
 
   Future<List<Task>> getChildren(int taskId) async {
     return _db.getChildren(taskId);
+  }
+
+  /// Returns all leaf tasks (tasks with no children) for Today's 5 selection.
+  Future<List<Task>> getAllLeafTasks() async {
+    return _db.getAllLeafTasks();
+  }
+
+  /// Picks n tasks via weighted random without replacement.
+  /// Tries to include at least 1 quick task if available.
+  List<Task> pickWeightedN(List<Task> candidates, int n) {
+    if (candidates.isEmpty) return [];
+    final eligible = candidates.where((t) =>
+      !t.isWorkedOnToday
+    ).toList();
+    if (eligible.isEmpty) return [];
+
+    final picked = <Task>[];
+    final remaining = List<Task>.from(eligible);
+
+    // Ensure at least 1 quick task if available and not yet picked
+    if (picked.length < n && !picked.any((t) => t.isQuickTask)) {
+      final quickTasks = remaining.where((t) => t.isQuickTask).toList();
+      if (quickTasks.isNotEmpty) {
+        final weights = quickTasks.map(_taskWeight).toList();
+        final total = weights.fold(0.0, (a, b) => a + b);
+        var roll = _random.nextDouble() * total;
+        Task? quickPick;
+        for (int i = 0; i < quickTasks.length; i++) {
+          roll -= weights[i];
+          if (roll <= 0) { quickPick = quickTasks[i]; break; }
+        }
+        quickPick ??= quickTasks.last;
+        picked.add(quickPick);
+        remaining.remove(quickPick);
+      }
+    }
+
+    // Fill remaining slots via weighted random
+    while (picked.length < n && remaining.isNotEmpty) {
+      final weights = remaining.map(_taskWeight).toList();
+      final total = weights.fold(0.0, (a, b) => a + b);
+      var roll = _random.nextDouble() * total;
+      Task? pick;
+      for (int i = 0; i < remaining.length; i++) {
+        roll -= weights[i];
+        if (roll <= 0) { pick = remaining[i]; break; }
+      }
+      pick ??= remaining.last;
+      picked.add(pick);
+      remaining.remove(pick);
+    }
+
+    return picked;
   }
 
   Future<List<Task>> getAllTasks() async {
@@ -216,6 +308,11 @@ class TaskProvider extends ChangeNotifier {
         completedAt: _currentParent!.completedAt,
         startedAt: DateTime.now().millisecondsSinceEpoch,
         url: _currentParent!.url,
+        priority: _currentParent!.priority,
+        difficulty: _currentParent!.difficulty,
+        lastWorkedAt: _currentParent!.lastWorkedAt,
+        repeatInterval: _currentParent!.repeatInterval,
+        nextDueAt: _currentParent!.nextDueAt,
       );
     }
     await _refreshCurrentList();
@@ -232,6 +329,11 @@ class TaskProvider extends ChangeNotifier {
         completedAt: _currentParent!.completedAt,
         startedAt: null,
         url: _currentParent!.url,
+        priority: _currentParent!.priority,
+        difficulty: _currentParent!.difficulty,
+        lastWorkedAt: _currentParent!.lastWorkedAt,
+        repeatInterval: _currentParent!.repeatInterval,
+        nextDueAt: _currentParent!.nextDueAt,
       );
     }
     await _refreshCurrentList();
@@ -321,6 +423,11 @@ class TaskProvider extends ChangeNotifier {
         completedAt: _currentParent!.completedAt,
         startedAt: _currentParent!.startedAt,
         url: _currentParent!.url,
+        priority: _currentParent!.priority,
+        difficulty: _currentParent!.difficulty,
+        lastWorkedAt: _currentParent!.lastWorkedAt,
+        repeatInterval: _currentParent!.repeatInterval,
+        nextDueAt: _currentParent!.nextDueAt,
       );
     }
     await _refreshCurrentList();
@@ -336,9 +443,59 @@ class TaskProvider extends ChangeNotifier {
         completedAt: _currentParent!.completedAt,
         startedAt: _currentParent!.startedAt,
         url: url,
+        priority: _currentParent!.priority,
+        difficulty: _currentParent!.difficulty,
+        lastWorkedAt: _currentParent!.lastWorkedAt,
+        repeatInterval: _currentParent!.repeatInterval,
+        nextDueAt: _currentParent!.nextDueAt,
       );
     }
     await _refreshCurrentList();
+  }
+
+  Future<void> updateTaskPriority(int taskId, int priority) async {
+    await _db.updateTaskPriority(taskId, priority);
+    if (_currentParent?.id == taskId) {
+      _currentParent = Task(
+        id: _currentParent!.id,
+        name: _currentParent!.name,
+        createdAt: _currentParent!.createdAt,
+        completedAt: _currentParent!.completedAt,
+        startedAt: _currentParent!.startedAt,
+        url: _currentParent!.url,
+        priority: priority,
+        difficulty: _currentParent!.difficulty,
+        lastWorkedAt: _currentParent!.lastWorkedAt,
+        repeatInterval: _currentParent!.repeatInterval,
+        nextDueAt: _currentParent!.nextDueAt,
+      );
+    }
+    await _refreshCurrentList();
+  }
+
+  Future<void> updateQuickTask(int taskId, int quickTask) async {
+    await _db.updateTaskQuickTask(taskId, quickTask);
+    if (_currentParent?.id == taskId) {
+      _currentParent = Task(
+        id: _currentParent!.id,
+        name: _currentParent!.name,
+        createdAt: _currentParent!.createdAt,
+        completedAt: _currentParent!.completedAt,
+        startedAt: _currentParent!.startedAt,
+        url: _currentParent!.url,
+        priority: _currentParent!.priority,
+        difficulty: quickTask,
+        lastWorkedAt: _currentParent!.lastWorkedAt,
+        repeatInterval: _currentParent!.repeatInterval,
+        nextDueAt: _currentParent!.nextDueAt,
+      );
+    }
+    await _refreshCurrentList();
+  }
+
+  Future<void> markWorkedOn(int taskId) async {
+    await _db.markWorkedOn(taskId);
+    await navigateBack();
   }
 
   /// Removes a task from the current parent only (does not delete the task).

@@ -239,6 +239,29 @@ class TaskCard extends StatelessWidget {
                   ),
                 ),
               ),
+              // Top-left icons: priority flag + quick task bolt
+              if (task.isHighPriority || task.isQuickTask)
+                Positioned(
+                  left: 6,
+                  top: 6,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (task.isHighPriority)
+                        Icon(
+                          Icons.flag,
+                          size: 16,
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      if (task.isQuickTask)
+                        Icon(
+                          Icons.bolt,
+                          size: 16,
+                          color: Colors.amber,
+                        ),
+                    ],
+                  ),
+                ),
               // Style 0: dot in top-right corner
               if (showIndicator && indicatorStyle == 0)
                 Positioned(

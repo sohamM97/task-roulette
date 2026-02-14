@@ -9,6 +9,9 @@ class LeafTaskDetail extends StatelessWidget {
   final VoidCallback onToggleStarted;
   final VoidCallback onRename;
   final void Function(String?) onUpdateUrl;
+  final ValueChanged<int> onUpdatePriority;
+  final ValueChanged<int> onUpdateQuickTask;
+  final VoidCallback? onWorkedOn;
   final List<Task> dependencies;
   final void Function(int)? onRemoveDependency;
   final VoidCallback? onAddDependency;
@@ -21,6 +24,9 @@ class LeafTaskDetail extends StatelessWidget {
     required this.onToggleStarted,
     required this.onRename,
     required this.onUpdateUrl,
+    required this.onUpdatePriority,
+    required this.onUpdateQuickTask,
+    this.onWorkedOn,
     this.dependencies = const [],
     this.onRemoveDependency,
     this.onAddDependency,
@@ -200,6 +206,7 @@ class LeafTaskDetail extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final isHighPriority = task.isHighPriority;
 
     return Center(
       child: Padding(
@@ -244,12 +251,12 @@ class LeafTaskDetail extends StatelessWidget {
               _buildDependencyChips(context, colorScheme),
             if (dependencies.isNotEmpty || onAddDependency != null)
               const SizedBox(height: 4),
-            // Start chip + add-link icon (only when no URL yet)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
+            // Chips row: Start + Priority toggle + Quick task + add-link icon
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              runSpacing: 4,
               children: [
-                if (!task.hasUrl) const SizedBox(width: 28),
                 if (!task.isStarted)
                   ActionChip(
                     avatar: const Icon(Icons.play_arrow, size: 18),
@@ -263,8 +270,33 @@ class LeafTaskDetail extends StatelessWidget {
                     onPressed: onToggleStarted,
                     backgroundColor: colorScheme.secondaryContainer,
                   ),
-                if (!task.hasUrl) ...[
-                  const SizedBox(width: 4),
+                GestureDetector(
+                  onTap: () => onUpdatePriority(isHighPriority ? 0 : 1),
+                  child: Tooltip(
+                    message: isHighPriority ? 'High priority' : 'Set high priority',
+                    child: Icon(
+                      isHighPriority ? Icons.flag : Icons.flag_outlined,
+                      size: 20,
+                      color: isHighPriority
+                          ? colorScheme.error
+                          : colorScheme.onSurfaceVariant.withAlpha(120),
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => onUpdateQuickTask(task.isQuickTask ? 0 : 1),
+                  child: Tooltip(
+                    message: task.isQuickTask ? 'Quick task' : 'Mark as quick task',
+                    child: Icon(
+                      task.isQuickTask ? Icons.bolt : Icons.bolt_outlined,
+                      size: 20,
+                      color: task.isQuickTask
+                          ? Colors.amber
+                          : colorScheme.onSurfaceVariant.withAlpha(120),
+                    ),
+                  ),
+                ),
+                if (!task.hasUrl)
                   GestureDetector(
                     onTap: () => showEditUrlDialog(context, task.url, onUpdateUrl),
                     child: Icon(
@@ -273,19 +305,25 @@ class LeafTaskDetail extends StatelessWidget {
                       color: colorScheme.onSurfaceVariant.withAlpha(120),
                     ),
                   ),
-                ],
               ],
             ),
             const SizedBox(height: 20),
-            // Done button — primary, moderately prominent
+            // "Done today" — primary action (soft-skip, back tomorrow)
             FilledButton.icon(
-              onPressed: onDone,
-              icon: const Icon(Icons.check),
-              label: const Text('Done'),
+              onPressed: onWorkedOn ?? onDone,
+              icon: const Icon(Icons.today),
+              label: const Text('Done today'),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
                 textStyle: textTheme.titleMedium,
               ),
+            ),
+            const SizedBox(height: 8),
+            // "Done for good!" — permanently complete
+            OutlinedButton.icon(
+              onPressed: onDone,
+              icon: const Icon(Icons.check_circle_outline),
+              label: const Text('Done for good!'),
             ),
             const SizedBox(height: 8),
             // Skip — de-emphasized
