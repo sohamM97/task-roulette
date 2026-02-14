@@ -8,6 +8,16 @@
 
 > **Note:** This app was vibe-coded — planned and ideated by a human, implemented with AI assistance.
 
+## Quick Start
+
+**Prerequisites:** [Flutter SDK and Linux dependencies](#prerequisites) must be installed first.
+
+```bash
+flutter pub get
+./dev.sh
+flutter test
+```
+
 ## Features
 
 - Hierarchical task management (DAG structure)
@@ -15,14 +25,6 @@
 - SQLite persistence
 - Material 3 UI
 - Supported platforms: Linux desktop and Android
-
-## Quick Start
-
-```bash
-flutter pub get
-./dev.sh
-flutter test
-```
 
 ## Setup
 
@@ -32,7 +34,7 @@ flutter test
    ```bash
    git clone --depth 1 --branch stable https://github.com/flutter/flutter.git ~/flutter
    echo 'export PATH="$HOME/flutter/bin:$PATH"' >> ~/.bashrc
-   # If you use zsh, write to ~/.zshrc instead.
+   # If you use zsh, replace ~/.bashrc with ~/.zshrc in both lines.
    source ~/.bashrc
    ```
 
