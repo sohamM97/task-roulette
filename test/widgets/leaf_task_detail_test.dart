@@ -60,7 +60,8 @@ void main() {
       ));
 
       expect(find.text('Add link'), findsNothing);
-      expect(find.byIcon(Icons.add_link), findsNothing);
+      // add_link icon is shown (subtle, beside Start working) for adding a URL
+      expect(find.byIcon(Icons.add_link), findsOneWidget);
     });
 
     testWidgets('URL row hidden when no URL', (tester) async {
@@ -192,7 +193,7 @@ void main() {
       expect(find.byIcon(Icons.link), findsOneWidget);
     });
 
-    testWidgets('start chip is inside a Wrap widget', (tester) async {
+    testWidgets('start chip is inside a Row widget', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
       ));
@@ -200,12 +201,12 @@ void main() {
       final chipFinder = find.widgetWithText(ActionChip, 'Start working');
       expect(chipFinder, findsOneWidget);
 
-      // Verify the ActionChip has a Wrap ancestor
-      final wrapFinder = find.ancestor(
+      // Verify the ActionChip has a Row ancestor
+      final rowFinder = find.ancestor(
         of: chipFinder,
-        matching: find.byType(Wrap),
+        matching: find.byType(Row),
       );
-      expect(wrapFinder, findsOneWidget);
+      expect(rowFinder, findsWidgets);
     });
 
     testWidgets('showEditUrlDialog static method shows dialog', (tester) async {

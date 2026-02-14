@@ -31,17 +31,16 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   Future<void> _addTask() async {
-    final name = await showDialog<String>(
+    final result = await showDialog<AddTaskResult>(
       context: context,
       builder: (_) => const AddTaskDialog(),
     );
-    if (name != null && mounted) {
-      await context.read<TaskProvider>().addTask(name);
+    if (!mounted || result == null) return;
+    if (result is SingleTask) {
+      await context.read<TaskProvider>().addTask(result.name);
+    } else if (result is SwitchToBrainDump) {
+      await _brainDump();
     }
-  }
-
-  void _showFabOptions() {
-    _addTask();
   }
 
   Future<void> _brainDump() async {
@@ -771,24 +770,18 @@ class _TaskListScreenState extends State<TaskListScreen> {
                         child: const Icon(Icons.link),
                       ),
                       const SizedBox(width: 12),
-                      GestureDetector(
-                        onLongPress: _brainDump,
-                        child: FloatingActionButton(
-                          heroTag: 'addTask',
-                          onPressed: _showFabOptions,
-                          child: const Icon(Icons.add),
-                        ),
+                      FloatingActionButton(
+                        heroTag: 'addTask',
+                        onPressed: _addTask,
+                        child: const Icon(Icons.add),
                       ),
                     ],
                   )
                 else
-                  GestureDetector(
-                    onLongPress: _brainDump,
-                    child: FloatingActionButton(
-                      heroTag: 'addTask',
-                      onPressed: _showFabOptions,
-                      child: const Icon(Icons.add),
-                    ),
+                  FloatingActionButton(
+                    heroTag: 'addTask',
+                    onPressed: _addTask,
+                    child: const Icon(Icons.add),
                   ),
               ],
             ),
