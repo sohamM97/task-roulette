@@ -1,9 +1,24 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:graphview/GraphView.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../models/task_relationship.dart';
 import '../providers/task_provider.dart';
+
+/// Cached edge path data extracted from SugiyamaAlgorithm.
+class _EdgePath {
+  final int sourceId;
+  final int destId;
+  final List<Offset> points;
+
+  const _EdgePath({
+    required this.sourceId,
+    required this.destId,
+    required this.points,
+  });
+}
 
 class DagViewScreen extends StatefulWidget {
   const DagViewScreen({super.key});
@@ -13,11 +28,11 @@ class DagViewScreen extends StatefulWidget {
 }
 
 class _DagViewScreenState extends State<DagViewScreen> {
-  // Graph containing only connected tasks (those with at least one relationship).
-  // Unrelated tasks are rendered separately because graphview's
-  // getVisibleGraphOnly() builds the visible graph from edges only —
-  // isolated nodes with zero edges are silently dropped.
-  Graph? _graph;
+  // Cached layout data from one-time SugiyamaAlgorithm computation.
+  Map<int, Offset> _nodePositions = {};
+  List<_EdgePath> _edgePaths = [];
+  Size _graphSize = Size.zero;
+
   Map<int, Task> _connectedTaskMap = {};
   List<Task> _unrelatedTasks = [];
   bool _loading = true;
@@ -31,6 +46,14 @@ class _DagViewScreenState extends State<DagViewScreen> {
 
   final TransformationController _transformController =
       TransformationController();
+  // Key for the viewport to measure size for fit-to-screen.
+  final GlobalKey _viewportKey = GlobalKey();
+
+  static const _nodeMaxWidth = 100.0;
+  static const _nodeHPadding = 12.0;
+  static const _nodeVPadding = 10.0;
+  // Estimated node size for layout computation: maxWidth + 2*hPad = 124, ~40 tall.
+  static const _estimatedNodeSize = Size(124, 40);
 
   static const _nodeColors = [
     Color(0xFFE8DEF8), // purple
@@ -90,8 +113,30 @@ class _DagViewScreenState extends State<DagViewScreen> {
         toCenter * scale * fromCenter * _transformController.value;
   }
 
-  void _resetZoom() {
-    _transformController.value = Matrix4.identity();
+  void _fitToScreen() {
+    final renderBox =
+        _viewportKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null || _graphSize == Size.zero) return;
+
+    final viewportSize = renderBox.size;
+    const padding = 40.0;
+    final graphW = _graphSize.width + padding;
+    final graphH = _graphSize.height + padding;
+
+    final scale = math.min(
+      viewportSize.width / graphW,
+      viewportSize.height / graphH,
+    ).clamp(0.1, 1.0);
+
+    // Center the graph in the viewport.
+    final scaledW = graphW * scale;
+    final scaledH = graphH * scale;
+    final tx = (viewportSize.width - scaledW) / 2;
+    final ty = (viewportSize.height - scaledH) / 2;
+
+    _transformController.value = Matrix4.identity()
+      ..translateByDouble(tx, ty, 0, 1)
+      ..scaleByDouble(scale, scale, 1, 1);
   }
 
   Future<void> _loadData() async {
@@ -109,28 +154,34 @@ class _DagViewScreenState extends State<DagViewScreen> {
 
     _rebuildGraph();
     setState(() => _loading = false);
+
+    // Auto-fit after the first frame so viewport size is available.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _graphSize != Size.zero) {
+        _fitToScreen();
+      }
+    });
   }
 
-  /// Partitions tasks into connected (for GraphView) and unrelated (rendered
+  /// Partitions tasks into connected (for graph layout) and unrelated (rendered
   /// separately as a Wrap below the graph).
   void _rebuildGraph() {
     _connectedTaskMap = {};
     _unrelatedTasks = [];
+    _nodePositions = {};
+    _edgePaths = [];
+    _graphSize = Size.zero;
 
-    if (_allTasks.isEmpty) {
-      _graph = null;
-      return;
-    }
+    if (_allTasks.isEmpty) return;
 
     final graph = Graph();
     final nodeMap = <int, Node>{};
 
-    // Split: tasks with relationships go into the graph, the rest are
-    // shown in a separate "unrelated" section when toggled on.
     for (final task in _allTasks) {
       if (_connectedIds.contains(task.id!)) {
         _connectedTaskMap[task.id!] = task;
         final node = Node.Id(task.id!);
+        node.size = _estimatedNodeSize;
         nodeMap[task.id!] = node;
         graph.addNode(node);
       } else {
@@ -146,7 +197,64 @@ class _DagViewScreenState extends State<DagViewScreen> {
       }
     }
 
-    _graph = graph;
+    if (_connectedTaskMap.isNotEmpty) {
+      _computeLayout(graph, nodeMap);
+    }
+  }
+
+  /// Runs SugiyamaAlgorithm once and caches node positions + edge paths.
+  void _computeLayout(Graph graph, Map<int, Node> nodeMap) {
+    final config = SugiyamaConfiguration()
+      ..nodeSeparation = 20
+      ..levelSeparation = 65
+      ..orientation = SugiyamaConfiguration.ORIENTATION_TOP_BOTTOM;
+
+    final algorithm = SugiyamaAlgorithm(config);
+    _graphSize = algorithm.run(graph, 10, 10);
+
+    // Extract node positions — copyGraph() shares Node instances so
+    // positions are set on the originals after run().
+    for (final entry in nodeMap.entries) {
+      final node = entry.value;
+      _nodePositions[entry.key] = Offset(node.x, node.y);
+    }
+
+    // Extract edge paths. copyGraph() shares Edge instances, so
+    // algorithm.edgeData keys match the original graph's edges.
+    for (final edge in graph.edges) {
+      final sourceId = edge.source.key!.value as int;
+      final destId = edge.destination.key!.value as int;
+      final srcNode = nodeMap[sourceId]!;
+      final dstNode = nodeMap[destId]!;
+
+      final edgeData = algorithm.edgeData[edge];
+      final points = <Offset>[];
+
+      if (edgeData != null && edgeData.bendPoints.isNotEmpty) {
+        // bendPoints is alternating [x, y, x, y, ...] including
+        // source/dest centers — use as the full path.
+        final bp = edgeData.bendPoints;
+        for (int i = 0; i < bp.length - 1; i += 2) {
+          points.add(Offset(bp[i], bp[i + 1]));
+        }
+      } else {
+        // Straight line from source bottom-center to dest top-center.
+        points.add(Offset(
+          srcNode.x + srcNode.width / 2,
+          srcNode.y + srcNode.height,
+        ));
+        points.add(Offset(
+          dstNode.x + dstNode.width / 2,
+          dstNode.y,
+        ));
+      }
+
+      _edgePaths.add(_EdgePath(
+        sourceId: sourceId,
+        destId: destId,
+        points: points,
+      ));
+    }
   }
 
   void _toggleShowUnrelated() {
@@ -176,8 +284,8 @@ class _DagViewScreenState extends State<DagViewScreen> {
         opacity: connected ? 1.0 : 0.5,
         child: Container(
           padding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 10,
+            horizontal: _nodeHPadding,
+            vertical: _nodeVPadding,
           ),
           decoration: BoxDecoration(
             color: connected ? _nodeColor(task.id!) : null,
@@ -190,7 +298,7 @@ class _DagViewScreenState extends State<DagViewScreen> {
             ),
           ),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 120),
+            constraints: const BoxConstraints(maxWidth: _nodeMaxWidth),
             child: Text(
               task.name,
               style: Theme.of(context).textTheme.bodyMedium,
@@ -200,6 +308,39 @@ class _DagViewScreenState extends State<DagViewScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// Builds the graph using Stack + Positioned (nodes) + CustomPaint (edges).
+  Widget _buildGraphWidget(bool isDark) {
+    const padding = 20.0;
+    return SizedBox(
+      width: _graphSize.width + padding * 2,
+      height: _graphSize.height + padding * 2,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // Edges painted behind nodes.
+          CustomPaint(
+            size: Size(
+              _graphSize.width + padding * 2,
+              _graphSize.height + padding * 2,
+            ),
+            painter: _EdgePainter(
+              edgePaths: _edgePaths,
+              isDark: isDark,
+            ),
+          ),
+          // Nodes positioned from cached layout.
+          for (final entry in _nodePositions.entries)
+            if (_connectedTaskMap.containsKey(entry.key))
+              Positioned(
+                left: entry.value.dx,
+                top: entry.value.dy,
+                child: _buildNodeWidget(_connectedTaskMap[entry.key]!),
+              ),
+        ],
       ),
     );
   }
@@ -229,8 +370,6 @@ class _DagViewScreenState extends State<DagViewScreen> {
             ),
         ],
       ),
-      // Body priority: loading → no tasks at all → only unrelated (no graph
-      // to show) → graph + optional unrelated section below it.
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : !hasAnyTasks
@@ -242,39 +381,17 @@ class _DagViewScreenState extends State<DagViewScreen> {
                       : Stack(
                           children: [
                             InteractiveViewer(
+                              key: _viewportKey,
                               transformationController: _transformController,
                               constrained: false,
-                              panEnabled: false,
+                              panEnabled: true,
                               boundaryMargin: const EdgeInsets.all(200),
                               minScale: 0.2,
                               maxScale: 3.0,
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  GraphView(
-                                    graph: _graph!,
-                                    algorithm: SugiyamaAlgorithm(
-                                      SugiyamaConfiguration()
-                                        ..nodeSeparation = 25
-                                        ..levelSeparation = 80
-                                        ..orientation = SugiyamaConfiguration
-                                            .ORIENTATION_TOP_BOTTOM,
-                                    ),
-                                    paint: Paint()
-                                      ..color = isDark
-                                          ? Colors.white54
-                                          : Colors.black45
-                                      ..strokeWidth = 2.0
-                                      ..style = PaintingStyle.stroke,
-                                    builder: (Node node) {
-                                      final taskId = node.key!.value as int;
-                                      final task = _connectedTaskMap[taskId];
-                                      if (task == null) {
-                                        return const SizedBox.shrink();
-                                      }
-                                      return _buildNodeWidget(task);
-                                    },
-                                  ),
+                                  _buildGraphWidget(isDark),
                                   if (_showUnrelated &&
                                       _unrelatedTasks.isNotEmpty)
                                     _buildUnrelatedSection(),
@@ -298,8 +415,8 @@ class _DagViewScreenState extends State<DagViewScreen> {
                                   const SizedBox(height: 1),
                                   _ZoomButton(
                                     icon: Icons.fit_screen_outlined,
-                                    tooltip: 'Reset zoom',
-                                    onPressed: _resetZoom,
+                                    tooltip: 'Fit to screen',
+                                    onPressed: _fitToScreen,
                                     borderRadius: BorderRadius.zero,
                                   ),
                                   const SizedBox(height: 1),
@@ -388,6 +505,68 @@ class _DagViewScreenState extends State<DagViewScreen> {
         ],
       ),
     );
+  }
+}
+
+/// Paints edges as polylines with arrowheads at the destination end.
+class _EdgePainter extends CustomPainter {
+  final List<_EdgePath> edgePaths;
+  final bool isDark;
+
+  _EdgePainter({required this.edgePaths, required this.isDark});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final linePaint = Paint()
+      ..color = isDark ? Colors.white54 : Colors.black45
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke;
+
+    final arrowPaint = Paint()
+      ..color = isDark ? Colors.white54 : Colors.black45
+      ..style = PaintingStyle.fill;
+
+    for (final edge in edgePaths) {
+      if (edge.points.length < 2) continue;
+
+      // Draw polyline through all points.
+      final path = Path();
+      path.moveTo(edge.points.first.dx, edge.points.first.dy);
+      for (int i = 1; i < edge.points.length; i++) {
+        path.lineTo(edge.points[i].dx, edge.points[i].dy);
+      }
+      canvas.drawPath(path, linePaint);
+
+      // Draw arrowhead at the last point.
+      _drawArrowhead(canvas, arrowPaint, edge.points);
+    }
+  }
+
+  void _drawArrowhead(Canvas canvas, Paint paint, List<Offset> points) {
+    final tip = points.last;
+    final prev = points[points.length - 2];
+    final angle = math.atan2(tip.dy - prev.dy, tip.dx - prev.dx);
+
+    const arrowSize = 8.0;
+    const arrowAngle = 0.5; // ~28.6 degrees
+
+    final path = Path();
+    path.moveTo(tip.dx, tip.dy);
+    path.lineTo(
+      tip.dx - arrowSize * math.cos(angle - arrowAngle),
+      tip.dy - arrowSize * math.sin(angle - arrowAngle),
+    );
+    path.lineTo(
+      tip.dx - arrowSize * math.cos(angle + arrowAngle),
+      tip.dy - arrowSize * math.sin(angle + arrowAngle),
+    );
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(_EdgePainter oldDelegate) {
+    return oldDelegate.isDark != isDark || oldDelegate.edgePaths != edgePaths;
   }
 }
 
