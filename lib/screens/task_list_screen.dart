@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
@@ -267,7 +268,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () {
-            provider.restoreTask(deleted.task, deleted.parentIds, deleted.childIds);
+            provider.restoreTask(
+              deleted.task,
+              deleted.parentIds,
+              deleted.childIds,
+              dependsOnIds: deleted.dependsOnIds,
+              dependedByIds: deleted.dependedByIds,
+            );
           },
         ),
         showCloseIcon: true,
@@ -334,13 +341,24 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   Widget _buildLeafTaskDetail(TaskProvider provider) {
     final task = provider.currentParent!;
-    return LeafTaskDetail(
-      task: task,
-      onDone: () => _completeTaskWithUndo(task),
-      onSkip: () => _skipTaskWithUndo(task),
-      onToggleStarted: () => _toggleStarted(task),
-      onRename: () => _renameTask(task),
-      onUpdateUrl: (url) => _updateUrl(task, url),
+    return FutureBuilder<List<Task>>(
+      future: provider.getDependencies(task.id!),
+      builder: (context, snapshot) {
+        final deps = snapshot.data ?? [];
+        return LeafTaskDetail(
+          task: task,
+          onDone: () => _completeTaskWithUndo(task),
+          onSkip: () => _skipTaskWithUndo(task),
+          onToggleStarted: () => _toggleStarted(task),
+          onRename: () => _renameTask(task),
+          onUpdateUrl: (url) => _updateUrl(task, url),
+          dependencies: deps,
+          onRemoveDependency: (depId) async {
+            await provider.removeDependency(task.id!, depId);
+          },
+          onAddDependency: () => _addDependencyToTask(task),
+        );
+      },
     );
   }
 
@@ -381,6 +399,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
   Future<void> _showRandomResult(Task task) async {
     final provider = context.read<TaskProvider>();
     final children = await provider.getChildren(task.id!);
+    final childIds = children.map((c) => c.id!).toList();
+    final blockedIds = await provider.getBlockedChildIds(childIds);
+    final eligible = children.where((c) => !blockedIds.contains(c.id)).toList();
 
     if (!mounted) return;
 
@@ -388,7 +409,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
       context: context,
       builder: (_) => RandomResultDialog(
         task: task,
-        hasChildren: children.isNotEmpty,
+        hasChildren: eligible.isNotEmpty,
       ),
     );
 
@@ -396,10 +417,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
     switch (action) {
       case RandomResultAction.goDeeper:
-        // Pick random from this task's children
-        if (children.isNotEmpty) {
-          final deeper = children[
-              (children.length == 1) ? 0 : DateTime.now().millisecondsSinceEpoch % children.length];
+        // Pick random from this task's non-blocked children
+        if (eligible.isNotEmpty) {
+          final deeper = eligible[
+              (eligible.length == 1) ? 0 : DateTime.now().millisecondsSinceEpoch % eligible.length];
           await _showRandomResult(deeper);
         }
       case RandomResultAction.goToTask:
@@ -464,6 +485,58 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
+  Future<void> _addDependencyToTask(Task task) async {
+    final provider = context.read<TaskProvider>();
+    final allTasks = await provider.getAllTasks();
+    final parentNamesMap = await provider.getParentNamesMap();
+
+    // Filter out: the task itself
+    final candidates = allTasks.where((t) => t.id != task.id).toList();
+
+    // Prioritize siblings (other tasks under the same parent).
+    // On leaf view, provider.tasks is empty — look up siblings from the parent.
+    Set<int> siblingIds;
+    if (provider.tasks.isNotEmpty) {
+      siblingIds = provider.tasks
+          .map((t) => t.id!)
+          .where((id) => id != task.id)
+          .toSet();
+    } else {
+      // Leaf view: get siblings from the parent above
+      final parentIds = await provider.getParentIds(task.id!);
+      if (parentIds.isNotEmpty) {
+        final siblings = await provider.getChildren(parentIds.first);
+        siblingIds = siblings
+            .map((t) => t.id!)
+            .where((id) => id != task.id)
+            .toSet();
+      } else {
+        siblingIds = {};
+      }
+    }
+
+    if (!mounted) return;
+
+    final selected = await showDialog<Task>(
+      context: context,
+      builder: (_) => TaskPickerDialog(
+        candidates: candidates,
+        title: 'Do "${task.name}" after...',
+        parentNamesMap: parentNamesMap,
+        priorityIds: siblingIds,
+      ),
+    );
+
+    if (selected == null || !mounted) return;
+
+    final success = await provider.addDependency(task.id!, selected.id!);
+    if (!success && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cannot add: would create a cycle')),
+      );
+    }
+  }
+
   int _crossAxisCount(double width) {
     if (width >= 900) return 3;
     if (width >= 600) return 2;
@@ -510,6 +583,17 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       onPressed: () => provider.navigateBack(),
                     ),
               actions: [
+                if (!provider.isRoot && provider.currentParent?.hasUrl == true && provider.tasks.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.link),
+                    onPressed: () {
+                      final uri = Uri.tryParse(provider.currentParent!.url!);
+                      if (uri != null) {
+                        launchUrl(uri, mode: LaunchMode.externalApplication);
+                      }
+                    },
+                    tooltip: 'Open link',
+                  ),
                 IconButton(
                   icon: const Icon(Icons.search),
                   onPressed: _searchTask,
@@ -565,6 +649,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
                             (url) => _updateUrl(task, url),
                           );
                         }
+                      case 'do_after':
+                        if (task != null) _addDependencyToTask(task);
                       case 'export':
                         BackupService.exportDatabase(context);
                       case 'import':
@@ -584,6 +670,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
                         value: 'add_parent',
                         child: Text('Also show under...'),
                       ),
+                    ],
+                    if (!provider.isRoot) ...[
                       PopupMenuItem(
                         value: 'edit_link',
                         child: Text(
@@ -591,6 +679,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
                               ? 'Edit link'
                               : 'Add link',
                         ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'do_after',
+                        child: Text('Do after...'),
                       ),
                       const PopupMenuDivider(),
                     ],
@@ -641,7 +733,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
                                 ? null
                                 : () => _moveTask(task),
                             onRename: () => _renameTask(task),
+                            onAddDependency: () => _addDependencyToTask(task),
                             hasStartedDescendant: provider.startedDescendantIds.contains(task.id),
+                            isBlocked: provider.blockedTaskIds.contains(task.id),
+                            blockedByName: provider.blockedByNames[task.id],
                           );
                         },
                       );

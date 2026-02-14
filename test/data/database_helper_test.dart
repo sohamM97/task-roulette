@@ -379,6 +379,141 @@ void main() {
     });
   });
 
+  group('Task dependencies', () {
+    test('addDependency and getDependencies round-trip', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a); // B depends on A
+
+      final deps = await db.getDependencies(b);
+      expect(deps, hasLength(1));
+      expect(deps.first.id, a);
+    });
+
+    test('removeDependency removes the dependency', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a);
+      await db.removeDependency(b, a);
+
+      final deps = await db.getDependencies(b);
+      expect(deps, isEmpty);
+    });
+
+    test('getBlockedTaskIds returns tasks with unresolved dependencies', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      final c = await db.insertTask(Task(name: 'Task C'));
+      await db.addDependency(b, a); // B depends on A (A not completed)
+
+      final blocked = await db.getBlockedTaskIds([a, b, c]);
+      expect(blocked, contains(b));
+      expect(blocked, isNot(contains(a)));
+      expect(blocked, isNot(contains(c)));
+    });
+
+    test('getBlockedTaskIds excludes tasks whose deps are completed', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a);
+      await db.completeTask(a);
+
+      final blocked = await db.getBlockedTaskIds([b]);
+      expect(blocked, isEmpty);
+    });
+
+    test('getBlockedTaskIds excludes tasks whose deps are skipped', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a);
+      await db.skipTask(a);
+
+      final blocked = await db.getBlockedTaskIds([b]);
+      expect(blocked, isEmpty);
+    });
+
+    test('getBlockedTaskIds returns empty for empty input', () async {
+      final blocked = await db.getBlockedTaskIds([]);
+      expect(blocked, isEmpty);
+    });
+
+    test('hasDependencyPath detects direct dependency', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a); // B depends on A
+
+      // Path from B → A exists
+      expect(await db.hasDependencyPath(b, a), isTrue);
+      // No path from A → B
+      expect(await db.hasDependencyPath(a, b), isFalse);
+    });
+
+    test('hasDependencyPath detects transitive dependency', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      final c = await db.insertTask(Task(name: 'Task C'));
+      await db.addDependency(b, a); // B depends on A
+      await db.addDependency(c, b); // C depends on B
+
+      // C → A exists via B
+      expect(await db.hasDependencyPath(c, a), isTrue);
+      // A → C does not exist
+      expect(await db.hasDependencyPath(a, c), isFalse);
+    });
+
+    test('deleteTaskWithRelationships returns dependency IDs', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      final c = await db.insertTask(Task(name: 'Task C'));
+      await db.addDependency(b, a); // B depends on A
+      await db.addDependency(c, b); // C depends on B
+
+      final rels = await db.deleteTaskWithRelationships(b);
+      expect(rels['dependsOnIds'], contains(a));
+      expect(rels['dependedByIds'], contains(c));
+    });
+
+    test('restoreTask restores dependencies', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      final c = await db.insertTask(Task(name: 'Task C'));
+      await db.addDependency(b, a);
+      await db.addDependency(c, b);
+
+      // Delete B
+      final rels = await db.deleteTaskWithRelationships(b);
+      final taskB = Task(id: b, name: 'Task B');
+
+      // Restore B with dependencies
+      await db.restoreTask(
+        taskB, [], [],
+        dependsOnIds: rels['dependsOnIds']!,
+        dependedByIds: rels['dependedByIds']!,
+      );
+
+      // B should still depend on A
+      final bDeps = await db.getDependencies(b);
+      expect(bDeps.map((t) => t.id), contains(a));
+
+      // C should still depend on B
+      final cDeps = await db.getDependencies(c);
+      expect(cDeps.map((t) => t.id), contains(b));
+    });
+
+    test('getDependencies returns completed deps for UI display', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a);
+      await db.completeTask(a);
+
+      // getDependencies should still return A (for chip display)
+      final deps = await db.getDependencies(b);
+      expect(deps, hasLength(1));
+      expect(deps.first.id, a);
+      expect(deps.first.isCompleted, isTrue);
+    });
+  });
+
   group('getDatabasePath', () {
     test('returns testDatabasePath when set', () async {
       expect(DatabaseHelper.testDatabasePath, isNotNull);

@@ -46,7 +46,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE tasks (
@@ -71,6 +71,17 @@ class DatabaseHelper {
         // PERFORMANCE: indices speed up JOIN/WHERE on task_relationships
         await db.execute('CREATE INDEX idx_task_relationships_parent_id ON task_relationships(parent_id)');
         await db.execute('CREATE INDEX idx_task_relationships_child_id ON task_relationships(child_id)');
+        await db.execute('''
+          CREATE TABLE task_dependencies (
+            task_id INTEGER NOT NULL,
+            depends_on_id INTEGER NOT NULL,
+            PRIMARY KEY (task_id, depends_on_id),
+            FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+            FOREIGN KEY (depends_on_id) REFERENCES tasks(id) ON DELETE CASCADE
+          )
+        ''');
+        await db.execute('CREATE INDEX idx_task_dependencies_task_id ON task_dependencies(task_id)');
+        await db.execute('CREATE INDEX idx_task_dependencies_depends_on_id ON task_dependencies(depends_on_id)');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -89,6 +100,19 @@ class DatabaseHelper {
           // PERFORMANCE: indices speed up JOIN/WHERE on task_relationships
           await db.execute('CREATE INDEX IF NOT EXISTS idx_task_relationships_parent_id ON task_relationships(parent_id)');
           await db.execute('CREATE INDEX IF NOT EXISTS idx_task_relationships_child_id ON task_relationships(child_id)');
+        }
+        if (oldVersion < 7) {
+          await db.execute('''
+            CREATE TABLE task_dependencies (
+              task_id INTEGER NOT NULL,
+              depends_on_id INTEGER NOT NULL,
+              PRIMARY KEY (task_id, depends_on_id),
+              FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+              FOREIGN KEY (depends_on_id) REFERENCES tasks(id) ON DELETE CASCADE
+            )
+          ''');
+          await db.execute('CREATE INDEX idx_task_dependencies_task_id ON task_dependencies(task_id)');
+          await db.execute('CREATE INDEX idx_task_dependencies_depends_on_id ON task_dependencies(depends_on_id)');
         }
       },
     );
@@ -369,7 +393,7 @@ class DatabaseHelper {
   }
 
   /// Deletes a task and returns its relationships for undo support.
-  /// Returns a map with 'parentIds' and 'childIds'.
+  /// Returns a map with 'parentIds', 'childIds', 'dependsOnIds', 'dependedByIds'.
   // PERFORMANCE: transaction batches reads + deletes into a single DB round-trip
   Future<Map<String, List<int>>> deleteTaskWithRelationships(int taskId) async {
     final db = await database;
@@ -386,20 +410,43 @@ class DatabaseHelper {
         where: 'parent_id = ?',
         whereArgs: [taskId],
       );
+      final dependsOnMaps = await txn.query(
+        'task_dependencies',
+        columns: ['depends_on_id'],
+        where: 'task_id = ?',
+        whereArgs: [taskId],
+      );
+      final dependedByMaps = await txn.query(
+        'task_dependencies',
+        columns: ['task_id'],
+        where: 'depends_on_id = ?',
+        whereArgs: [taskId],
+      );
       await txn.delete('task_relationships',
           where: 'parent_id = ? OR child_id = ?',
+          whereArgs: [taskId, taskId]);
+      await txn.delete('task_dependencies',
+          where: 'task_id = ? OR depends_on_id = ?',
           whereArgs: [taskId, taskId]);
       await txn.delete('tasks', where: 'id = ?', whereArgs: [taskId]);
       return {
         'parentIds': parentMaps.map((m) => m['parent_id'] as int).toList(),
         'childIds': childMaps.map((m) => m['child_id'] as int).toList(),
+        'dependsOnIds': dependsOnMaps.map((m) => m['depends_on_id'] as int).toList(),
+        'dependedByIds': dependedByMaps.map((m) => m['task_id'] as int).toList(),
       };
     });
   }
 
   /// Restores a previously deleted task with its original ID and relationships.
   // PERFORMANCE: transaction batches task insert + N relationship inserts
-  Future<void> restoreTask(Task task, List<int> parentIds, List<int> childIds) async {
+  Future<void> restoreTask(
+    Task task,
+    List<int> parentIds,
+    List<int> childIds, {
+    List<int> dependsOnIds = const [],
+    List<int> dependedByIds = const [],
+  }) async {
     final db = await database;
     await db.transaction((txn) async {
       await txn.insert('tasks', task.toMap());
@@ -413,6 +460,18 @@ class DatabaseHelper {
         await txn.insert('task_relationships', {
           'parent_id': task.id!,
           'child_id': childId,
+        });
+      }
+      for (final depId in dependsOnIds) {
+        await txn.insert('task_dependencies', {
+          'task_id': task.id!,
+          'depends_on_id': depId,
+        });
+      }
+      for (final depById in dependedByIds) {
+        await txn.insert('task_dependencies', {
+          'task_id': depById,
+          'depends_on_id': task.id!,
         });
       }
     });
@@ -438,6 +497,101 @@ class DatabaseHelper {
       where: 'id = ?',
       whereArgs: [taskId],
     );
+  }
+
+  // --- Task dependency methods ---
+
+  Future<void> addDependency(int taskId, int dependsOnId) async {
+    final db = await database;
+    await db.insert('task_dependencies', {
+      'task_id': taskId,
+      'depends_on_id': dependsOnId,
+    });
+  }
+
+  Future<void> removeDependency(int taskId, int dependsOnId) async {
+    final db = await database;
+    await db.delete(
+      'task_dependencies',
+      where: 'task_id = ? AND depends_on_id = ?',
+      whereArgs: [taskId, dependsOnId],
+    );
+  }
+
+  /// Returns all tasks that [taskId] depends on (completed or not, for UI).
+  Future<List<Task>> getDependencies(int taskId) async {
+    final db = await database;
+    final maps = await db.rawQuery('''
+      SELECT t.* FROM tasks t
+      INNER JOIN task_dependencies td ON t.id = td.depends_on_id
+      WHERE td.task_id = ?
+      ORDER BY t.name ASC
+    ''', [taskId]);
+    return maps.map((m) => Task.fromMap(m)).toList();
+  }
+
+  /// Returns the subset of [taskIds] that have at least one unresolved
+  /// (non-completed, non-skipped) dependency.
+  Future<Set<int>> getBlockedTaskIds(List<int> taskIds) async {
+    if (taskIds.isEmpty) return {};
+    final db = await database;
+    final placeholders = taskIds.map((_) => '?').join(',');
+    final rows = await db.rawQuery('''
+      SELECT DISTINCT td.task_id
+      FROM task_dependencies td
+      INNER JOIN tasks t ON td.depends_on_id = t.id
+      WHERE td.task_id IN ($placeholders)
+        AND t.completed_at IS NULL
+        AND t.skipped_at IS NULL
+    ''', taskIds);
+    return rows.map((r) => r['task_id'] as int).toSet();
+  }
+
+  /// Returns a map of blocked task ID → dependency task name for display.
+  /// Only includes tasks with unresolved (non-completed, non-skipped) dependencies.
+  Future<Map<int, String>> getBlockedTaskInfo(List<int> taskIds) async {
+    if (taskIds.isEmpty) return {};
+    final db = await database;
+    final placeholders = taskIds.map((_) => '?').join(',');
+    final rows = await db.rawQuery('''
+      SELECT td.task_id, t.name
+      FROM task_dependencies td
+      INNER JOIN tasks t ON td.depends_on_id = t.id
+      WHERE td.task_id IN ($placeholders)
+        AND t.completed_at IS NULL
+        AND t.skipped_at IS NULL
+    ''', taskIds);
+    final result = <int, String>{};
+    for (final row in rows) {
+      result[row['task_id'] as int] = row['name'] as String;
+    }
+    return result;
+  }
+
+  /// Removes all dependencies for a task (used before setting a new single dependency).
+  Future<void> removeAllDependencies(int taskId) async {
+    final db = await database;
+    await db.delete(
+      'task_dependencies',
+      where: 'task_id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
+  /// Returns true if there is a dependency path from [fromId] to [toId].
+  /// Used for cycle detection on the dependency graph.
+  Future<bool> hasDependencyPath(int fromId, int toId) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      WITH RECURSIVE dep_chain(id) AS (
+        SELECT depends_on_id FROM task_dependencies WHERE task_id = ?
+        UNION
+        SELECT td.depends_on_id FROM task_dependencies td
+        INNER JOIN dep_chain dc ON td.task_id = dc.id
+      )
+      SELECT 1 FROM dep_chain WHERE id = ? LIMIT 1
+    ''', [fromId, toId]);
+    return result.isNotEmpty;
   }
 
   /// Returns the set of task IDs (from the given list) that have at least one

@@ -15,6 +15,11 @@ class TaskProvider extends ChangeNotifier {
   Set<int> _startedDescendantIds = {};
   Set<int> get startedDescendantIds => _startedDescendantIds;
 
+  /// Blocked task ID → name of the task it depends on.
+  Map<int, String> _blockedByNames = {};
+  Set<int> get blockedTaskIds => _blockedByNames.keys.toSet();
+  Map<int, String> get blockedByNames => _blockedByNames;
+
   /// null means we're at the root level
   Task? _currentParent;
   Task? get currentParent => _currentParent;
@@ -28,6 +33,7 @@ class TaskProvider extends ChangeNotifier {
     _tasks = await _db.getRootTasks();
     final taskIds = _tasks.map((t) => t.id!).toList();
     _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
+    _blockedByNames = await _db.getBlockedTaskInfo(taskIds);
     notifyListeners();
   }
 
@@ -37,6 +43,7 @@ class TaskProvider extends ChangeNotifier {
     _tasks = await _db.getChildren(task.id!);
     final taskIds = _tasks.map((t) => t.id!).toList();
     _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
+    _blockedByNames = await _db.getBlockedTaskInfo(taskIds);
     notifyListeners();
   }
 
@@ -50,6 +57,7 @@ class TaskProvider extends ChangeNotifier {
     }
     final taskIds = _tasks.map((t) => t.id!).toList();
     _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
+    _blockedByNames = await _db.getBlockedTaskInfo(taskIds);
     notifyListeners();
     return true;
   }
@@ -76,6 +84,7 @@ class TaskProvider extends ChangeNotifier {
     }
     final taskIds = _tasks.map((t) => t.id!).toList();
     _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
+    _blockedByNames = await _db.getBlockedTaskInfo(taskIds);
     notifyListeners();
   }
 
@@ -99,16 +108,29 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Deletes a task and returns info needed for undo.
-  /// Returns a record of (task, parentIds, childIds).
-  Future<({Task task, List<int> parentIds, List<int> childIds})> deleteTask(int taskId) async {
+  /// Returns a record of (task, parentIds, childIds, dependsOnIds, dependedByIds).
+  Future<({Task task, List<int> parentIds, List<int> childIds, List<int> dependsOnIds, List<int> dependedByIds})> deleteTask(int taskId) async {
     final task = _tasks.firstWhere((t) => t.id == taskId);
     final rels = await _db.deleteTaskWithRelationships(taskId);
     await _refreshCurrentList();
-    return (task: task, parentIds: rels['parentIds']!, childIds: rels['childIds']!);
+    return (
+      task: task,
+      parentIds: rels['parentIds']!,
+      childIds: rels['childIds']!,
+      dependsOnIds: rels['dependsOnIds']!,
+      dependedByIds: rels['dependedByIds']!,
+    );
   }
 
-  Future<void> restoreTask(Task task, List<int> parentIds, List<int> childIds) async {
-    await _db.restoreTask(task, parentIds, childIds);
+  Future<void> restoreTask(
+    Task task,
+    List<int> parentIds,
+    List<int> childIds, {
+    List<int> dependsOnIds = const [],
+    List<int> dependedByIds = const [],
+  }) async {
+    await _db.restoreTask(task, parentIds, childIds,
+        dependsOnIds: dependsOnIds, dependedByIds: dependedByIds);
     await _refreshCurrentList();
   }
 
@@ -159,8 +181,9 @@ class TaskProvider extends ChangeNotifier {
   }
 
   Task? pickRandom() {
-    if (_tasks.isEmpty) return null;
-    return _tasks[_random.nextInt(_tasks.length)];
+    final eligible = _tasks.where((t) => !_blockedByNames.containsKey(t.id)).toList();
+    if (eligible.isEmpty) return null;
+    return eligible[_random.nextInt(eligible.length)];
   }
 
   Future<List<Task>> getChildren(int taskId) async {
@@ -186,9 +209,15 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Permanently deletes a completed task. Returns info needed for undo.
-  Future<({Task task, List<int> parentIds, List<int> childIds})> permanentlyDeleteTask(int taskId, Task task) async {
+  Future<({Task task, List<int> parentIds, List<int> childIds, List<int> dependsOnIds, List<int> dependedByIds})> permanentlyDeleteTask(int taskId, Task task) async {
     final rels = await _db.deleteTaskWithRelationships(taskId);
-    return (task: task, parentIds: rels['parentIds']!, childIds: rels['childIds']!);
+    return (
+      task: task,
+      parentIds: rels['parentIds']!,
+      childIds: rels['childIds']!,
+      dependsOnIds: rels['dependsOnIds']!,
+      dependedByIds: rels['dependedByIds']!,
+    );
   }
 
   /// Marks a task as started (in progress).
@@ -223,6 +252,36 @@ class TaskProvider extends ChangeNotifier {
       );
     }
     await _refreshCurrentList();
+  }
+
+  // --- Task dependency methods ---
+
+  /// Adds a dependency: taskId depends on dependsOnId.
+  /// Replaces any existing dependency (single dependency per task).
+  /// Returns false if a cycle would be created.
+  Future<bool> addDependency(int taskId, int dependsOnId) async {
+    // Check: would this create a cycle in the dependency graph?
+    if (taskId == dependsOnId) return false;
+    final wouldCycle = await _db.hasDependencyPath(dependsOnId, taskId);
+    if (wouldCycle) return false;
+    // Single dependency: remove any existing before adding new
+    await _db.removeAllDependencies(taskId);
+    await _db.addDependency(taskId, dependsOnId);
+    await _refreshCurrentList();
+    return true;
+  }
+
+  Future<void> removeDependency(int taskId, int dependsOnId) async {
+    await _db.removeDependency(taskId, dependsOnId);
+    await _refreshCurrentList();
+  }
+
+  Future<List<Task>> getDependencies(int taskId) async {
+    return _db.getDependencies(taskId);
+  }
+
+  Future<Set<int>> getBlockedChildIds(List<int> childIds) async {
+    return _db.getBlockedTaskIds(childIds);
   }
 
   Future<Map<int, List<String>>> getParentNamesMap() async {
@@ -328,6 +387,7 @@ class TaskProvider extends ChangeNotifier {
     _tasks = await _db.getChildren(task.id!);
     final taskIds = _tasks.map((t) => t.id!).toList();
     _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
+    _blockedByNames = await _db.getBlockedTaskInfo(taskIds);
     notifyListeners();
   }
 
@@ -339,6 +399,7 @@ class TaskProvider extends ChangeNotifier {
     }
     final taskIds = _tasks.map((t) => t.id!).toList();
     _startedDescendantIds = await _db.getTaskIdsWithStartedDescendants(taskIds);
+    _blockedByNames = await _db.getBlockedTaskInfo(taskIds);
     notifyListeners();
   }
 }

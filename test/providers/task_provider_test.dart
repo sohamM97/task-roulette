@@ -168,6 +168,177 @@ void main() {
     });
   });
 
+  group('pickRandom with dependencies', () {
+    test('pickRandom skips blocked tasks', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a); // B depends on A (A not completed)
+
+      await provider.loadRootTasks();
+      expect(provider.tasks, hasLength(2));
+      expect(provider.blockedTaskIds, contains(b));
+
+      // pickRandom should only ever return A
+      for (int i = 0; i < 20; i++) {
+        final picked = provider.pickRandom();
+        expect(picked, isNotNull);
+        expect(picked!.id, a);
+      }
+    });
+
+    test('pickRandom includes task after dependency resolved', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a);
+
+      await provider.loadRootTasks();
+      expect(provider.blockedTaskIds, contains(b));
+
+      // Complete A
+      final taskA = provider.tasks.firstWhere((t) => t.id == a);
+      await provider.navigateInto(taskA);
+      await provider.completeTask(a);
+      // Back at root now
+
+      expect(provider.blockedTaskIds, isNot(contains(b)));
+    });
+
+    test('pickRandom returns null when all tasks are blocked', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(a, b);
+      await db.addDependency(b, a); // circular, but both blocked
+
+      // Manually add both — they're mutually dependent
+      // Actually this won't be blocked unless deps are unresolved.
+      // Let's create a simpler scenario: a 3rd task that both depend on
+      final c = await db.insertTask(Task(name: 'Task C'));
+      await db.removeDependency(a, b);
+      await db.removeDependency(b, a);
+      await db.addDependency(a, c);
+      await db.addDependency(b, c);
+
+      // Remove C from root (it's still active, so A and B are blocked)
+      // Actually C is also at root. Let's just test: if only blocked tasks remain
+      // Create parent to contain A and B, with C elsewhere
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      await db.addRelationship(parentId, a);
+      await db.addRelationship(parentId, b);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      // A and B are children of parent, both depend on C
+      expect(provider.blockedTaskIds, containsAll([a, b]));
+      expect(provider.pickRandom(), isNull);
+    });
+  });
+
+  group('addDependency / removeDependency', () {
+    test('addDependency succeeds for non-cyclic dependency', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+
+      await provider.loadRootTasks();
+      final result = await provider.addDependency(b, a);
+      expect(result, isTrue);
+    });
+
+    test('addDependency prevents self-dependency', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+
+      await provider.loadRootTasks();
+      final result = await provider.addDependency(a, a);
+      expect(result, isFalse);
+    });
+
+    test('addDependency prevents cyclic dependency', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a); // B depends on A
+
+      await provider.loadRootTasks();
+      // Try to make A depend on B (would create cycle)
+      final result = await provider.addDependency(a, b);
+      expect(result, isFalse);
+    });
+
+    test('removeDependency unblocks the task', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a);
+
+      await provider.loadRootTasks();
+      expect(provider.blockedTaskIds, contains(b));
+
+      await provider.removeDependency(b, a);
+      expect(provider.blockedTaskIds, isNot(contains(b)));
+    });
+
+    test('getDependencies returns dependency list', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a);
+
+      final deps = await provider.getDependencies(b);
+      expect(deps, hasLength(1));
+      expect(deps.first.id, a);
+    });
+
+    test('addDependency replaces existing dependency (single dep)', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      final c = await db.insertTask(Task(name: 'Task C'));
+
+      await provider.loadRootTasks();
+      await provider.addDependency(c, a); // C depends on A
+      var deps = await provider.getDependencies(c);
+      expect(deps, hasLength(1));
+      expect(deps.first.id, a);
+
+      await provider.addDependency(c, b); // C now depends on B (replaces A)
+      deps = await provider.getDependencies(c);
+      expect(deps, hasLength(1));
+      expect(deps.first.id, b);
+    });
+
+    test('blockedByNames contains dependency name', () async {
+      final a = await db.insertTask(Task(name: 'First Task'));
+      final b = await db.insertTask(Task(name: 'Second Task'));
+      await db.addDependency(b, a);
+
+      await provider.loadRootTasks();
+      expect(provider.blockedByNames[b], 'First Task');
+      expect(provider.blockedByNames.containsKey(a), isFalse);
+    });
+
+    test('siblings available for leaf task via getParentIds + getChildren', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childA = await db.insertTask(Task(name: 'Child A'));
+      final childB = await db.insertTask(Task(name: 'Child B'));
+      await db.addRelationship(parentId, childA);
+      await db.addRelationship(parentId, childB);
+
+      // Navigate to leaf (childA)
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      final child = provider.tasks.firstWhere((t) => t.id == childA);
+      await provider.navigateInto(child);
+
+      // On leaf view, provider.tasks is empty
+      expect(provider.tasks, isEmpty);
+
+      // But we can get siblings via parentIds + getChildren
+      final parentIds = await provider.getParentIds(childA);
+      expect(parentIds, contains(parentId));
+      final siblings = await provider.getChildren(parentIds.first);
+      final siblingIds = siblings.map((t) => t.id!).where((id) => id != childA).toSet();
+      expect(siblingIds, contains(childB));
+    });
+  });
+
   group('renameTask', () {
     test('updates currentParent name immediately on leaf view', () async {
       final leafId = await db.insertTask(Task(name: 'Old name'));

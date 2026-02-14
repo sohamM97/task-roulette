@@ -9,6 +9,9 @@ class LeafTaskDetail extends StatelessWidget {
   final VoidCallback onToggleStarted;
   final VoidCallback onRename;
   final void Function(String?) onUpdateUrl;
+  final List<Task> dependencies;
+  final void Function(int)? onRemoveDependency;
+  final VoidCallback? onAddDependency;
 
   const LeafTaskDetail({
     super.key,
@@ -18,6 +21,9 @@ class LeafTaskDetail extends StatelessWidget {
     required this.onToggleStarted,
     required this.onRename,
     required this.onUpdateUrl,
+    this.dependencies = const [],
+    this.onRemoveDependency,
+    this.onAddDependency,
   });
 
   String _formatTimeAgo(int millis) {
@@ -153,6 +159,33 @@ class LeafTaskDetail extends StatelessWidget {
     return display.length > 40 ? '${display.substring(0, 40)}...' : display;
   }
 
+  Widget _buildDependencyChips(BuildContext context, ColorScheme colorScheme) {
+    final dep = dependencies.isNotEmpty ? dependencies.first : null;
+    if (dep != null) {
+      // Show current dependency with X to remove
+      return InputChip(
+        avatar: Icon(
+          dep.isCompleted || dep.isSkipped
+              ? Icons.check
+              : Icons.hourglass_top,
+          size: 16,
+        ),
+        label: Text(
+          'After: ${dep.name}',
+          style: TextStyle(
+            color: dep.isCompleted || dep.isSkipped
+                ? colorScheme.onSurfaceVariant.withAlpha(150)
+                : null,
+          ),
+        ),
+        onDeleted: onRemoveDependency != null
+            ? () => onRemoveDependency!(dep.id!)
+            : null,
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -196,6 +229,11 @@ class LeafTaskDetail extends StatelessWidget {
             // URL row — only if URL exists
             _buildUrlRow(context, colorScheme, textTheme),
             if (task.hasUrl) const SizedBox(height: 12),
+            // Dependency chips
+            if (dependencies.isNotEmpty || onAddDependency != null)
+              _buildDependencyChips(context, colorScheme),
+            if (dependencies.isNotEmpty || onAddDependency != null)
+              const SizedBox(height: 12),
             // Start chip in a Wrap (future chips slot in here)
             Wrap(
               alignment: WrapAlignment.center,

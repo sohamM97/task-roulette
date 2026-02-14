@@ -105,7 +105,13 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () async {
-            await provider.restoreTask(deleted.task, deleted.parentIds, deleted.childIds);
+            await provider.restoreTask(
+              deleted.task,
+              deleted.parentIds,
+              deleted.childIds,
+              dependsOnIds: deleted.dependsOnIds,
+              dependedByIds: deleted.dependedByIds,
+            );
             if (task.isSkipped) {
               await provider.reSkipTask(task.id!);
             } else {
