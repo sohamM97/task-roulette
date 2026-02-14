@@ -71,19 +71,29 @@ class LeafTaskDetail extends StatelessWidget {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Link'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            hintText: 'https://...',
-            border: OutlineInputBorder(),
-          ),
-          keyboardType: TextInputType.url,
-          autofocus: true,
-          onSubmitted: (value) {
-            final url = value.trim().isEmpty ? null : value.trim();
-            Navigator.pop(dialogContext);
-            onUpdateUrl(url);
+        content: GestureDetector(
+          onHorizontalDragEnd: (details) {
+            if ((details.primaryVelocity ?? 0) > 0 && controller.text.isEmpty) {
+              controller.text = 'https://';
+              controller.selection = TextSelection.fromPosition(
+                TextPosition(offset: controller.text.length),
+              );
+            }
           },
+          child: TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              hintText: 'https://...',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.url,
+            autofocus: true,
+            onSubmitted: (value) {
+              final url = value.trim().isEmpty ? null : value.trim();
+              Navigator.pop(dialogContext);
+              onUpdateUrl(url);
+            },
+          ),
         ),
         actions: [
           if (currentUrl != null && currentUrl.isNotEmpty)
@@ -225,20 +235,21 @@ class LeafTaskDetail extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
             // URL row — only if URL exists
             _buildUrlRow(context, colorScheme, textTheme),
-            if (task.hasUrl) const SizedBox(height: 12),
+            if (task.hasUrl) const SizedBox(height: 4),
             // Dependency chips
             if (dependencies.isNotEmpty || onAddDependency != null)
               _buildDependencyChips(context, colorScheme),
             if (dependencies.isNotEmpty || onAddDependency != null)
-              const SizedBox(height: 12),
-            // Start chip in a Wrap (future chips slot in here)
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 8,
+              const SizedBox(height: 4),
+            // Start chip + add-link icon (only when no URL yet)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
               children: [
+                if (!task.hasUrl) const SizedBox(width: 28),
                 if (!task.isStarted)
                   ActionChip(
                     avatar: const Icon(Icons.play_arrow, size: 18),
@@ -252,6 +263,17 @@ class LeafTaskDetail extends StatelessWidget {
                     onPressed: onToggleStarted,
                     backgroundColor: colorScheme.secondaryContainer,
                   ),
+                if (!task.hasUrl) ...[
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: () => showEditUrlDialog(context, task.url, onUpdateUrl),
+                    child: Icon(
+                      Icons.add_link,
+                      size: 20,
+                      color: colorScheme.onSurfaceVariant.withAlpha(120),
+                    ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 20),

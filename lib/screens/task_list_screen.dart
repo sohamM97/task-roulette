@@ -671,7 +671,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                         child: Text('Also show under...'),
                       ),
                     ],
-                    if (!provider.isRoot) ...[
+                    if (!provider.isRoot && provider.tasks.isNotEmpty) ...[
                       PopupMenuItem(
                         value: 'edit_link',
                         child: Text(
@@ -680,6 +680,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
                               : 'Add link',
                         ),
                       ),
+                    ],
+                    if (!provider.isRoot) ...[
                       const PopupMenuItem(
                         value: 'do_after',
                         child: Text('Do after...'),
