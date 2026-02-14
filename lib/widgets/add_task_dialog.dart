@@ -38,26 +38,32 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Add Task'),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        decoration: const InputDecoration(
-          hintText: 'Task name',
-          border: OutlineInputBorder(),
-        ),
-        textCapitalization: TextCapitalization.sentences,
-        onSubmitted: (_) => _submit(),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            decoration: const InputDecoration(
+              hintText: 'Task name',
+              border: OutlineInputBorder(),
+            ),
+            textCapitalization: TextCapitalization.sentences,
+            onSubmitted: (_) => _submit(),
+          ),
+          const SizedBox(height: 4),
+          TextButton(
+            onPressed: () => Navigator.pop(context, SwitchToBrainDump()),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+              textStyle: Theme.of(context).textTheme.bodySmall,
+            ),
+            child: const Text('Add multiple'),
+          ),
+        ],
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, SwitchToBrainDump()),
-          style: TextButton.styleFrom(
-            foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
-            textStyle: Theme.of(context).textTheme.bodySmall,
-          ),
-          child: const Text('Add multiple'),
-        ),
-        const Spacer(),
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('Cancel'),
