@@ -11,6 +11,7 @@ import '../widgets/leaf_task_detail.dart';
 import '../widgets/random_result_dialog.dart';
 import '../widgets/task_card.dart';
 import '../widgets/task_picker_dialog.dart';
+import '../services/backup_service.dart';
 import 'completed_tasks_screen.dart';
 import 'dag_view_screen.dart';
 
@@ -361,6 +362,26 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
+  Future<void> _searchTask() async {
+    final provider = context.read<TaskProvider>();
+    final allTasks = await provider.getAllTasks();
+    final parentNamesMap = await provider.getParentNamesMap();
+
+    if (!mounted) return;
+
+    final selected = await showDialog<Task>(
+      context: context,
+      builder: (_) => TaskPickerDialog(
+        candidates: allTasks,
+        title: 'Search tasks',
+        parentNamesMap: parentNamesMap,
+      ),
+    );
+
+    if (selected == null || !mounted) return;
+    await provider.navigateToTask(selected);
+  }
+
   Future<void> _pickRandom() async {
     final provider = context.read<TaskProvider>();
     final picked = provider.pickRandom();
@@ -508,6 +529,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
                     ),
               actions: [
                 IconButton(
+                  icon: const Icon(Icons.search),
+                  onPressed: _searchTask,
+                  tooltip: 'Search',
+                ),
+                IconButton(
                   icon: const Icon(Icons.archive_outlined),
                   onPressed: () {
                     Navigator.push(
@@ -539,6 +565,62 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       tooltip: 'Toggle theme',
                     );
                   },
+                ),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: (value) {
+                    final task = provider.currentParent;
+                    switch (value) {
+                      case 'rename':
+                        if (task != null) _renameTask(task);
+                      case 'add_parent':
+                        if (task != null) _addParentToTask(task);
+                      case 'edit_link':
+                        if (task != null) {
+                          LeafTaskDetail.showEditUrlDialog(
+                            context,
+                            task.url,
+                            (url) => _updateUrl(task, url),
+                          );
+                        }
+                      case 'export':
+                        BackupService.exportDatabase(context);
+                      case 'import':
+                        BackupService.importDatabase(
+                          context,
+                          context.read<TaskProvider>(),
+                        );
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    if (!provider.isRoot && provider.tasks.isEmpty) ...[
+                      const PopupMenuItem(
+                        value: 'rename',
+                        child: Text('Rename'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'add_parent',
+                        child: Text('Also show under...'),
+                      ),
+                      PopupMenuItem(
+                        value: 'edit_link',
+                        child: Text(
+                          provider.currentParent?.hasUrl == true
+                              ? 'Edit link'
+                              : 'Add link',
+                        ),
+                      ),
+                      const PopupMenuDivider(),
+                    ],
+                    const PopupMenuItem(
+                      value: 'export',
+                      child: Text('Export backup'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'import',
+                      child: Text('Import backup'),
+                    ),
+                  ],
                 ),
               ],
             ),

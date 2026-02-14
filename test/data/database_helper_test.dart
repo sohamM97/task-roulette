@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:task_roulette/data/database_helper.dart';
@@ -375,6 +376,265 @@ void main() {
       final result = await db.getTaskIdsWithStartedDescendants([parent1, parent2]);
       expect(result, contains(parent1));
       expect(result, contains(parent2));
+    });
+  });
+
+  group('getDatabasePath', () {
+    test('returns testDatabasePath when set', () async {
+      expect(DatabaseHelper.testDatabasePath, isNotNull);
+      final path = await db.getDatabasePath();
+      expect(path, equals(DatabaseHelper.testDatabasePath));
+    });
+  });
+
+  group('importDatabase', () {
+    // These tests use real temp files instead of in-memory databases.
+    late Directory tempDir;
+    late String mainDbPath;
+    late String backupDbPath;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('task_roulette_test_');
+      mainDbPath = '${tempDir.path}/main.db';
+      backupDbPath = '${tempDir.path}/backup.db';
+    });
+
+    tearDown(() async {
+      // Restore in-memory path for other test groups
+      DatabaseHelper.testDatabasePath = inMemoryDatabasePath;
+      await db.reset();
+      await tempDir.delete(recursive: true);
+    });
+
+    test('replaces current database with imported file', () async {
+      // Set up a real file-backed DB with one task
+      DatabaseHelper.testDatabasePath = mainDbPath;
+      await db.reset();
+      await db.database; // init
+      await db.insertTask(Task(name: 'Original task'));
+      var tasks = await db.getAllTasks();
+      expect(tasks, hasLength(1));
+      expect(tasks.first.name, 'Original task');
+
+      // Create a separate backup DB with different data
+      DatabaseHelper.testDatabasePath = backupDbPath;
+      await db.reset();
+      await db.database; // init
+      await db.insertTask(Task(name: 'Backup task A'));
+      await db.insertTask(Task(name: 'Backup task B'));
+      tasks = await db.getAllTasks();
+      expect(tasks, hasLength(2));
+
+      // Import backup over the main DB
+      DatabaseHelper.testDatabasePath = mainDbPath;
+      await db.reset();
+      await db.importDatabase(backupDbPath);
+
+      // Verify main DB now has the backup data
+      tasks = await db.getAllTasks();
+      expect(tasks, hasLength(2));
+      final names = tasks.map((t) => t.name).toSet();
+      expect(names, containsAll(['Backup task A', 'Backup task B']));
+      expect(names, isNot(contains('Original task')));
+    });
+
+    test('clears cached instance so next access reopens fresh', () async {
+      DatabaseHelper.testDatabasePath = mainDbPath;
+      await db.reset();
+      await db.database; // init
+      await db.insertTask(Task(name: 'Before import'));
+
+      // Create backup
+      DatabaseHelper.testDatabasePath = backupDbPath;
+      await db.reset();
+      await db.database;
+      await db.insertTask(Task(name: 'After import'));
+
+      // Import and verify we can immediately query the new data
+      DatabaseHelper.testDatabasePath = mainDbPath;
+      await db.reset();
+      await db.database; // open main
+      await db.importDatabase(backupDbPath);
+
+      // This should work without needing a manual reset — importDatabase
+      // clears the cache internally
+      final tasks = await db.getAllTasks();
+      expect(tasks, hasLength(1));
+      expect(tasks.first.name, 'After import');
+    });
+
+    test('preserves relationships in imported database', () async {
+      // Create backup DB with parent-child relationship
+      DatabaseHelper.testDatabasePath = backupDbPath;
+      await db.reset();
+      await db.database;
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      // Set up main DB (empty)
+      DatabaseHelper.testDatabasePath = mainDbPath;
+      await db.reset();
+      await db.database;
+
+      // Import
+      await db.importDatabase(backupDbPath);
+
+      // Verify relationships survived
+      final children = await db.getChildren(parentId);
+      expect(children, hasLength(1));
+      expect(children.first.name, 'Child');
+
+      final roots = await db.getRootTasks();
+      expect(roots, hasLength(1));
+      expect(roots.first.name, 'Parent');
+    });
+
+    test('rejects a non-database file', () async {
+      DatabaseHelper.testDatabasePath = mainDbPath;
+      await db.reset();
+      await db.database;
+
+      // Write a plain text file
+      final badFile = File('${tempDir.path}/not_a_db.txt');
+      await badFile.writeAsString('this is not a database');
+
+      expect(
+        () => db.importDatabase(badFile.path),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('rejects a SQLite database without tasks table', () async {
+      DatabaseHelper.testDatabasePath = mainDbPath;
+      await db.reset();
+      await db.database;
+
+      // Create a valid SQLite DB that has no tasks table
+      final wrongDbPath = '${tempDir.path}/wrong_schema.db';
+      final wrongDb = await openDatabase(wrongDbPath, version: 1,
+        onCreate: (db, version) async {
+          await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, text TEXT)');
+        },
+      );
+      await wrongDb.close();
+
+      expect(
+        () => db.importDatabase(wrongDbPath),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('does not overwrite current DB when validation fails', () async {
+      // Set up main DB with data
+      DatabaseHelper.testDatabasePath = mainDbPath;
+      await db.reset();
+      await db.database;
+      await db.insertTask(Task(name: 'Precious task'));
+
+      // Try importing a bad file
+      final badFile = File('${tempDir.path}/garbage.bin');
+      await badFile.writeAsBytes([0, 1, 2, 3, 4, 5]);
+
+      try {
+        await db.importDatabase(badFile.path);
+      } on FormatException {
+        // expected
+      }
+
+      // Original data should still be intact
+      // Need to reset since _database was not cleared on failure...
+      // Actually, importDatabase only clears after validation passes.
+      final tasks = await db.getAllTasks();
+      expect(tasks, hasLength(1));
+      expect(tasks.first.name, 'Precious task');
+    });
+  });
+
+  group('exportDatabase (file copy)', () {
+    late Directory tempDir;
+    late String mainDbPath;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('task_roulette_export_test_');
+      mainDbPath = '${tempDir.path}/main.db';
+    });
+
+    tearDown(() async {
+      DatabaseHelper.testDatabasePath = inMemoryDatabasePath;
+      await db.reset();
+      await tempDir.delete(recursive: true);
+    });
+
+    test('copied DB file contains the same tasks', () async {
+      // Create a DB with some tasks
+      DatabaseHelper.testDatabasePath = mainDbPath;
+      await db.reset();
+      await db.database;
+      await db.insertTask(Task(name: 'Task One'));
+      await db.insertTask(Task(name: 'Task Two'));
+
+      // Copy the DB file (simulates what BackupService.exportDatabase does)
+      final destPath = '${tempDir.path}/export_copy.db';
+      await File(mainDbPath).copy(destPath);
+
+      // Open the copy and verify contents
+      DatabaseHelper.testDatabasePath = destPath;
+      await db.reset();
+      final tasks = await db.getAllTasks();
+      expect(tasks, hasLength(2));
+      final names = tasks.map((t) => t.name).toSet();
+      expect(names, containsAll(['Task One', 'Task Two']));
+    });
+
+    test('copied DB file preserves relationships', () async {
+      DatabaseHelper.testDatabasePath = mainDbPath;
+      await db.reset();
+      await db.database;
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      // Copy
+      final destPath = '${tempDir.path}/export_copy.db';
+      await File(mainDbPath).copy(destPath);
+
+      // Verify the copy
+      DatabaseHelper.testDatabasePath = destPath;
+      await db.reset();
+      final roots = await db.getRootTasks();
+      expect(roots, hasLength(1));
+      expect(roots.first.name, 'Parent');
+      final children = await db.getChildren(parentId);
+      expect(children, hasLength(1));
+      expect(children.first.name, 'Child');
+    });
+
+    test('copied DB file preserves started and completed state', () async {
+      DatabaseHelper.testDatabasePath = mainDbPath;
+      await db.reset();
+      await db.database;
+      final id1 = await db.insertTask(Task(name: 'Started'));
+      final id2 = await db.insertTask(Task(name: 'Completed'));
+      await db.insertTask(Task(name: 'Active'));
+      await db.startTask(id1);
+      await db.completeTask(id2);
+
+      // Copy
+      final destPath = '${tempDir.path}/export_copy.db';
+      await File(mainDbPath).copy(destPath);
+
+      // Verify
+      DatabaseHelper.testDatabasePath = destPath;
+      await db.reset();
+      final active = await db.getAllTasks();
+      expect(active, hasLength(2)); // Started + Active (Completed excluded)
+      final started = active.firstWhere((t) => t.id == id1);
+      expect(started.isStarted, isTrue);
+
+      final archived = await db.getArchivedTasks();
+      expect(archived, hasLength(1));
+      expect(archived.first.name, 'Completed');
     });
   });
 }

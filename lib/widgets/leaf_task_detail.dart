@@ -29,51 +29,51 @@ class LeafTaskDetail extends StatelessWidget {
   });
 
   String _formatDate(int millis) {
-    final date = DateTime.fromMillisecondsSinceEpoch(millis);
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final taskDay = DateTime(date.year, date.month, date.day);
-    final diff = today.difference(taskDay).inDays;
-
-    if (diff == 0) return 'Created today';
-    if (diff == 1) return 'Created yesterday';
-    if (diff < 7) return 'Created $diff days ago';
-
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    return 'Created ${months[date.month - 1]} ${date.day}, ${date.year}';
+    final dt = DateTime.fromMillisecondsSinceEpoch(millis);
+    return '${dt.day}/${dt.month}/${dt.year}';
   }
 
   String _formatTimeAgo(int millis) {
     final started = DateTime.fromMillisecondsSinceEpoch(millis);
     final diff = DateTime.now().difference(started);
-    if (diff.inDays > 0) {
-      return 'Started ${diff.inDays} ${diff.inDays == 1 ? 'day' : 'days'} ago';
-    }
-    if (diff.inHours > 0) {
-      return 'Started ${diff.inHours} ${diff.inHours == 1 ? 'hour' : 'hours'} ago';
-    }
-    if (diff.inMinutes > 0) {
-      return 'Started ${diff.inMinutes} ${diff.inMinutes == 1 ? 'minute' : 'minutes'} ago';
-    }
-    return 'Started just now';
+    if (diff.inDays > 0) return '${diff.inDays}d ago';
+    if (diff.inHours > 0) return '${diff.inHours}h ago';
+    if (diff.inMinutes > 0) return '${diff.inMinutes}m ago';
+    return 'just now';
   }
 
   Future<void> _openUrl(BuildContext context) async {
     final uri = Uri.tryParse(task.url!);
-    if (uri != null && await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open link')),
-      );
+    if (uri == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open link')),
+        );
+      }
+      return;
+    }
+    try {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open link')),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open link')),
+        );
+      }
     }
   }
 
-  void _editUrl(BuildContext context) {
-    final controller = TextEditingController(text: task.url ?? '');
+  static void showEditUrlDialog(
+    BuildContext context,
+    String? currentUrl,
+    void Function(String?) onUpdateUrl,
+  ) {
+    final controller = TextEditingController(text: currentUrl ?? '');
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -93,7 +93,7 @@ class LeafTaskDetail extends StatelessWidget {
           },
         ),
         actions: [
-          if (task.hasUrl)
+          if (currentUrl != null && currentUrl.isNotEmpty)
             TextButton(
               onPressed: () {
                 Navigator.pop(dialogContext);
@@ -120,50 +120,38 @@ class LeafTaskDetail extends StatelessWidget {
     );
   }
 
-  Widget _buildUrlSection(
+  Widget _buildUrlRow(
       BuildContext context, ColorScheme colorScheme, TextTheme textTheme) {
-    if (task.hasUrl) {
-      return InkWell(
-        onTap: () => _openUrl(context),
-        onLongPress: () => _editUrl(context),
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.link, size: 18, color: colorScheme.primary),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  _displayUrl(task.url!),
-                  style: textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.primary,
-                    decoration: TextDecoration.underline,
-                    decorationColor: colorScheme.primary,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+    if (!task.hasUrl) return const SizedBox.shrink();
     return InkWell(
-      onTap: () => _editUrl(context),
+      onTap: () => _openUrl(context),
+      onLongPress: () => showEditUrlDialog(context, task.url, onUpdateUrl),
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.add_link, size: 18, color: colorScheme.onSurfaceVariant),
+            Icon(Icons.link, size: 18, color: colorScheme.primary),
             const SizedBox(width: 6),
-            Text(
-              'Add link',
-              style: textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
+            Flexible(
+              child: Text(
+                _displayUrl(task.url!),
+                style: textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.primary,
+                  decoration: TextDecoration.underline,
+                  decorationColor: colorScheme.primary,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: () => showEditUrlDialog(context, task.url, onUpdateUrl),
+              child: Icon(
+                Icons.edit_outlined,
+                size: 14,
+                color: colorScheme.onSurfaceVariant.withAlpha(180),
               ),
             ),
           ],
@@ -228,6 +216,7 @@ class LeafTaskDetail extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Task name with pencil icon — tappable to rename
             InkWell(
               onTap: onRename,
               borderRadius: BorderRadius.circular(8),
@@ -245,11 +234,11 @@ class LeafTaskDetail extends StatelessWidget {
                         textAlign: TextAlign.center,
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 5),
                     Icon(
-                      Icons.edit,
-                      size: 18,
-                      color: colorScheme.onSurfaceVariant,
+                      Icons.edit_outlined,
+                      size: 16,
+                      color: colorScheme.onSurfaceVariant.withAlpha(180),
                     ),
                   ],
                 ),
@@ -293,7 +282,7 @@ class LeafTaskDetail extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            _buildUrlSection(context, colorScheme, textTheme),
+            _buildUrlRow(context, colorScheme, textTheme),
             const SizedBox(height: 20),
             _buildSegmentedRow(
               context,
@@ -345,7 +334,7 @@ class LeafTaskDetail extends StatelessWidget {
               children: [
                 TextButton.icon(
                   onPressed: onSkip,
-                  icon: const Icon(Icons.not_interested),
+                  icon: const Icon(Icons.skip_next),
                   label: const Text('Skip'),
                   style: TextButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
