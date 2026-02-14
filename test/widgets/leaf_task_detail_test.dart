@@ -12,7 +12,8 @@ void main() {
     VoidCallback? onRename,
     void Function(String?)? onUpdateUrl,
     ValueChanged<int>? onUpdatePriority,
-    ValueChanged<int>? onUpdateDifficulty,
+    ValueChanged<int>? onUpdateQuickTask,
+    VoidCallback? onWorkedOn,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -24,7 +25,8 @@ void main() {
           onRename: onRename ?? () {},
           onUpdateUrl: onUpdateUrl ?? (_) {},
           onUpdatePriority: onUpdatePriority ?? (_) {},
-          onUpdateDifficulty: onUpdateDifficulty ?? (_) {},
+          onUpdateQuickTask: onUpdateQuickTask ?? (_) {},
+          onWorkedOn: onWorkedOn,
         ),
       ),
     );
@@ -75,14 +77,14 @@ void main() {
       expect(find.byIcon(Icons.link), findsNothing);
     });
 
-    testWidgets('Done button fires onDone callback', (tester) async {
+    testWidgets('"Done for good!" fires onDone callback', (tester) async {
       var doneTapped = false;
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
         onDone: () => doneTapped = true,
       ));
 
-      await tester.tap(find.text('Done'));
+      await tester.tap(find.text('Done for good!'));
       expect(doneTapped, isTrue);
     });
 
@@ -240,14 +242,33 @@ void main() {
       expect(find.byIcon(Icons.flag), findsNothing);
     });
 
-    testWidgets('shows difficulty segmented button with default selection', (tester) async {
+    testWidgets('shows bolt icon for quick task toggle', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
       ));
 
-      expect(find.text('Difficulty'), findsOneWidget);
-      expect(find.text('Easy'), findsOneWidget);
-      expect(find.text('Hard'), findsOneWidget);
+      // Should show outlined bolt (not quick task by default)
+      expect(find.byIcon(Icons.bolt_outlined), findsOneWidget);
+    });
+
+    testWidgets('shows filled bolt icon when task is quick', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch, difficulty: 1),
+      ));
+
+      expect(find.byIcon(Icons.bolt), findsOneWidget);
+      expect(find.byIcon(Icons.bolt_outlined), findsNothing);
+    });
+
+    testWidgets('tapping bolt icon fires onUpdateQuickTask with 1', (tester) async {
+      int? newQuick;
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+        onUpdateQuickTask: (q) => newQuick = q,
+      ));
+
+      await tester.tap(find.byIcon(Icons.bolt_outlined));
+      expect(newQuick, 1);
     });
 
     testWidgets('tapping priority flag fires onUpdatePriority with 1', (tester) async {
@@ -261,17 +282,6 @@ void main() {
       expect(newPriority, 1);
     });
 
-    testWidgets('tapping difficulty option fires onUpdateDifficulty', (tester) async {
-      int? newDifficulty;
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
-        onUpdateDifficulty: (d) => newDifficulty = d,
-      ));
-
-      await tester.tap(find.text('Easy'));
-      expect(newDifficulty, 0);
-    });
-
     testWidgets('shows filled flag icon when high priority', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch, priority: 1),
@@ -281,13 +291,32 @@ void main() {
       expect(find.byIcon(Icons.flag_outlined), findsNothing);
     });
 
-    testWidgets('difficulty shows correct selection for non-default value', (tester) async {
+    testWidgets('always shows "Done today" and "Done for good!" buttons', (tester) async {
       await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch, difficulty: 0),
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+        onWorkedOn: () {},
       ));
 
-      expect(find.text('Easy'), findsOneWidget);
-      expect(find.text('Hard'), findsOneWidget);
+      expect(find.text('Done today'), findsOneWidget);
+      expect(find.text('Done for good!'), findsOneWidget);
+    });
+
+    testWidgets('no repeat icon in chips', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+      ));
+
+      expect(find.byIcon(Icons.repeat), findsNothing);
+    });
+
+    testWidgets('no difficulty segmented button', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+      ));
+
+      expect(find.text('Difficulty'), findsNothing);
+      expect(find.text('Easy'), findsNothing);
+      expect(find.text('Hard'), findsNothing);
     });
   });
 }

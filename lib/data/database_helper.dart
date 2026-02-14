@@ -46,7 +46,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 8,
+      version: 11,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE tasks (
@@ -58,7 +58,10 @@ class DatabaseHelper {
             url TEXT,
             skipped_at INTEGER,
             priority INTEGER NOT NULL DEFAULT 0,
-            difficulty INTEGER NOT NULL DEFAULT 1
+            difficulty INTEGER NOT NULL DEFAULT 0,
+            last_worked_at INTEGER,
+            repeat_interval TEXT,
+            next_due_at INTEGER
           )
         ''');
         await db.execute('''
@@ -121,6 +124,17 @@ class DatabaseHelper {
         if (oldVersion < 8) {
           // Remap 3-level priority (0=Low,1=Medium,2=High) to 2-level (0=Normal,1=High)
           await db.execute('UPDATE tasks SET priority = CASE WHEN priority >= 2 THEN 1 ELSE 0 END');
+        }
+        if (oldVersion < 9) {
+          // Reinterpret difficulty: old Easy(0)→quick(1), old Medium(1)/Hard(2)→normal(0)
+          await db.execute('UPDATE tasks SET difficulty = CASE WHEN difficulty = 0 THEN 1 ELSE 0 END');
+        }
+        if (oldVersion < 10) {
+          await db.execute('ALTER TABLE tasks ADD COLUMN last_worked_at INTEGER');
+        }
+        if (oldVersion < 11) {
+          await db.execute('ALTER TABLE tasks ADD COLUMN repeat_interval TEXT');
+          await db.execute('ALTER TABLE tasks ADD COLUMN next_due_at INTEGER');
         }
       },
     );
@@ -256,6 +270,13 @@ class DatabaseHelper {
     return _tasksFromMaps(maps);
   }
 
+  Future<Task?> getTaskById(int id) async {
+    final db = await database;
+    final maps = await db.query('tasks', where: 'id = ?', whereArgs: [id]);
+    if (maps.isEmpty) return null;
+    return Task.fromMap(maps.first);
+  }
+
   Future<List<Task>> getAllTasks() async {
     final db = await database;
     final maps = await db.rawQuery('''
@@ -263,6 +284,23 @@ class DatabaseHelper {
       WHERE completed_at IS NULL
       AND skipped_at IS NULL
       ORDER BY created_at ASC
+    ''');
+    return _tasksFromMaps(maps);
+  }
+
+  /// Returns all leaf tasks (tasks with no children that are active).
+  Future<List<Task>> getAllLeafTasks() async {
+    final db = await database;
+    final maps = await db.rawQuery('''
+      SELECT t.* FROM tasks t
+      WHERE t.completed_at IS NULL
+      AND t.skipped_at IS NULL
+      AND t.id NOT IN (
+        SELECT DISTINCT tr.parent_id FROM task_relationships tr
+        INNER JOIN tasks c ON tr.child_id = c.id
+        WHERE c.completed_at IS NULL AND c.skipped_at IS NULL
+      )
+      ORDER BY t.created_at ASC
     ''');
     return _tasksFromMaps(maps);
   }
@@ -374,9 +412,59 @@ class DatabaseHelper {
     await db.update('tasks', {'priority': priority}, where: 'id = ?', whereArgs: [taskId]);
   }
 
-  Future<void> updateTaskDifficulty(int taskId, int difficulty) async {
+  Future<void> updateTaskQuickTask(int taskId, int quickTask) async {
     final db = await database;
-    await db.update('tasks', {'difficulty': difficulty}, where: 'id = ?', whereArgs: [taskId]);
+    await db.update('tasks', {'difficulty': quickTask}, where: 'id = ?', whereArgs: [taskId]);
+  }
+
+  Future<void> markWorkedOn(int taskId) async {
+    final db = await database;
+    await db.update(
+      'tasks',
+      {'last_worked_at': DateTime.now().millisecondsSinceEpoch},
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
+  Future<void> updateRepeatInterval(int taskId, String? interval) async {
+    final db = await database;
+    await db.update(
+      'tasks',
+      {'repeat_interval': interval, 'next_due_at': null},
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
+  /// Completes a repeating task: computes next_due_at, clears started_at/last_worked_at.
+  Future<void> completeRepeatingTask(int taskId, String repeatInterval) async {
+    final db = await database;
+    final now = DateTime.now();
+    final Duration offset;
+    switch (repeatInterval) {
+      case 'daily':
+        offset = const Duration(days: 1);
+      case 'weekly':
+        offset = const Duration(days: 7);
+      case 'biweekly':
+        offset = const Duration(days: 14);
+      case 'monthly':
+        offset = const Duration(days: 30);
+      default:
+        offset = const Duration(days: 1);
+    }
+    final nextDue = now.add(offset).millisecondsSinceEpoch;
+    await db.update(
+      'tasks',
+      {
+        'started_at': null,
+        'last_worked_at': null,
+        'next_due_at': nextDue,
+      },
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
   }
 
   Future<void> removeRelationship(int parentId, int childId) async {
