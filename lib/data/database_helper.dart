@@ -46,7 +46,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE tasks (
@@ -57,7 +57,7 @@ class DatabaseHelper {
             started_at INTEGER,
             url TEXT,
             skipped_at INTEGER,
-            priority INTEGER NOT NULL DEFAULT 1,
+            priority INTEGER NOT NULL DEFAULT 0,
             difficulty INTEGER NOT NULL DEFAULT 1
           )
         ''');
@@ -117,6 +117,10 @@ class DatabaseHelper {
           ''');
           await db.execute('CREATE INDEX idx_task_dependencies_task_id ON task_dependencies(task_id)');
           await db.execute('CREATE INDEX idx_task_dependencies_depends_on_id ON task_dependencies(depends_on_id)');
+        }
+        if (oldVersion < 8) {
+          // Remap 3-level priority (0=Low,1=Medium,2=High) to 2-level (0=Normal,1=High)
+          await db.execute('UPDATE tasks SET priority = CASE WHEN priority >= 2 THEN 1 ELSE 0 END');
         }
       },
     );

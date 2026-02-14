@@ -218,10 +218,10 @@ void main() {
       expect(restored.isSkipped, isTrue);
     });
 
-    test('defaults priority to 1 (Medium)', () {
+    test('defaults priority to 0 (Normal)', () {
       final task = Task(name: 'Test');
-      expect(task.priority, 1);
-      expect(task.priorityLabel, 'Medium');
+      expect(task.priority, 0);
+      expect(task.priorityLabel, 'Normal');
     });
 
     test('defaults difficulty to 1 (Medium)', () {
@@ -231,17 +231,16 @@ void main() {
     });
 
     test('creates with explicit priority and difficulty', () {
-      final task = Task(id: 1, name: 'Hard task', createdAt: 1000, priority: 2, difficulty: 2);
-      expect(task.priority, 2);
+      final task = Task(id: 1, name: 'Hard task', createdAt: 1000, priority: 1, difficulty: 2);
+      expect(task.priority, 1);
       expect(task.difficulty, 2);
       expect(task.priorityLabel, 'High');
       expect(task.difficultyLabel, 'Hard');
     });
 
     test('priorityLabel returns correct labels', () {
-      expect(Task(name: 'T', priority: 0).priorityLabel, 'Low');
-      expect(Task(name: 'T', priority: 1).priorityLabel, 'Medium');
-      expect(Task(name: 'T', priority: 2).priorityLabel, 'High');
+      expect(Task(name: 'T', priority: 0).priorityLabel, 'Normal');
+      expect(Task(name: 'T', priority: 1).priorityLabel, 'High');
     });
 
     test('difficultyLabel returns correct labels', () {
@@ -251,10 +250,10 @@ void main() {
     });
 
     test('toMap includes priority and difficulty', () {
-      final task = Task(id: 1, name: 'T', createdAt: 100, priority: 2, difficulty: 0);
+      final task = Task(id: 1, name: 'T', createdAt: 100, priority: 1, difficulty: 0);
       final map = task.toMap();
 
-      expect(map['priority'], 2);
+      expect(map['priority'], 1);
       expect(map['difficulty'], 0);
     });
 
@@ -262,7 +261,7 @@ void main() {
       final task = Task(id: 1, name: 'T', createdAt: 100);
       final map = task.toMap();
 
-      expect(map['priority'], 1);
+      expect(map['priority'], 0);
       expect(map['difficulty'], 1);
     });
 
@@ -274,11 +273,11 @@ void main() {
         'completed_at': null,
         'started_at': null,
         'skipped_at': null,
-        'priority': 2,
+        'priority': 1,
         'difficulty': 2,
       });
 
-      expect(task.priority, 2);
+      expect(task.priority, 1);
       expect(task.difficulty, 2);
     });
 
@@ -290,7 +289,7 @@ void main() {
         'completed_at': null,
       });
 
-      expect(task.priority, 1);
+      expect(task.priority, 0);
       expect(task.difficulty, 1);
     });
 

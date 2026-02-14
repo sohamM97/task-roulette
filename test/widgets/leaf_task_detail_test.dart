@@ -6,10 +6,8 @@ import 'package:task_roulette/widgets/leaf_task_detail.dart';
 void main() {
   Widget buildTestWidget({
     required Task task,
-    List<String>? parentNames,
     VoidCallback? onDone,
     VoidCallback? onSkip,
-    VoidCallback? onAddParent,
     VoidCallback? onToggleStarted,
     VoidCallback? onRename,
     void Function(String?)? onUpdateUrl,
@@ -20,10 +18,8 @@ void main() {
       home: Scaffold(
         body: LeafTaskDetail(
           task: task,
-          parentNames: parentNames ?? [],
           onDone: onDone ?? () {},
           onSkip: onSkip ?? () {},
-          onAddParent: onAddParent ?? () {},
           onToggleStarted: onToggleStarted ?? () {},
           onRename: onRename ?? () {},
           onUpdateUrl: onUpdateUrl ?? (_) {},
@@ -35,13 +31,13 @@ void main() {
   }
 
   group('LeafTaskDetail', () {
-    testWidgets('shows creation date', (tester) async {
+    testWidgets('does not show creation date', (tester) async {
       final now = DateTime.now();
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: now.millisecondsSinceEpoch),
       ));
 
-      expect(find.text('${now.day}/${now.month}/${now.year}'), findsOneWidget);
+      expect(find.text('${now.day}/${now.month}/${now.year}'), findsNothing);
     });
 
     testWidgets('displays task name', (tester) async {
@@ -200,12 +196,12 @@ void main() {
       expect(find.byIcon(Icons.link), findsOneWidget);
     });
 
-    testWidgets('Start working button is an OutlinedButton', (tester) async {
+    testWidgets('Start working button is an ActionChip', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
       ));
 
-      expect(find.widgetWithText(OutlinedButton, 'Start working'), findsOneWidget);
+      expect(find.widgetWithText(ActionChip, 'Start working'), findsOneWidget);
     });
 
     testWidgets('showEditUrlDialog static method shows dialog', (tester) async {
@@ -235,16 +231,13 @@ void main() {
       expect(find.text('Remove'), findsOneWidget);
     });
 
-    testWidgets('shows priority segmented button with default selection', (tester) async {
+    testWidgets('shows priority flag icon (outlined when normal)', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
       ));
 
-      expect(find.text('Priority'), findsOneWidget);
-      expect(find.text('Low'), findsOneWidget);
-      expect(find.text('High'), findsOneWidget);
-      // 'Medium' appears in both priority and difficulty rows
-      expect(find.text('Medium'), findsNWidgets(2));
+      expect(find.byIcon(Icons.flag_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.flag), findsNothing);
     });
 
     testWidgets('shows difficulty segmented button with default selection', (tester) async {
@@ -257,15 +250,15 @@ void main() {
       expect(find.text('Hard'), findsOneWidget);
     });
 
-    testWidgets('tapping priority option fires onUpdatePriority', (tester) async {
+    testWidgets('tapping priority flag fires onUpdatePriority with 1', (tester) async {
       int? newPriority;
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
         onUpdatePriority: (p) => newPriority = p,
       ));
 
-      await tester.tap(find.text('High'));
-      expect(newPriority, 2);
+      await tester.tap(find.byIcon(Icons.flag_outlined));
+      expect(newPriority, 1);
     });
 
     testWidgets('tapping difficulty option fires onUpdateDifficulty', (tester) async {
@@ -279,15 +272,13 @@ void main() {
       expect(newDifficulty, 0);
     });
 
-    testWidgets('priority shows correct selection for non-default value', (tester) async {
+    testWidgets('shows filled flag icon when high priority', (tester) async {
       await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch, priority: 2),
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch, priority: 1),
       ));
 
-      // High should be selected — we can verify by tapping it and expecting no callback
-      // (already selected). Instead just verify the labels are present.
-      expect(find.text('Low'), findsOneWidget);
-      expect(find.text('High'), findsOneWidget);
+      expect(find.byIcon(Icons.flag), findsOneWidget);
+      expect(find.byIcon(Icons.flag_outlined), findsNothing);
     });
 
     testWidgets('difficulty shows correct selection for non-default value', (tester) async {

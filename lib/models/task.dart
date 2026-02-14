@@ -9,7 +9,7 @@ class Task {
   final int priority;
   final int difficulty;
 
-  static const priorityLabels = ['Low', 'Medium', 'High'];
+  static const priorityLabels = ['Normal', 'High'];
   static const difficultyLabels = ['Easy', 'Medium', 'Hard'];
 
   Task({
@@ -20,7 +20,7 @@ class Task {
     this.startedAt,
     this.url,
     this.skippedAt,
-    this.priority = 1,
+    this.priority = 0,
     this.difficulty = 1,
   }) : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch;
 
@@ -29,7 +29,8 @@ class Task {
   bool get isStarted => startedAt != null && !isCompleted;
   bool get hasUrl => url != null && url!.isNotEmpty;
 
-  String get priorityLabel => priorityLabels[priority];
+  bool get isHighPriority => priority >= 1;
+  String get priorityLabel => isHighPriority ? 'High' : 'Normal';
   String get difficultyLabel => difficultyLabels[difficulty];
 
   Map<String, dynamic> toMap() {
@@ -55,7 +56,7 @@ class Task {
       startedAt: map['started_at'] as int?,
       url: map['url'] as String?,
       skippedAt: map['skipped_at'] as int?,
-      priority: map['priority'] as int? ?? 1,
+      priority: (map['priority'] as int? ?? 0).clamp(0, 1),
       difficulty: map['difficulty'] as int? ?? 1,
     );
   }

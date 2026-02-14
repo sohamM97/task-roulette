@@ -358,33 +358,21 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
-  // Cached parents Future for the leaf detail view.
-  int? _leafParentsTaskId;
-  Future<List<Task>>? _leafParentsFuture;
-
   Widget _buildLeafTaskDetail(TaskProvider provider) {
     final task = provider.currentParent!;
-    // Reuse cached Futures unless the task changed or they were invalidated.
+    // Reuse cached Future unless the task changed or deps were invalidated.
     if (_leafDepsTaskId != task.id) {
       _leafDepsTaskId = task.id;
       _leafDepsFuture = provider.getDependencies(task.id!);
     }
-    if (_leafParentsTaskId != task.id) {
-      _leafParentsTaskId = task.id;
-      _leafParentsFuture = provider.getParents(task.id!);
-    }
-    return FutureBuilder<List<List<Task>>>(
-      future: Future.wait([_leafParentsFuture!, _leafDepsFuture!]),
+    return FutureBuilder<List<Task>>(
+      future: _leafDepsFuture,
       builder: (context, snapshot) {
-        final parents = snapshot.data?[0] ?? [];
-        final deps = snapshot.data?[1] ?? [];
-        final parentNames = parents.map((t) => t.name).toList();
+        final deps = snapshot.data ?? [];
         return LeafTaskDetail(
           task: task,
-          parentNames: parentNames,
           onDone: () => _completeTaskWithUndo(task),
           onSkip: () => _skipTaskWithUndo(task),
-          onAddParent: () => _addParentToTask(task),
           onToggleStarted: () => _toggleStarted(task),
           onRename: () => _renameTask(task),
           onUpdateUrl: (url) => _updateUrl(task, url),

@@ -4,10 +4,8 @@ import '../models/task.dart';
 
 class LeafTaskDetail extends StatelessWidget {
   final Task task;
-  final List<String> parentNames;
   final VoidCallback onDone;
   final VoidCallback onSkip;
-  final VoidCallback onAddParent;
   final VoidCallback onToggleStarted;
   final VoidCallback onRename;
   final void Function(String?) onUpdateUrl;
@@ -20,10 +18,8 @@ class LeafTaskDetail extends StatelessWidget {
   const LeafTaskDetail({
     super.key,
     required this.task,
-    required this.parentNames,
     required this.onDone,
     required this.onSkip,
-    required this.onAddParent,
     required this.onToggleStarted,
     required this.onRename,
     required this.onUpdateUrl,
@@ -33,11 +29,6 @@ class LeafTaskDetail extends StatelessWidget {
     this.onRemoveDependency,
     this.onAddDependency,
   });
-
-  String _formatDate(int millis) {
-    final dt = DateTime.fromMillisecondsSinceEpoch(millis);
-    return '${dt.day}/${dt.month}/${dt.year}';
-  }
 
   String _formatTimeAgo(int millis) {
     final started = DateTime.fromMillisecondsSinceEpoch(millis);
@@ -182,45 +173,6 @@ class LeafTaskDetail extends StatelessWidget {
     return display.length > 40 ? '${display.substring(0, 40)}...' : display;
   }
 
-  Widget _buildSegmentedRow(
-    BuildContext context, {
-    required String label,
-    required List<String> labels,
-    required int selected,
-    required ValueChanged<int> onChanged,
-  }) {
-    final textTheme = Theme.of(context).textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          width: 72,
-          child: Text(
-            label,
-            style: textTheme.bodySmall?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-        SegmentedButton<int>(
-          segments: [
-            for (int i = 0; i < labels.length; i++)
-              ButtonSegment(value: i, label: Text(labels[i])),
-          ],
-          selected: {selected},
-          onSelectionChanged: (values) => onChanged(values.first),
-          showSelectedIcon: false,
-          style: ButtonStyle(
-            visualDensity: VisualDensity.compact,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            textStyle: WidgetStatePropertyAll(textTheme.bodySmall),
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildDependencyChips(BuildContext context, ColorScheme colorScheme) {
     final dep = dependencies.isNotEmpty ? dependencies.first : null;
     if (dep != null) {
@@ -248,10 +200,44 @@ class LeafTaskDetail extends StatelessWidget {
     return const SizedBox.shrink();
   }
 
+  Widget _buildDifficultyRow(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 72,
+          child: Text(
+            'Difficulty',
+            style: textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        SegmentedButton<int>(
+          segments: [
+            for (int i = 0; i < Task.difficultyLabels.length; i++)
+              ButtonSegment(value: i, label: Text(Task.difficultyLabels[i])),
+          ],
+          selected: {task.difficulty},
+          onSelectionChanged: (values) => onUpdateDifficulty(values.first),
+          showSelectedIcon: false,
+          style: ButtonStyle(
+            visualDensity: VisualDensity.compact,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            textStyle: WidgetStatePropertyAll(textTheme.bodySmall),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final isHighPriority = task.isHighPriority;
 
     return Center(
       child: Padding(
@@ -287,126 +273,79 @@ class LeafTaskDetail extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              _formatDate(task.createdAt),
-              style: textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
             const SizedBox(height: 4),
-            InkWell(
-              onTap: onAddParent,
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        parentNames.isNotEmpty
-                            ? 'Listed under ${parentNames.join(', ')}'
-                            : 'Top-level task',
-                        style: textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Icon(
-                      Icons.add_circle_outline,
-                      size: 20,
-                      color: colorScheme.primary,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
+            // URL row — only if URL exists
             _buildUrlRow(context, colorScheme, textTheme),
+            if (task.hasUrl) const SizedBox(height: 4),
             // Dependency chips
             if (dependencies.isNotEmpty || onAddDependency != null)
-              const SizedBox(height: 8),
-            if (dependencies.isNotEmpty || onAddDependency != null)
               _buildDependencyChips(context, colorScheme),
-            const SizedBox(height: 20),
-            _buildSegmentedRow(
-              context,
-              label: 'Priority',
-              labels: Task.priorityLabels,
-              selected: task.priority,
-              onChanged: onUpdatePriority,
-            ),
-            const SizedBox(height: 12),
-            _buildSegmentedRow(
-              context,
-              label: 'Difficulty',
-              labels: Task.difficultyLabels,
-              selected: task.difficulty,
-              onChanged: onUpdateDifficulty,
-            ),
-            const SizedBox(height: 24),
-            if (!task.isStarted)
-              OutlinedButton.icon(
-                onPressed: onToggleStarted,
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Start working'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                  textStyle: textTheme.titleMedium,
-                ),
-              )
-            else ...[
-              FilledButton.tonalIcon(
-                onPressed: onToggleStarted,
-                icon: const Icon(Icons.check),
-                label: const Text('Started'),
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                  textStyle: textTheme.titleMedium,
-                ),
-              ),
+            if (dependencies.isNotEmpty || onAddDependency != null)
               const SizedBox(height: 4),
-              Text(
-                _formatTimeAgo(task.startedAt!),
-                style: textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            Row(
-              mainAxisSize: MainAxisSize.min,
+            // Chips row: Start + Priority toggle + add-link icon
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              runSpacing: 4,
               children: [
-                TextButton.icon(
-                  onPressed: onSkip,
-                  icon: const Icon(Icons.skip_next),
-                  label: const Text('Skip'),
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                    textStyle: textTheme.titleMedium,
+                if (!task.isStarted)
+                  ActionChip(
+                    avatar: const Icon(Icons.play_arrow, size: 18),
+                    label: const Text('Start working'),
+                    onPressed: onToggleStarted,
+                  )
+                else
+                  ActionChip(
+                    avatar: const Icon(Icons.check, size: 18),
+                    label: Text('Started ${_formatTimeAgo(task.startedAt!)}'),
+                    onPressed: onToggleStarted,
+                    backgroundColor: colorScheme.secondaryContainer,
+                  ),
+                GestureDetector(
+                  onTap: () => onUpdatePriority(isHighPriority ? 0 : 1),
+                  child: Tooltip(
+                    message: isHighPriority ? 'High priority' : 'Set high priority',
+                    child: Icon(
+                      isHighPriority ? Icons.flag : Icons.flag_outlined,
+                      size: 20,
+                      color: isHighPriority
+                          ? colorScheme.error
+                          : colorScheme.onSurfaceVariant.withAlpha(120),
+                    ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                FilledButton.icon(
-                  onPressed: onDone,
-                  icon: const Icon(Icons.check),
-                  label: const Text('Done'),
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                    textStyle: textTheme.titleMedium,
+                if (!task.hasUrl)
+                  GestureDetector(
+                    onTap: () => showEditUrlDialog(context, task.url, onUpdateUrl),
+                    child: Icon(
+                      Icons.add_link,
+                      size: 20,
+                      color: colorScheme.onSurfaceVariant.withAlpha(120),
+                    ),
                   ),
-                ),
               ],
             ),
-            const SizedBox(height: 24),
-            Text(
-              'Tap + to break this into subtasks',
-              style: textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+            const SizedBox(height: 12),
+            _buildDifficultyRow(context),
+            const SizedBox(height: 20),
+            // Done button — primary, moderately prominent
+            FilledButton.icon(
+              onPressed: onDone,
+              icon: const Icon(Icons.check),
+              label: const Text('Done'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                textStyle: textTheme.titleMedium,
               ),
+            ),
+            const SizedBox(height: 8),
+            // Skip — de-emphasized
+            TextButton(
+              onPressed: onSkip,
+              style: TextButton.styleFrom(
+                textStyle: textTheme.bodyMedium,
+              ),
+              child: const Text('Skip'),
             ),
           ],
         ),
