@@ -45,11 +45,23 @@ jobs:
           storeFile=../upload-keystore.jks
           EOF
 
+      # Debug symbols: Release builds use --obfuscate to shrink the binary,
+      # which makes crash stacks unreadable (just hex addresses). The
+      # --split-debug-info flag extracts the symbol mapping into separate
+      # files so we can reverse the obfuscation later. We zip these and
+      # attach them to the GitHub release. To symbolicate a crash:
+      #   unzip debug-symbols.zip -d symbols/
+      #   flutter symbolize -i stacktrace.txt -d symbols/
       - name: Build APK
-        run: flutter build apk --release
+        run: flutter build apk --release --split-debug-info=build/app/outputs/symbols --obfuscate
+
+      - name: Zip debug symbols
+        run: cd build/app/outputs/symbols && zip -r ../../../../debug-symbols.zip .
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: build/app/outputs/flutter-apk/app-release.apk
+          files: |
+            build/app/outputs/flutter-apk/app-release.apk
+            debug-symbols.zip
           generate_release_notes: true

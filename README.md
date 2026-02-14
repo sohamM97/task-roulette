@@ -123,3 +123,54 @@ test/
     ├── leaf_task_detail_test.dart   # Leaf detail widget tests
     └── task_card_test.dart         # Task card widget tests
 ```
+
+## Troubleshooting
+
+### Setting up adb
+
+1. **Install adb** (Ubuntu/Debian):
+   ```bash
+   sudo apt install -y adb
+   ```
+
+2. **Enable wireless debugging** on your Android phone:
+   - Go to **Settings > Developer options** (tap Build number 7 times to unlock)
+   - Enable **Wireless debugging**
+   - Tap **Wireless debugging** to open its settings, then tap **Pair device with pairing code**
+   - On your computer:
+     ```bash
+     adb pair <ip>:<pairing-port>   # enter the pairing code when prompted
+     adb connect <ip>:<port>        # use the port shown on the Wireless debugging screen (not the pairing port)
+     ```
+
+3. **Verify connection:**
+   ```bash
+   adb devices   # should list your device
+   ```
+
+### ANR / freezes on Android
+
+If the app becomes unresponsive on Android, capture logs:
+
+```bash
+# Clear old logs, then capture everything to a file
+adb logcat -c && adb logcat > /tmp/crash_log.txt
+# Now reproduce the freeze on the phone, then Ctrl+C to stop capture
+
+# Or filter for ANR-specific messages only
+adb logcat -s ActivityManager:E ANRManager:E
+
+# Pull ANR traces after the freeze
+adb pull /data/anr/traces.txt
+```
+
+### Symbolicating release crash stacks
+
+Release builds are obfuscated. Download `debug-symbols.zip` from the [GitHub release](https://github.com/sohamM97/task-roulette/releases), then:
+
+```bash
+unzip debug-symbols.zip -d symbols/
+flutter symbolize -i stacktrace.txt -d symbols/
+```
+
+See [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for details on database optimizations and performance considerations.

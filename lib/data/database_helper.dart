@@ -46,7 +46,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE tasks (
@@ -68,6 +68,9 @@ class DatabaseHelper {
             FOREIGN KEY (child_id) REFERENCES tasks(id) ON DELETE CASCADE
           )
         ''');
+        // PERFORMANCE: indices speed up JOIN/WHERE on task_relationships
+        await db.execute('CREATE INDEX idx_task_relationships_parent_id ON task_relationships(parent_id)');
+        await db.execute('CREATE INDEX idx_task_relationships_child_id ON task_relationships(child_id)');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -81,6 +84,11 @@ class DatabaseHelper {
         }
         if (oldVersion < 5) {
           await db.execute('ALTER TABLE tasks ADD COLUMN skipped_at INTEGER');
+        }
+        if (oldVersion < 6) {
+          // PERFORMANCE: indices speed up JOIN/WHERE on task_relationships
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_task_relationships_parent_id ON task_relationships(parent_id)');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_task_relationships_child_id ON task_relationships(child_id)');
         }
       },
     );
@@ -362,27 +370,52 @@ class DatabaseHelper {
 
   /// Deletes a task and returns its relationships for undo support.
   /// Returns a map with 'parentIds' and 'childIds'.
+  // PERFORMANCE: transaction batches reads + deletes into a single DB round-trip
   Future<Map<String, List<int>>> deleteTaskWithRelationships(int taskId) async {
     final db = await database;
-    final parentIds = await getParentIds(taskId);
-    final childIds = await getChildIds(taskId);
-    await db.delete('task_relationships',
-        where: 'parent_id = ? OR child_id = ?',
-        whereArgs: [taskId, taskId]);
-    await db.delete('tasks', where: 'id = ?', whereArgs: [taskId]);
-    return {'parentIds': parentIds, 'childIds': childIds};
+    return db.transaction((txn) async {
+      final parentMaps = await txn.query(
+        'task_relationships',
+        columns: ['parent_id'],
+        where: 'child_id = ?',
+        whereArgs: [taskId],
+      );
+      final childMaps = await txn.query(
+        'task_relationships',
+        columns: ['child_id'],
+        where: 'parent_id = ?',
+        whereArgs: [taskId],
+      );
+      await txn.delete('task_relationships',
+          where: 'parent_id = ? OR child_id = ?',
+          whereArgs: [taskId, taskId]);
+      await txn.delete('tasks', where: 'id = ?', whereArgs: [taskId]);
+      return {
+        'parentIds': parentMaps.map((m) => m['parent_id'] as int).toList(),
+        'childIds': childMaps.map((m) => m['child_id'] as int).toList(),
+      };
+    });
   }
 
   /// Restores a previously deleted task with its original ID and relationships.
+  // PERFORMANCE: transaction batches task insert + N relationship inserts
   Future<void> restoreTask(Task task, List<int> parentIds, List<int> childIds) async {
     final db = await database;
-    await db.insert('tasks', task.toMap());
-    for (final parentId in parentIds) {
-      await addRelationship(parentId, task.id!);
-    }
-    for (final childId in childIds) {
-      await addRelationship(task.id!, childId);
-    }
+    await db.transaction((txn) async {
+      await txn.insert('tasks', task.toMap());
+      for (final parentId in parentIds) {
+        await txn.insert('task_relationships', {
+          'parent_id': parentId,
+          'child_id': task.id!,
+        });
+      }
+      for (final childId in childIds) {
+        await txn.insert('task_relationships', {
+          'parent_id': task.id!,
+          'child_id': childId,
+        });
+      }
+    });
   }
 
   /// Marks a task as started by setting started_at to now.
