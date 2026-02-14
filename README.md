@@ -14,6 +14,15 @@
 - Random task selection with "Go Deeper" for recursive picks
 - SQLite persistence
 - Material 3 UI
+- Supported platforms: Linux desktop and Android
+
+## Quick Start
+
+```bash
+flutter pub get
+./dev.sh
+flutter test
+```
 
 ## Setup
 
@@ -22,8 +31,9 @@
 1. **Flutter SDK**
    ```bash
    git clone --depth 1 --branch stable https://github.com/flutter/flutter.git ~/flutter
-   echo 'export PATH="$HOME/flutter/bin:$PATH"' >> ~/.zshrc
-   source ~/.zshrc
+   echo 'export PATH="$HOME/flutter/bin:$PATH"' >> ~/.bashrc
+   # If you use zsh, write to ~/.zshrc instead.
+   source ~/.bashrc
    ```
 
 2. **Linux desktop dependencies** (Ubuntu/Debian)
@@ -41,6 +51,7 @@
    # Extract downloaded zip, move contents to ~/Android/Sdk/cmdline-tools/latest/
    export ANDROID_HOME=$HOME/Android/Sdk
    export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
+   # build-tools;28.0.3 is kept for compatibility with older Android tooling that may still reference it.
    sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0" "build-tools;28.0.3"
    flutter config --android-sdk $HOME/Android/Sdk
    flutter doctor --android-licenses
