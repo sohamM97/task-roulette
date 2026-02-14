@@ -53,6 +53,7 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final filtered = _filtered; // compute once, not per-access
     return Dialog(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 400, maxHeight: 500),
@@ -79,7 +80,7 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
               ),
               const SizedBox(height: 8),
               Flexible(
-                child: _filtered.isEmpty
+                child: filtered.isEmpty
                     ? const Center(
                         child: Padding(
                           padding: EdgeInsets.all(24),
@@ -88,9 +89,9 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
                       )
                     : ListView.builder(
                         shrinkWrap: true,
-                        itemCount: _filtered.length,
+                        itemCount: filtered.length,
                         itemBuilder: (context, index) {
-                          final task = _filtered[index];
+                          final task = filtered[index];
                           final context_ = _contextFor(task.id!);
                           return ListTile(
                             title: Text(task.name),

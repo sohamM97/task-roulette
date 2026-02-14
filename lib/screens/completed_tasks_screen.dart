@@ -13,6 +13,8 @@ class CompletedTasksScreen extends StatefulWidget {
 class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
   List<Task> _archivedTasks = [];
   Map<int, List<String>> _parentNamesMap = {};
+  /// Precomputed archive labels keyed by task ID.
+  Map<int, String> _archivedLabels = {};
   bool _loading = true;
 
   static const _cardColors = [
@@ -50,9 +52,17 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
     final parentNames = await provider.getParentNamesForTaskIds(taskIds);
 
     if (!mounted) return;
+    // Precompute archive labels once using a single "now" snapshot.
+    final labels = <int, String>{};
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    for (final task in tasks) {
+      labels[task.id!] = _computeArchivedLabel(task, now, today);
+    }
     setState(() {
       _archivedTasks = tasks;
       _parentNamesMap = parentNames;
+      _archivedLabels = labels;
       _loading = false;
     });
   }
@@ -63,13 +73,11 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
     return colors[taskId % colors.length];
   }
 
-  String _archivedLabel(Task task) {
+  static String _computeArchivedLabel(Task task, DateTime now, DateTime today) {
     final isSkipped = task.isSkipped;
     final prefix = isSkipped ? 'Skipped' : 'Completed';
     final timestampMs = isSkipped ? task.skippedAt! : task.completedAt!;
     final date = DateTime.fromMillisecondsSinceEpoch(timestampMs);
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
     final taskDay = DateTime(date.year, date.month, date.day);
     final diff = today.difference(taskDay).inDays;
 
@@ -105,7 +113,13 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () async {
-            await provider.restoreTask(deleted.task, deleted.parentIds, deleted.childIds);
+            await provider.restoreTask(
+              deleted.task,
+              deleted.parentIds,
+              deleted.childIds,
+              dependsOnIds: deleted.dependsOnIds,
+              dependedByIds: deleted.dependedByIds,
+            );
             if (task.isSkipped) {
               await provider.reSkipTask(task.id!);
             } else {
@@ -217,7 +231,7 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
   }
 
   Widget _buildTaskItem(Task task, List<String>? parentNames) {
-    final archivedLabel = _archivedLabel(task);
+    final archivedLabel = _archivedLabels[task.id] ?? '';
     final parentLabel = parentNames != null && parentNames.isNotEmpty
         ? 'Was under ${parentNames.join(', ')}'
         : null;

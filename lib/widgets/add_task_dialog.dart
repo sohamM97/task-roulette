@@ -1,5 +1,16 @@
 import 'package:flutter/material.dart';
 
+/// Result from AddTaskDialog: either a single task name or a request
+/// to switch to brain dump mode.
+sealed class AddTaskResult {}
+
+class SingleTask extends AddTaskResult {
+  final String name;
+  SingleTask(this.name);
+}
+
+class SwitchToBrainDump extends AddTaskResult {}
+
 class AddTaskDialog extends StatefulWidget {
   const AddTaskDialog({super.key});
 
@@ -19,7 +30,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   void _submit() {
     final name = _controller.text.trim();
     if (name.isNotEmpty) {
-      Navigator.pop(context, name);
+      Navigator.pop(context, SingleTask(name));
     }
   }
 
@@ -27,15 +38,30 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Add Task'),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        decoration: const InputDecoration(
-          hintText: 'Task name',
-          border: OutlineInputBorder(),
-        ),
-        textCapitalization: TextCapitalization.sentences,
-        onSubmitted: (_) => _submit(),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            decoration: const InputDecoration(
+              hintText: 'Task name',
+              border: OutlineInputBorder(),
+            ),
+            textCapitalization: TextCapitalization.sentences,
+            onSubmitted: (_) => _submit(),
+          ),
+          const SizedBox(height: 4),
+          TextButton(
+            onPressed: () => Navigator.pop(context, SwitchToBrainDump()),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+              textStyle: Theme.of(context).textTheme.bodySmall,
+            ),
+            child: const Text('Add multiple'),
+          ),
+        ],
       ),
       actions: [
         TextButton(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
@@ -23,6 +24,11 @@ class TaskListScreen extends StatefulWidget {
 }
 
 class _TaskListScreenState extends State<TaskListScreen> {
+  // Cached deps Future for the leaf detail view — avoids recreating on every
+  // Consumer rebuild. Invalidated when dependency mutations occur.
+  int? _leafDepsTaskId;
+  Future<List<Task>>? _leafDepsFuture;
+
   @override
   void initState() {
     super.initState();
@@ -30,17 +36,16 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 
   Future<void> _addTask() async {
-    final name = await showDialog<String>(
+    final result = await showDialog<AddTaskResult>(
       context: context,
       builder: (_) => const AddTaskDialog(),
     );
-    if (name != null && mounted) {
-      await context.read<TaskProvider>().addTask(name);
+    if (!mounted || result == null) return;
+    if (result is SingleTask) {
+      await context.read<TaskProvider>().addTask(result.name);
+    } else if (result is SwitchToBrainDump) {
+      await _brainDump();
     }
-  }
-
-  void _showFabOptions() {
-    _addTask();
   }
 
   Future<void> _brainDump() async {
@@ -50,9 +55,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
     if (names != null && names.isNotEmpty && mounted) {
       final provider = context.read<TaskProvider>();
-      for (final name in names) {
-        await provider.addTask(name);
-      }
+      await provider.addTasksBatch(names);
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
@@ -62,13 +65,24 @@ class _TaskListScreenState extends State<TaskListScreen> {
     }
   }
 
+  /// Fetches allTasks and parentNamesMap concurrently.
+  Future<(List<Task>, Map<int, List<String>>)> _fetchCandidateData() async {
+    final provider = context.read<TaskProvider>();
+    late List<Task> allTasks;
+    late Map<int, List<String>> parentNamesMap;
+    await Future.wait([
+      provider.getAllTasks().then((v) => allTasks = v),
+      provider.getParentNamesMap().then((v) => parentNamesMap = v),
+    ]);
+    return (allTasks, parentNamesMap);
+  }
+
   Future<void> _linkExistingTask() async {
     final provider = context.read<TaskProvider>();
     final currentParent = provider.currentParent;
     if (currentParent == null) return;
 
-    final allTasks = await provider.getAllTasks();
-    final parentNamesMap = await provider.getParentNamesMap();
+    final (allTasks, parentNamesMap) = await _fetchCandidateData();
     final existingChildIds = await provider.getChildIds(currentParent.id!);
     final existingChildIdSet = existingChildIds.toSet();
 
@@ -108,8 +122,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   Future<void> _addParentToTask(Task task) async {
     final provider = context.read<TaskProvider>();
 
-    final allTasks = await provider.getAllTasks();
-    final parentNamesMap = await provider.getParentNamesMap();
+    final (allTasks, parentNamesMap) = await _fetchCandidateData();
     final existingParentIds = await provider.getParentIds(task.id!);
     final existingParentIdSet = existingParentIds.toSet();
 
@@ -193,8 +206,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final currentParent = provider.currentParent;
     if (currentParent == null) return;
 
-    final allTasks = await provider.getAllTasks();
-    final parentNamesMap = await provider.getParentNamesMap();
+    final (allTasks, parentNamesMap) = await _fetchCandidateData();
 
     // Filter out: the task itself, the current parent (already here)
     final candidates = allTasks.where((t) {
@@ -275,7 +287,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () {
-            provider.restoreTask(deleted.task, deleted.parentIds, deleted.childIds);
+            provider.restoreTask(
+              deleted.task,
+              deleted.parentIds,
+              deleted.childIds,
+              dependsOnIds: deleted.dependsOnIds,
+              dependedByIds: deleted.dependedByIds,
+            );
           },
         ),
         showCloseIcon: true,
@@ -340,12 +358,27 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
+  // Cached parents Future for the leaf detail view.
+  int? _leafParentsTaskId;
+  Future<List<Task>>? _leafParentsFuture;
+
   Widget _buildLeafTaskDetail(TaskProvider provider) {
     final task = provider.currentParent!;
-    return FutureBuilder<List<Task>>(
-      future: provider.getParents(task.id!),
+    // Reuse cached Futures unless the task changed or they were invalidated.
+    if (_leafDepsTaskId != task.id) {
+      _leafDepsTaskId = task.id;
+      _leafDepsFuture = provider.getDependencies(task.id!);
+    }
+    if (_leafParentsTaskId != task.id) {
+      _leafParentsTaskId = task.id;
+      _leafParentsFuture = provider.getParents(task.id!);
+    }
+    return FutureBuilder<List<List<Task>>>(
+      future: Future.wait([_leafParentsFuture!, _leafDepsFuture!]),
       builder: (context, snapshot) {
-        final parentNames = snapshot.data?.map((t) => t.name).toList() ?? [];
+        final parents = snapshot.data?[0] ?? [];
+        final deps = snapshot.data?[1] ?? [];
+        final parentNames = parents.map((t) => t.name).toList();
         return LeafTaskDetail(
           task: task,
           parentNames: parentNames,
@@ -357,6 +390,15 @@ class _TaskListScreenState extends State<TaskListScreen> {
           onUpdateUrl: (url) => _updateUrl(task, url),
           onUpdatePriority: (p) => _updatePriority(task, p),
           onUpdateDifficulty: (d) => _updateDifficulty(task, d),
+          dependencies: deps,
+          onRemoveDependency: (depId) async {
+            _leafDepsTaskId = null; // invalidate before await
+            await provider.removeDependency(task.id!, depId);
+          },
+          onAddDependency: () async {
+            await _addDependencyToTask(task);
+            _leafDepsTaskId = null; // invalidate — may have added a dep
+          },
         );
       },
     );
@@ -364,8 +406,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   Future<void> _searchTask() async {
     final provider = context.read<TaskProvider>();
-    final allTasks = await provider.getAllTasks();
-    final parentNamesMap = await provider.getParentNamesMap();
+    final (allTasks, parentNamesMap) = await _fetchCandidateData();
 
     if (!mounted) return;
 
@@ -399,6 +440,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
   Future<void> _showRandomResult(Task task) async {
     final provider = context.read<TaskProvider>();
     final children = await provider.getChildren(task.id!);
+    final childIds = children.map((c) => c.id!).toList();
+    final blockedIds = await provider.getBlockedChildIds(childIds);
+    final eligible = children.where((c) => !blockedIds.contains(c.id)).toList();
 
     if (!mounted) return;
 
@@ -406,7 +450,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
       context: context,
       builder: (_) => RandomResultDialog(
         task: task,
-        hasChildren: children.isNotEmpty,
+        hasChildren: eligible.isNotEmpty,
       ),
     );
 
@@ -414,10 +458,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
     switch (action) {
       case RandomResultAction.goDeeper:
-        // Pick random from this task's children
-        if (children.isNotEmpty) {
-          final deeper = children[
-              (children.length == 1) ? 0 : DateTime.now().millisecondsSinceEpoch % children.length];
+        // Pick random from this task's non-blocked children
+        if (eligible.isNotEmpty) {
+          final deeper = eligible[
+              (eligible.length == 1) ? 0 : DateTime.now().millisecondsSinceEpoch % eligible.length];
           await _showRandomResult(deeper);
         }
       case RandomResultAction.goToTask:
@@ -482,6 +526,57 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
+  Future<void> _addDependencyToTask(Task task) async {
+    final provider = context.read<TaskProvider>();
+    final (allTasks, parentNamesMap) = await _fetchCandidateData();
+
+    // Filter out: the task itself
+    final candidates = allTasks.where((t) => t.id != task.id).toList();
+
+    // Prioritize siblings (other tasks under the same parent).
+    // On leaf view, provider.tasks is empty — look up siblings from the parent.
+    Set<int> siblingIds;
+    if (provider.tasks.isNotEmpty) {
+      siblingIds = provider.tasks
+          .map((t) => t.id!)
+          .where((id) => id != task.id)
+          .toSet();
+    } else {
+      // Leaf view: get siblings from the parent above
+      final parentIds = await provider.getParentIds(task.id!);
+      if (parentIds.isNotEmpty) {
+        final siblings = await provider.getChildren(parentIds.first);
+        siblingIds = siblings
+            .map((t) => t.id!)
+            .where((id) => id != task.id)
+            .toSet();
+      } else {
+        siblingIds = {};
+      }
+    }
+
+    if (!mounted) return;
+
+    final selected = await showDialog<Task>(
+      context: context,
+      builder: (_) => TaskPickerDialog(
+        candidates: candidates,
+        title: 'Do "${task.name}" after...',
+        parentNamesMap: parentNamesMap,
+        priorityIds: siblingIds,
+      ),
+    );
+
+    if (selected == null || !mounted) return;
+
+    final success = await provider.addDependency(task.id!, selected.id!);
+    if (!success && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cannot add: would create a cycle')),
+      );
+    }
+  }
+
   int _crossAxisCount(double width) {
     if (width >= 900) return 3;
     if (width >= 600) return 2;
@@ -528,6 +623,17 @@ class _TaskListScreenState extends State<TaskListScreen> {
                       onPressed: () => provider.navigateBack(),
                     ),
               actions: [
+                if (!provider.isRoot && provider.currentParent?.hasUrl == true && provider.tasks.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.link),
+                    onPressed: () {
+                      final uri = Uri.tryParse(provider.currentParent!.url!);
+                      if (uri != null) {
+                        launchUrl(uri, mode: LaunchMode.externalApplication);
+                      }
+                    },
+                    tooltip: 'Open link',
+                  ),
                 IconButton(
                   icon: const Icon(Icons.search),
                   onPressed: _searchTask,
@@ -583,6 +689,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
                             (url) => _updateUrl(task, url),
                           );
                         }
+                      case 'do_after':
+                        if (task != null) _addDependencyToTask(task);
                       case 'export':
                         BackupService.exportDatabase(context);
                       case 'import':
@@ -602,6 +710,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
                         value: 'add_parent',
                         child: Text('Also show under...'),
                       ),
+                    ],
+                    if (!provider.isRoot && provider.tasks.isNotEmpty) ...[
                       PopupMenuItem(
                         value: 'edit_link',
                         child: Text(
@@ -609,6 +719,12 @@ class _TaskListScreenState extends State<TaskListScreen> {
                               ? 'Edit link'
                               : 'Add link',
                         ),
+                      ),
+                    ],
+                    if (!provider.isRoot) ...[
+                      const PopupMenuItem(
+                        value: 'do_after',
+                        child: Text('Do after...'),
                       ),
                       const PopupMenuDivider(),
                     ],
@@ -659,7 +775,10 @@ class _TaskListScreenState extends State<TaskListScreen> {
                                 ? null
                                 : () => _moveTask(task),
                             onRename: () => _renameTask(task),
+                            onAddDependency: () => _addDependencyToTask(task),
                             hasStartedDescendant: provider.startedDescendantIds.contains(task.id),
+                            isBlocked: provider.blockedTaskIds.contains(task.id),
+                            blockedByName: provider.blockedByNames[task.id],
                           );
                         },
                       );
@@ -692,24 +811,18 @@ class _TaskListScreenState extends State<TaskListScreen> {
                         child: const Icon(Icons.link),
                       ),
                       const SizedBox(width: 12),
-                      GestureDetector(
-                        onLongPress: _brainDump,
-                        child: FloatingActionButton(
-                          heroTag: 'addTask',
-                          onPressed: _showFabOptions,
-                          child: const Icon(Icons.add),
-                        ),
+                      FloatingActionButton(
+                        heroTag: 'addTask',
+                        onPressed: _addTask,
+                        child: const Icon(Icons.add),
                       ),
                     ],
                   )
                 else
-                  GestureDetector(
-                    onLongPress: _brainDump,
-                    child: FloatingActionButton(
-                      heroTag: 'addTask',
-                      onPressed: _showFabOptions,
-                      child: const Icon(Icons.add),
-                    ),
+                  FloatingActionButton(
+                    heroTag: 'addTask',
+                    onPressed: _addTask,
+                    child: const Icon(Icons.add),
                   ),
               ],
             ),

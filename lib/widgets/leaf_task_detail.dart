@@ -13,6 +13,9 @@ class LeafTaskDetail extends StatelessWidget {
   final void Function(String?) onUpdateUrl;
   final ValueChanged<int> onUpdatePriority;
   final ValueChanged<int> onUpdateDifficulty;
+  final List<Task> dependencies;
+  final void Function(int)? onRemoveDependency;
+  final VoidCallback? onAddDependency;
 
   const LeafTaskDetail({
     super.key,
@@ -26,6 +29,9 @@ class LeafTaskDetail extends StatelessWidget {
     required this.onUpdateUrl,
     required this.onUpdatePriority,
     required this.onUpdateDifficulty,
+    this.dependencies = const [],
+    this.onRemoveDependency,
+    this.onAddDependency,
   });
 
   String _formatDate(int millis) {
@@ -78,19 +84,29 @@ class LeafTaskDetail extends StatelessWidget {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Link'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            hintText: 'https://...',
-            border: OutlineInputBorder(),
-          ),
-          keyboardType: TextInputType.url,
-          autofocus: true,
-          onSubmitted: (value) {
-            final url = value.trim().isEmpty ? null : value.trim();
-            Navigator.pop(dialogContext);
-            onUpdateUrl(url);
+        content: GestureDetector(
+          onHorizontalDragEnd: (details) {
+            if ((details.primaryVelocity ?? 0) > 0 && controller.text.isEmpty) {
+              controller.text = 'https://';
+              controller.selection = TextSelection.fromPosition(
+                TextPosition(offset: controller.text.length),
+              );
+            }
           },
+          child: TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              hintText: 'https://...',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.url,
+            autofocus: true,
+            onSubmitted: (value) {
+              final url = value.trim().isEmpty ? null : value.trim();
+              Navigator.pop(dialogContext);
+              onUpdateUrl(url);
+            },
+          ),
         ),
         actions: [
           if (currentUrl != null && currentUrl.isNotEmpty)
@@ -205,6 +221,33 @@ class LeafTaskDetail extends StatelessWidget {
     );
   }
 
+  Widget _buildDependencyChips(BuildContext context, ColorScheme colorScheme) {
+    final dep = dependencies.isNotEmpty ? dependencies.first : null;
+    if (dep != null) {
+      // Show current dependency with X to remove
+      return InputChip(
+        avatar: Icon(
+          dep.isCompleted || dep.isSkipped
+              ? Icons.check
+              : Icons.hourglass_top,
+          size: 16,
+        ),
+        label: Text(
+          'After: ${dep.name}',
+          style: TextStyle(
+            color: dep.isCompleted || dep.isSkipped
+                ? colorScheme.onSurfaceVariant.withAlpha(150)
+                : null,
+          ),
+        ),
+        onDeleted: onRemoveDependency != null
+            ? () => onRemoveDependency!(dep.id!)
+            : null,
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -283,6 +326,11 @@ class LeafTaskDetail extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             _buildUrlRow(context, colorScheme, textTheme),
+            // Dependency chips
+            if (dependencies.isNotEmpty || onAddDependency != null)
+              const SizedBox(height: 8),
+            if (dependencies.isNotEmpty || onAddDependency != null)
+              _buildDependencyChips(context, colorScheme),
             const SizedBox(height: 20),
             _buildSegmentedRow(
               context,

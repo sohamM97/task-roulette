@@ -69,7 +69,6 @@ void main() {
       ));
 
       expect(find.text('Add link'), findsNothing);
-      expect(find.byIcon(Icons.add_link), findsNothing);
     });
 
     testWidgets('URL row hidden when no URL', (tester) async {

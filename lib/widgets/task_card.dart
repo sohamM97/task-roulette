@@ -9,7 +9,10 @@ class TaskCard extends StatelessWidget {
   final VoidCallback? onUnlink;
   final VoidCallback? onMove;
   final VoidCallback? onRename;
+  final VoidCallback? onAddDependency;
   final bool hasStartedDescendant;
+  final bool isBlocked;
+  final String? blockedByName;
   final int indicatorStyle;
 
   const TaskCard({
@@ -21,7 +24,10 @@ class TaskCard extends StatelessWidget {
     this.onUnlink,
     this.onMove,
     this.onRename,
+    this.onAddDependency,
     this.hasStartedDescendant = false,
+    this.isBlocked = false,
+    this.blockedByName,
     this.indicatorStyle = 2,
   });
 
@@ -49,6 +55,15 @@ class TaskCard extends StatelessWidget {
                   onTap: () {
                     Navigator.pop(bottomSheetContext);
                     onAddParent!();
+                  },
+                ),
+              if (onAddDependency != null)
+                ListTile(
+                  leading: const Icon(Icons.hourglass_top),
+                  title: const Text('Do after...'),
+                  onTap: () {
+                    Navigator.pop(bottomSheetContext);
+                    onAddDependency!();
                   },
                 ),
               if (onMove != null)
@@ -122,6 +137,12 @@ class TaskCard extends StatelessWidget {
     return colors[(task.id ?? 0) % colors.length];
   }
 
+  String _displayUrl(String url) {
+    var display = url.replaceFirst(RegExp(r'^https?://'), '');
+    if (display.endsWith('/')) display = display.substring(0, display.length - 1);
+    return display.length > 30 ? '${display.substring(0, 30)}...' : display;
+  }
+
   bool get _showIndicator => task.isStarted || hasStartedDescendant;
 
   Color _indicatorColor(BuildContext context) {
@@ -134,66 +155,117 @@ class TaskCard extends StatelessWidget {
     final showIndicator = _showIndicator;
     final indicatorColor = _indicatorColor(context);
 
-    return Card(
-      color: _cardColor(context),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        onLongPress: () => _showDeleteBottomSheet(context),
-        child: Stack(
-          children: [
-            // Style 1: colored left border strip
-            if (showIndicator && indicatorStyle == 1)
-              Positioned(
-                left: 0,
-                top: 8,
-                bottom: 8,
-                child: Container(
-                  width: 4,
-                  decoration: BoxDecoration(
-                    color: indicatorColor,
-                    borderRadius: BorderRadius.circular(2),
+    return Opacity(
+      opacity: isBlocked ? 0.6 : 1.0,
+      child: Card(
+        color: _cardColor(context),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          onLongPress: () => _showDeleteBottomSheet(context),
+          child: Stack(
+            children: [
+              // Style 1: colored left border strip
+              if (showIndicator && indicatorStyle == 1)
+                Positioned(
+                  left: 0,
+                  top: 8,
+                  bottom: 8,
+                  child: Container(
+                    width: 4,
+                    decoration: BoxDecoration(
+                      color: indicatorColor,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        task.name,
+                        style: Theme.of(context).textTheme.titleMedium,
+                        textAlign: TextAlign.center,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (task.hasUrl)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.link, size: 12, color: Theme.of(context).colorScheme.primary),
+                              const SizedBox(width: 3),
+                              Flexible(
+                                child: Text(
+                                  _displayUrl(task.url!),
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context).colorScheme.primary,
+                                    fontSize: 11,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (isBlocked && blockedByName != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.hourglass_top, size: 12,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant),
+                              const SizedBox(width: 3),
+                              Flexible(
+                                child: Text(
+                                  'After: $blockedByName',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                    fontSize: 11,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ),
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(
-                  task.name,
-                  style: Theme.of(context).textTheme.titleMedium,
-                  textAlign: TextAlign.center,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ),
-            // Style 0: dot in top-right corner
-            if (showIndicator && indicatorStyle == 0)
-              Positioned(
-                right: 8,
-                top: 8,
-                child: Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: indicatorColor,
-                    shape: BoxShape.circle,
+              // Style 0: dot in top-right corner
+              if (showIndicator && indicatorStyle == 0)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: indicatorColor,
+                      shape: BoxShape.circle,
+                    ),
                   ),
                 ),
-              ),
-            // Style 2: play icon in top-right corner
-            if (showIndicator && indicatorStyle == 2)
-              Positioned(
-                right: 6,
-                top: 6,
-                child: Icon(
-                  Icons.play_circle_filled,
-                  size: 18,
-                  color: indicatorColor,
+              // Style 2: play icon in top-right corner
+              if (showIndicator && indicatorStyle == 2)
+                Positioned(
+                  right: 6,
+                  top: 6,
+                  child: Icon(
+                    Icons.play_circle_filled,
+                    size: 18,
+                    color: indicatorColor,
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
