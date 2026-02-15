@@ -49,11 +49,15 @@ class _DagViewScreenState extends State<DagViewScreen> {
   // Key for the viewport to measure size for fit-to-screen.
   final GlobalKey _viewportKey = GlobalKey();
 
-  static const _nodeMaxWidth = 100.0;
-  static const _nodeHPadding = 12.0;
-  static const _nodeVPadding = 10.0;
-  // Estimated node size for layout computation: maxWidth + 2*hPad = 124, ~40 tall.
-  static const _estimatedNodeSize = Size(124, 40);
+  // Track pointer down position for tap detection (Listener-based).
+  Offset? _pointerDownPos;
+
+  // Node dimensions — scaled to screen width in _rebuildGraph().
+  double _nodeMaxWidth = 100.0;
+  double _nodeHPadding = 12.0;
+  Size _estimatedNodeSize = const Size(124, 40);
+  int _nodeSeparation = 20;
+  int _levelSeparation = 65;
 
   static const _nodeColors = [
     Color(0xFFE8DEF8), // purple
@@ -174,6 +178,18 @@ class _DagViewScreenState extends State<DagViewScreen> {
 
     if (_allTasks.isEmpty) return;
 
+    // Scale node dimensions to screen width (reference: 800px desktop).
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final scale = (screenWidth / 800).clamp(0.6, 1.0);
+    _nodeMaxWidth = 100.0 * scale;
+    _nodeHPadding = 12.0 * scale;
+    _estimatedNodeSize = Size(
+      _nodeMaxWidth + _nodeHPadding * 2,
+      math.max(34.0, 40.0 * scale),
+    );
+    _nodeSeparation = math.max(12, (20 * scale).round());
+    _levelSeparation = math.max(40, (65 * scale).round());
+
     final graph = Graph();
     final nodeMap = <int, Node>{};
 
@@ -204,10 +220,16 @@ class _DagViewScreenState extends State<DagViewScreen> {
 
   /// Runs SugiyamaAlgorithm once and caches node positions + edge paths.
   void _computeLayout(Graph graph, Map<int, Node> nodeMap) {
+    // Portrait screens: LEFT_RIGHT so siblings spread vertically (tall graph).
+    // Landscape/desktop: TOP_BOTTOM so siblings spread horizontally (wide graph).
+    final screenSize = MediaQuery.sizeOf(context);
+    final isPortrait = screenSize.height > screenSize.width;
     final config = SugiyamaConfiguration()
-      ..nodeSeparation = 20
-      ..levelSeparation = 65
-      ..orientation = SugiyamaConfiguration.ORIENTATION_TOP_BOTTOM;
+      ..nodeSeparation = _nodeSeparation
+      ..levelSeparation = _levelSeparation
+      ..orientation = isPortrait
+          ? SugiyamaConfiguration.ORIENTATION_LEFT_RIGHT
+          : SugiyamaConfiguration.ORIENTATION_TOP_BOTTOM;
 
     final algorithm = SugiyamaAlgorithm(config);
     _graphSize = algorithm.run(graph, 10, 10);
@@ -237,8 +259,18 @@ class _DagViewScreenState extends State<DagViewScreen> {
         for (int i = 0; i < bp.length - 1; i += 2) {
           points.add(Offset(bp[i], bp[i + 1]));
         }
+      } else if (isPortrait) {
+        // Left-to-right: source right-center → dest left-center.
+        points.add(Offset(
+          srcNode.x + srcNode.width,
+          srcNode.y + srcNode.height / 2,
+        ));
+        points.add(Offset(
+          dstNode.x,
+          dstNode.y + dstNode.height / 2,
+        ));
       } else {
-        // Straight line from source bottom-center to dest top-center.
+        // Top-to-bottom: source bottom-center → dest top-center.
         points.add(Offset(
           srcNode.x + srcNode.width / 2,
           srcNode.y + srcNode.height,
@@ -278,30 +310,38 @@ class _DagViewScreenState extends State<DagViewScreen> {
   /// unrelated nodes are dimmed (50% opacity, outline only).
   Widget _buildNodeWidget(Task task, {bool connected = true}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return GestureDetector(
-      onTap: () => _navigateToTask(task),
+    return Listener(
+      onPointerDown: (e) => _pointerDownPos = e.position,
+      onPointerUp: (e) {
+        if (_pointerDownPos != null &&
+            (e.position - _pointerDownPos!).distance < 20) {
+          _navigateToTask(task);
+        }
+        _pointerDownPos = null;
+      },
       child: Opacity(
         opacity: connected ? 1.0 : 0.5,
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: _nodeHPadding,
-            vertical: _nodeVPadding,
-          ),
-          decoration: BoxDecoration(
-            color: connected ? _nodeColor(task.id!) : null,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: connected
-                  ? (isDark ? Colors.white24 : Colors.black12)
-                  : (isDark ? Colors.white38 : Colors.black26),
-              width: connected ? 1.0 : 1.5,
+        child: SizedBox(
+          width: _estimatedNodeSize.width,
+          height: _estimatedNodeSize.height,
+          child: Container(
+            alignment: Alignment.center,
+            padding: EdgeInsets.symmetric(horizontal: _nodeHPadding),
+            decoration: BoxDecoration(
+              color: connected ? _nodeColor(task.id!) : null,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: connected
+                    ? (isDark ? Colors.white24 : Colors.black12)
+                    : (isDark ? Colors.white38 : Colors.black26),
+                width: connected ? 1.0 : 1.5,
+              ),
             ),
-          ),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: _nodeMaxWidth),
             child: Text(
               task.name,
-              style: Theme.of(context).textTheme.bodyMedium,
+              style: _estimatedNodeSize.width < 100
+                  ? Theme.of(context).textTheme.bodySmall
+                  : Theme.of(context).textTheme.bodyMedium,
               textAlign: TextAlign.center,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
@@ -385,7 +425,7 @@ class _DagViewScreenState extends State<DagViewScreen> {
                               transformationController: _transformController,
                               constrained: false,
                               panEnabled: true,
-                              boundaryMargin: const EdgeInsets.all(200),
+                              boundaryMargin: const EdgeInsets.all(double.infinity),
                               minScale: 0.2,
                               maxScale: 3.0,
                               child: Column(
