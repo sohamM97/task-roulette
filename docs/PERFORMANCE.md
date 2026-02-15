@@ -62,6 +62,12 @@ Repeated `maps.map((m) => Task.fromMap(m)).toList()` calls across 7 query method
 
 `_archivedLabel()` was recomputed per row per rebuild, each calling `DateTime.now()` and doing date arithmetic. Now labels are precomputed once in `_loadData()` using a single `now`/`today` snapshot and stored in a `Map<int, String>`.
 
+## Back Button ANR Fix
+
+The `PopScope` handler on `TaskListScreen` had `canPop: false` to intercept back presses for in-app hierarchy navigation. When already at root, `provider.navigateBack()` returns `false`, and the handler called `navigator.maybePop()` — which re-triggered `onPopInvokedWithResult` (since `canPop` was still `false`), creating an infinite loop that pegged the CPU at 99% and caused an ANR.
+
+Fix: replaced `navigator.maybePop()` with `SystemNavigator.pop()` for the root-level case, which tells Android to close the activity normally. Non-root back presses are unaffected — `navigateBack()` returns `true` and the handler exits before reaching that code path.
+
 ## Future Work
 
 - **Isolate graph layout**: The Sugiyama algorithm runs on the main thread. For <200 nodes this is <50ms, but for larger graphs it could cause jank. Moving it to an isolate requires serializable graph objects (the package's `Graph`/`Node` types aren't currently serializable).

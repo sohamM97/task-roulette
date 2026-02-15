@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/task.dart';
@@ -617,10 +618,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
         final provider = context.read<TaskProvider>();
-        final navigator = Navigator.of(context);
         final navigated = await provider.navigateBack();
         if (!navigated && mounted) {
-          navigator.maybePop();
+          SystemNavigator.pop();
         }
       },
       child: Consumer<TaskProvider>(
