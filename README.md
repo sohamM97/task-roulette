@@ -89,6 +89,21 @@ flutter build apk --debug
 
 Output: `build/app/outputs/flutter-apk/app-debug.apk` — transfer to your phone and install.
 
+> **Warning:** Debug and release APKs have different signing keys. Installing a debug APK over a release build (or vice versa) will **uninstall the existing app and wipe its data**. To test a debug build safely, back up the database first using the app's export feature, or use `adb` to copy it:
+> ```bash
+> adb exec-out run-as com.taskroulette.task_roulette cat databases/task_roulette.db > /tmp/task_roulette_backup.db
+> ```
+
+### Test on phone via ADB
+
+To sideload a debug APK over ADB without `flutter run` (which auto-uninstalls on signature mismatch):
+
+```bash
+flutter build apk --debug
+adb install -r build/app/outputs/flutter-apk/app-debug.apk   # -r = replace if same signature
+adb logcat -s flutter                                          # view Flutter debug output
+```
+
 ### Test
 
 ```bash
@@ -147,7 +162,7 @@ test/
    ```
 
 2. **Enable wireless debugging** on your Android phone:
-   - Go to **Settings > Developer options** (tap Build number 7 times to unlock)
+   - Go to **Settings > System > Developer options** (tap Build number 7 times to unlock)
    - Enable **Wireless debugging**
    - Tap **Wireless debugging** to open its settings, then tap **Pair device with pairing code**
    - On your computer:
