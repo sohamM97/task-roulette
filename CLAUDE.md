@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Flutter app — a DAG-based task manager where tasks can have multiple parents/children. Runs on Linux desktop (Android planned). Vibe-coded: planned/ideated by a human, implemented with AI.
+Flutter app — a DAG-based task manager where tasks can have multiple parents/children. Runs on Linux desktop and Android. Vibe-coded: planned/ideated by a human, implemented with AI.
 
 ## Tech Stack
 
