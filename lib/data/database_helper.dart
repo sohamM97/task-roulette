@@ -121,22 +121,26 @@ class DatabaseHelper {
           await db.execute('CREATE INDEX idx_task_dependencies_task_id ON task_dependencies(task_id)');
           await db.execute('CREATE INDEX idx_task_dependencies_depends_on_id ON task_dependencies(depends_on_id)');
         }
+        // Track whether priority/difficulty columns were freshly added (no old
+        // data to remap) vs already present (need value migration).
+        var columnsJustAdded = false;
         if (oldVersion < 8) {
           // Columns were added to the v6 onCreate retroactively, so DBs at v6/v7
           // won't have them. Add if missing before the UPDATE.
           final cols = await db.rawQuery('PRAGMA table_info(tasks)');
           final colNames = cols.map((c) => c['name'] as String).toSet();
-          if (!colNames.contains('priority')) {
+          columnsJustAdded = !colNames.contains('priority');
+          if (columnsJustAdded) {
             await db.execute('ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0');
-          }
-          if (!colNames.contains('difficulty')) {
             await db.execute('ALTER TABLE tasks ADD COLUMN difficulty INTEGER NOT NULL DEFAULT 0');
+          } else {
+            // Remap 3-level priority (0=Low,1=Medium,2=High) to 2-level (0=Normal,1=High)
+            await db.execute('UPDATE tasks SET priority = CASE WHEN priority >= 2 THEN 1 ELSE 0 END');
           }
-          // Remap 3-level priority (0=Low,1=Medium,2=High) to 2-level (0=Normal,1=High)
-          await db.execute('UPDATE tasks SET priority = CASE WHEN priority >= 2 THEN 1 ELSE 0 END');
         }
-        if (oldVersion < 9) {
+        if (oldVersion < 9 && !columnsJustAdded) {
           // Reinterpret difficulty: old Easy(0)→quick(1), old Medium(1)/Hard(2)→normal(0)
+          // Skip if columns were just added — defaults are already correct (0 = Normal).
           await db.execute('UPDATE tasks SET difficulty = CASE WHEN difficulty = 0 THEN 1 ELSE 0 END');
         }
         if (oldVersion < 10) {

@@ -58,6 +58,20 @@ The goal of this app is **minimal cognitive load**. The user wants a quick place
 - After completing a new feature, ask the user if they want to add test cases for it.
 - When a bug is found and confirmed reproducible, always add a test case for it.
 
+## Mobile Debugging & Testing
+
+- When something doesn't work on the user's phone, **don't jump to fixes**. First ask the user if they want to troubleshoot using ADB, logcat, etc.
+- **NEVER** run `flutter run` on the phone when a release build is installed — the signature mismatch will uninstall the app and wipe user data. Instead, build a debug APK (`flutter build apk --debug`), back up the app data first, then sideload.
+- Before pushing a new version/tag, ask the user if they want to test with a debug build on their phone first.
+- When pushing a new version, remind the user to **export their data** from the phone app before installing the new version.
+
+## Android Signing
+
+- Both debug and release builds use the same keystore (`android/upload-keystore.jks`) so APKs can be installed over each other without data loss.
+- `upload-keystore.jks` and `key.properties` are **gitignored** — they won't be present on a fresh clone.
+- The same keystore is stored as `KEYSTORE_BASE64` in GitHub Actions secrets (write-only, can't be downloaded).
+- **On a new machine:** Before building for Android, check if `android/upload-keystore.jks` and `android/key.properties` exist. If not, ask the user to provide them (they should have a backup). Without these files, builds fall back to the default Android debug key, causing signature mismatch with any existing install on the phone.
+
 ## GitHub
 
 - Repo: sohamM97/task-roulette
