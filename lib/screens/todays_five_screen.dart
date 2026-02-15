@@ -70,7 +70,13 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   /// Re-fetches task snapshots from DB without regenerating the set.
   /// Called when switching back to the Today tab to pick up changes
   /// made in All Tasks (e.g. unstarting a task).
+  /// If the current set is empty, generates a new set instead (handles
+  /// the case where the app started with no tasks and user added some).
   Future<void> refreshSnapshots() async {
+    if (_todaysTasks.isEmpty) {
+      await _generateNewSet();
+      return;
+    }
     final db = DatabaseHelper();
     final refreshed = <Task>[];
     for (final t in _todaysTasks) {
@@ -130,7 +136,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
               ListTile(
                 leading: Icon(Icons.today, color: Colors.orange),
                 title: const Text('Done today'),
-                subtitle: const Text('Back tomorrow — partial work counts!'),
+                subtitle: const Text('Partial work counts — we\'ll remind you again soon.'),
                 onTap: () {
                   Navigator.pop(ctx);
                   _workedOnTask(task);
@@ -233,7 +239,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('"${task.name}" — nice progress! Back tomorrow.'),
+        content: Text('"${task.name}" — nice work! We\'ll remind you again soon.'),
         showCloseIcon: true,
         persist: false,
         duration: const Duration(seconds: 4),

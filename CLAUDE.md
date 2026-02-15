@@ -51,7 +51,8 @@ The goal of this app is **minimal cognitive load**. The user wants a quick place
 
 ## Development Preferences
 
-- Ask user about committing and pushing occasionally — don't wait until asked. But first remind them to review the changes and test before committing.
+- Ask user about committing and pushing occasionally — don't wait until asked. But first remind them to review the changes and test on Linux (via `./dev.sh`, not `flutter build`) before committing.
+- Before pushing a new release (tagging a version), remind the user to test on their phone first.
 - When setup instructions change (new deps, build steps), ask user if they want to update README.
 - Capture any user-mentioned future work items as todo tasks immediately.
 - Keep a persistent TODO list in the Claude memory directory.

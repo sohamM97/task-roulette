@@ -211,7 +211,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('"${task.name}" — nice progress! Back tomorrow.'),
+        content: Text('"${task.name}" — nice work! We\'ll remind you again soon.'),
         showCloseIcon: true,
         persist: false,
         duration: const Duration(seconds: 4),
