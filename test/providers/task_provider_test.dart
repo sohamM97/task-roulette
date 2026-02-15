@@ -525,4 +525,350 @@ void main() {
       expect(provider.tasks.firstWhere((t) => t.id == childId).name, 'Renamed child');
     });
   });
+
+  group("Today's 5 leaf filtering", () {
+    test('getAllLeafTasks excludes task after child is added', () async {
+      // Create 5 standalone leaf tasks (simulates Today's 5)
+      final ids = <int>[];
+      for (int i = 0; i < 5; i++) {
+        ids.add(await db.insertTask(Task(name: 'Task $i')));
+      }
+      // Plus a 6th task to serve as replacement
+      final replacementId = await db.insertTask(Task(name: 'Replacement'));
+
+      var leaves = await provider.getAllLeafTasks();
+      var leafIds = leaves.map((t) => t.id).toSet();
+      expect(leafIds, containsAll(ids));
+      expect(leafIds, contains(replacementId));
+
+      // Add a subtask to Task 0 — it's no longer a leaf
+      final subtaskId = await db.insertTask(Task(name: 'Subtask'));
+      await db.addRelationship(ids[0], subtaskId);
+
+      leaves = await provider.getAllLeafTasks();
+      leafIds = leaves.map((t) => t.id).toSet();
+      expect(leafIds, isNot(contains(ids[0])));
+      // Other original tasks + replacement + subtask are still leaves
+      expect(leafIds, containsAll(ids.sublist(1)));
+      expect(leafIds, contains(replacementId));
+      expect(leafIds, contains(subtaskId));
+    });
+
+    test('pickWeightedN fills up to requested count from eligible pool', () async {
+      // Create 3 leaf tasks
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final c = await db.insertTask(Task(name: 'C'));
+
+      final leaves = await provider.getAllLeafTasks();
+      // Pick 2 from all 3
+      final picked = provider.pickWeightedN(leaves, 2);
+      expect(picked, hasLength(2));
+      // All picked tasks should be from the leaf pool
+      for (final t in picked) {
+        expect([a, b, c], contains(t.id));
+      }
+    });
+
+    test('simulated refresh: non-leaf tasks replaced with new leaves', () async {
+      // Create 5 leaf tasks (Today's 5)
+      final todaysIds = <int>[];
+      for (int i = 0; i < 5; i++) {
+        todaysIds.add(await db.insertTask(Task(name: 'Today $i')));
+      }
+      // Create extra leaves for replacement pool
+      final extra1 = await db.insertTask(Task(name: 'Extra 1'));
+      final extra2 = await db.insertTask(Task(name: 'Extra 2'));
+
+      // Simulate: Task 0 gets a subtask (no longer a leaf)
+      final sub = await db.insertTask(Task(name: 'Sub'));
+      await db.addRelationship(todaysIds[0], sub);
+
+      // Refresh logic: filter through leaves, backfill
+      final allLeaves = await provider.getAllLeafTasks();
+      final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+
+      final refreshed = <Task>[];
+      for (final id in todaysIds) {
+        if (leafIdSet.contains(id)) {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) refreshed.add(fresh);
+        }
+      }
+
+      // Task 0 should be filtered out
+      expect(refreshed, hasLength(4));
+      expect(refreshed.map((t) => t.id), isNot(contains(todaysIds[0])));
+
+      // Backfill: pick 1 replacement from eligible leaves
+      final currentIds = refreshed.map((t) => t.id).toSet();
+      final leafIds = allLeaves.map((t) => t.id!).toList();
+      final blockedIds = await provider.getBlockedChildIds(leafIds);
+      final eligible = allLeaves.where(
+        (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
+      ).toList();
+      final replacements = provider.pickWeightedN(eligible, 1);
+
+      refreshed.addAll(replacements);
+      expect(refreshed, hasLength(5));
+
+      // The replacement should be from the extra pool or the subtask
+      final replacementId = replacements.first.id;
+      expect([extra1, extra2, sub], contains(replacementId));
+    });
+
+    test('done task kept in list even after becoming non-leaf', () async {
+      // Create 5 leaf tasks + extras for backfill
+      final todaysIds = <int>[];
+      for (int i = 0; i < 5; i++) {
+        todaysIds.add(await db.insertTask(Task(name: 'Today $i')));
+      }
+      await db.insertTask(Task(name: 'Extra'));
+
+      // Simulate: user marks Task 0 as done
+      final completedIds = {todaysIds[0]};
+
+      // Task 0 gets a subtask → no longer a leaf
+      final sub = await db.insertTask(Task(name: 'Sub'));
+      await db.addRelationship(todaysIds[0], sub);
+
+      // Refresh logic (mirrors refreshSnapshots)
+      final allLeaves = await provider.getAllLeafTasks();
+      final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+      final refreshed = <Task>[];
+      for (final id in todaysIds) {
+        if (leafIdSet.contains(id)) {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) refreshed.add(fresh);
+        } else if (completedIds.contains(id)) {
+          // Done task kept even though non-leaf
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) refreshed.add(fresh);
+        }
+      }
+
+      // All 5 kept: 4 leaves + 1 done-but-non-leaf
+      expect(refreshed, hasLength(5));
+      expect(refreshed.map((t) => t.id), contains(todaysIds[0]));
+      // No backfill needed
+    });
+
+    test('non-done non-leaf replaced while done non-leaf preserved', () async {
+      final todaysIds = <int>[];
+      for (int i = 0; i < 5; i++) {
+        todaysIds.add(await db.insertTask(Task(name: 'Today $i')));
+      }
+      await db.insertTask(Task(name: 'Extra'));
+
+      // Task 0 is done, Task 1 is not done
+      final completedIds = {todaysIds[0]};
+
+      // Both get subtasks → both non-leaf
+      final sub0 = await db.insertTask(Task(name: 'Sub0'));
+      final sub1 = await db.insertTask(Task(name: 'Sub1'));
+      await db.addRelationship(todaysIds[0], sub0);
+      await db.addRelationship(todaysIds[1], sub1);
+
+      final allLeaves = await provider.getAllLeafTasks();
+      final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+      final refreshed = <Task>[];
+      for (final id in todaysIds) {
+        if (leafIdSet.contains(id)) {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) refreshed.add(fresh);
+        } else if (completedIds.contains(id)) {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) refreshed.add(fresh);
+        }
+      }
+
+      // Task 0 kept (done), Task 1 dropped (not done, not leaf)
+      expect(refreshed, hasLength(4));
+      expect(refreshed.map((t) => t.id), contains(todaysIds[0]));
+      expect(refreshed.map((t) => t.id), isNot(contains(todaysIds[1])));
+
+      // Backfill 1 replacement
+      final currentIds = refreshed.map((t) => t.id).toSet();
+      final leafIds = allLeaves.map((t) => t.id!).toList();
+      final blockedIds = await provider.getBlockedChildIds(leafIds);
+      final eligible = allLeaves.where(
+        (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
+      ).toList();
+      final replacements = provider.pickWeightedN(eligible, 1);
+      refreshed.addAll(replacements);
+
+      expect(refreshed, hasLength(5));
+    });
+
+    test('completedIds cleaned up when done task is deleted', () async {
+      final todaysIds = <int>[];
+      for (int i = 0; i < 5; i++) {
+        todaysIds.add(await db.insertTask(Task(name: 'Today $i')));
+      }
+
+      // Task 0 is done
+      final completedIds = {todaysIds[0]};
+
+      // Task 0 is deleted entirely
+      await db.deleteTaskWithRelationships(todaysIds[0]);
+
+      final allLeaves = await provider.getAllLeafTasks();
+      final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+      final refreshed = <Task>[];
+      for (final id in todaysIds) {
+        if (leafIdSet.contains(id)) {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) refreshed.add(fresh);
+        } else if (completedIds.contains(id)) {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) refreshed.add(fresh);
+        }
+      }
+
+      // Task 0 deleted — getTaskById returns null, not kept
+      expect(refreshed, hasLength(4));
+      expect(refreshed.map((t) => t.id), isNot(contains(todaysIds[0])));
+
+      // Clean completedIds (mirrors refreshSnapshots logic)
+      completedIds.removeWhere((id) => !refreshed.any((t) => t.id == id));
+      expect(completedIds, isEmpty);
+    });
+
+    test('unmarking done non-leaf task removes it and triggers backfill', () async {
+      // Scenario: 5 tasks, no extras. Mark task 0 done, make it non-leaf,
+      // then unmark it. On next refresh, it should be gone and backfill
+      // should attempt to fill the slot.
+      final todaysIds = <int>[];
+      for (int i = 0; i < 5; i++) {
+        todaysIds.add(await db.insertTask(Task(name: 'Today $i')));
+      }
+
+      // Step 1: mark Task 0 done
+      await db.markWorkedOn(todaysIds[0]);
+      await db.startTask(todaysIds[0]);
+      final completedIds = {todaysIds[0]};
+
+      // Step 2: add subtask to Task 0 → non-leaf
+      final sub = await db.insertTask(Task(name: 'Sub'));
+      await db.addRelationship(todaysIds[0], sub);
+
+      // Step 3: refresh — Task 0 kept because it's in completedIds
+      var allLeaves = await provider.getAllLeafTasks();
+      var leafIdSet = allLeaves.map((t) => t.id!).toSet();
+      var todaysTasks = <Task>[];
+      for (final id in todaysIds) {
+        if (leafIdSet.contains(id)) {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) todaysTasks.add(fresh);
+        } else if (completedIds.contains(id)) {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) todaysTasks.add(fresh);
+        }
+      }
+      expect(todaysTasks, hasLength(5));
+
+      // Step 4: user unmarks Task 0 → remove from completedIds
+      completedIds.remove(todaysIds[0]);
+
+      // Step 5: next refresh — Task 0 is non-leaf AND not completed
+      allLeaves = await provider.getAllLeafTasks();
+      leafIdSet = allLeaves.map((t) => t.id!).toSet();
+      final refreshed = <Task>[];
+      for (final t in todaysTasks) {
+        if (leafIdSet.contains(t.id)) {
+          final fresh = await db.getTaskById(t.id!);
+          if (fresh != null) refreshed.add(fresh);
+        } else if (completedIds.contains(t.id)) {
+          final fresh = await db.getTaskById(t.id!);
+          if (fresh != null) refreshed.add(fresh);
+        }
+      }
+
+      // Task 0 filtered out
+      expect(refreshed, hasLength(4));
+      expect(refreshed.map((t) => t.id), isNot(contains(todaysIds[0])));
+
+      // Backfill: only "sub" is an eligible leaf not already in list
+      final currentIds = refreshed.map((t) => t.id).toSet();
+      final leafIds = allLeaves.map((t) => t.id!).toList();
+      final blockedIds = await provider.getBlockedChildIds(leafIds);
+      final eligible = allLeaves.where(
+        (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
+      ).toList();
+      final replacements = provider.pickWeightedN(eligible, 1);
+      refreshed.addAll(replacements);
+
+      // Should backfill with "sub" (the only available leaf)
+      expect(refreshed, hasLength(5));
+      expect(refreshed.map((t) => t.id), contains(sub));
+    });
+
+    test('unmarking done non-leaf with no eligible replacements results in 4 tasks', () async {
+      // Same scenario but the subtask was worked on today (ineligible for pick)
+      final todaysIds = <int>[];
+      for (int i = 0; i < 5; i++) {
+        todaysIds.add(await db.insertTask(Task(name: 'Today $i')));
+      }
+
+      final completedIds = {todaysIds[0]};
+
+      // Add subtask to Task 0, mark subtask as worked on today
+      final sub = await db.insertTask(Task(name: 'Sub'));
+      await db.addRelationship(todaysIds[0], sub);
+      await db.markWorkedOn(sub);
+
+      // After unmark + refresh
+      final allLeaves = await provider.getAllLeafTasks();
+      final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+      completedIds.remove(todaysIds[0]);
+
+      final refreshed = <Task>[];
+      for (final id in todaysIds) {
+        if (leafIdSet.contains(id)) {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) refreshed.add(fresh);
+        } else if (completedIds.contains(id)) {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) refreshed.add(fresh);
+        }
+      }
+      expect(refreshed, hasLength(4));
+
+      // "sub" is a leaf but was worked on today → pickWeightedN excludes it
+      final currentIds = refreshed.map((t) => t.id).toSet();
+      final leafIds = allLeaves.map((t) => t.id!).toList();
+      final blockedIds = await provider.getBlockedChildIds(leafIds);
+      final eligible = allLeaves.where(
+        (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
+      ).toList();
+      final replacements = provider.pickWeightedN(eligible, 1);
+      refreshed.addAll(replacements);
+
+      // No eligible replacement → stays at 4
+      expect(refreshed, hasLength(4));
+    });
+  });
+
+  group('unstartTask on non-leaf', () {
+    test('unstartTask clears started_at on a task that has children', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+
+      // Start the task while it's still a leaf
+      await db.startTask(parentId);
+      var task = await db.getTaskById(parentId);
+      expect(task!.isStarted, isTrue);
+
+      // Add a child — now it's a non-leaf but still started
+      await db.addRelationship(parentId, childId);
+      task = await db.getTaskById(parentId);
+      expect(task!.isStarted, isTrue);
+
+      // Unstart should still work
+      await provider.unstartTask(parentId);
+      task = await db.getTaskById(parentId);
+      expect(task!.isStarted, isFalse);
+      expect(task.startedAt, isNull);
+    });
+  });
 }

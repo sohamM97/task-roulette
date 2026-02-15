@@ -41,17 +41,41 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       final completedIds = prefs.getStringList('todays5_completed') ?? [];
       if (savedIds.isNotEmpty) {
         final allLeaves = await provider.getAllLeafTasks();
+        final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+        final savedCompletedIds = completedIds.map(int.parse).toSet();
+        final db = DatabaseHelper();
         final idSet = savedIds.map(int.parse).toSet();
         final tasks = <Task>[];
         for (final id in idSet) {
-          final match = allLeaves.where((t) => t.id == id);
-          if (match.isNotEmpty) {
-            tasks.add(match.first);
+          if (leafIdSet.contains(id)) {
+            // Still a leaf — restore from fresh data
+            final match = allLeaves.where((t) => t.id == id);
+            if (match.isNotEmpty) {
+              tasks.add(match.first);
+            }
+          } else if (savedCompletedIds.contains(id)) {
+            // No longer a leaf but was done — keep for progress
+            final fresh = await db.getTaskById(id);
+            if (fresh != null) {
+              tasks.add(fresh);
+            }
           }
         }
+        // Backfill if some non-done tasks are no longer leaves
+        if (tasks.length < 5) {
+          final currentIds = tasks.map((t) => t.id).toSet();
+          final leafIds = allLeaves.map((t) => t.id!).toList();
+          final blockedIds = await provider.getBlockedChildIds(leafIds);
+          final eligible = allLeaves.where(
+            (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
+          ).toList();
+          final replacements = provider.pickWeightedN(
+            eligible, 5 - tasks.length,
+          );
+          tasks.addAll(replacements);
+        }
         // Only keep completed IDs for tasks still in the list
-        final validCompletedIds = completedIds
-            .map(int.parse)
+        final validCompletedIds = savedCompletedIds
             .where((id) => tasks.any((t) => t.id == id))
             .toSet();
         if (!mounted) return;
@@ -60,6 +84,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
           _completedIds.addAll(validCompletedIds);
           _loading = false;
         });
+        await _persist();
         return;
       }
     }
@@ -77,18 +102,48 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       await _generateNewSet();
       return;
     }
+    final provider = context.read<TaskProvider>();
+    final allLeaves = await provider.getAllLeafTasks();
+    final leafIdSet = allLeaves.map((t) => t.id!).toSet();
     final db = DatabaseHelper();
     final refreshed = <Task>[];
     for (final t in _todaysTasks) {
-      final fresh = await db.getTaskById(t.id!);
-      if (fresh != null) {
-        refreshed.add(fresh);
+      if (leafIdSet.contains(t.id)) {
+        // Still a leaf — re-fetch fresh data
+        final fresh = await db.getTaskById(t.id!);
+        if (fresh != null) {
+          refreshed.add(fresh);
+        }
+      } else if (_completedIds.contains(t.id)) {
+        // No longer a leaf but already done — keep for progress tracking
+        final fresh = await db.getTaskById(t.id!);
+        if (fresh != null) {
+          refreshed.add(fresh);
+        }
       }
     }
+    // Backfill replacements for non-done tasks that became non-leaf/deleted
+    if (refreshed.length < _todaysTasks.length) {
+      final currentIds = refreshed.map((t) => t.id).toSet();
+      final leafIds = allLeaves.map((t) => t.id!).toList();
+      final blockedIds = await provider.getBlockedChildIds(leafIds);
+      final eligible = allLeaves.where(
+        (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
+      ).toList();
+      final replacements = provider.pickWeightedN(
+        eligible, _todaysTasks.length - refreshed.length,
+      );
+      refreshed.addAll(replacements);
+    }
+    // Clean up completed IDs for tasks no longer in the list
+    _completedIds.removeWhere(
+      (id) => !refreshed.any((t) => t.id == id),
+    );
     if (!mounted) return;
     setState(() {
       _todaysTasks = refreshed;
     });
+    await _persist();
   }
 
   Future<void> _generateNewSet() async {
@@ -288,14 +343,39 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   /// Uncompletes a task that was marked done in Today's 5.
+  /// If the task is no longer a leaf, swaps it out immediately.
   Future<void> _handleUncomplete(Task task) async {
     final provider = context.read<TaskProvider>();
     final db = DatabaseHelper();
     await db.uncompleteTask(task.id!);
     if (!mounted) return;
-    setState(() {
-      _completedIds.remove(task.id!);
-    });
+
+    _completedIds.remove(task.id!);
+
+    // If the task is no longer a leaf, swap it out immediately
+    final allLeaves = await provider.getAllLeafTasks();
+    final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+    if (!leafIdSet.contains(task.id)) {
+      final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
+      if (idx >= 0) {
+        final currentIds = _todaysTasks.map((t) => t.id).toSet();
+        final leafIds = allLeaves.map((t) => t.id!).toList();
+        final blockedIds = await provider.getBlockedChildIds(leafIds);
+        final eligible = allLeaves.where(
+          (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
+        ).toList();
+        final replacements = provider.pickWeightedN(eligible, 1);
+        if (!mounted) return;
+        setState(() {
+          if (replacements.isNotEmpty) {
+            _todaysTasks[idx] = replacements.first;
+          } else {
+            _todaysTasks.removeAt(idx);
+          }
+        });
+      }
+    }
+
     await _persist();
     provider.loadRootTasks();
     if (!mounted) return;

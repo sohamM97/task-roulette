@@ -939,6 +939,25 @@ void main() {
       expect(leafIds, isNot(contains(p1)));
       expect(leafIds, isNot(contains(p2)));
     });
+
+    test('leaf becomes non-leaf when a child is added', () async {
+      final a = await db.insertTask(Task(name: 'Was a leaf'));
+      final b = await db.insertTask(Task(name: 'Another leaf'));
+
+      // Both are leaves initially
+      var leaves = await db.getAllLeafTasks();
+      var leafIds = leaves.map((t) => t.id).toSet();
+      expect(leafIds, contains(a));
+      expect(leafIds, contains(b));
+
+      // Add b as a child of a → a is no longer a leaf
+      await db.addRelationship(a, b);
+
+      leaves = await db.getAllLeafTasks();
+      leafIds = leaves.map((t) => t.id).toSet();
+      expect(leafIds, isNot(contains(a)));
+      expect(leafIds, contains(b));
+    });
   });
 
   group('getAllRelationships', () {

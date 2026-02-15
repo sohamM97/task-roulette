@@ -837,6 +837,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
                                 : () => _moveTask(task),
                             onRename: () => _renameTask(task),
                             onAddDependency: () => _addDependencyToTask(task),
+                            onStopWorking: task.isStarted
+                                ? () => _toggleStarted(task)
+                                : null,
                             hasStartedDescendant: provider.startedDescendantIds.contains(task.id),
                             isBlocked: provider.blockedTaskIds.contains(task.id),
                             blockedByName: provider.blockedByNames[task.id],

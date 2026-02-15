@@ -10,6 +10,7 @@ class TaskCard extends StatelessWidget {
   final VoidCallback? onMove;
   final VoidCallback? onRename;
   final VoidCallback? onAddDependency;
+  final VoidCallback? onStopWorking;
   final bool hasStartedDescendant;
   final bool isBlocked;
   final String? blockedByName;
@@ -25,6 +26,7 @@ class TaskCard extends StatelessWidget {
     this.onMove,
     this.onRename,
     this.onAddDependency,
+    this.onStopWorking,
     this.hasStartedDescendant = false,
     this.isBlocked = false,
     this.blockedByName,
@@ -84,6 +86,16 @@ class TaskCard extends StatelessWidget {
                   onTap: () {
                     Navigator.pop(bottomSheetContext);
                     onUnlink!();
+                  },
+                ),
+              if (onStopWorking != null)
+                ListTile(
+                  leading: Icon(Icons.stop_circle_outlined,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  title: const Text('Stop working'),
+                  onTap: () {
+                    Navigator.pop(bottomSheetContext);
+                    onStopWorking!();
                   },
                 ),
               ListTile(
