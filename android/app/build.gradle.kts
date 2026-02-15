@@ -56,6 +56,15 @@ android {
                 signingConfigs.getByName("debug")
             }
         }
+        debug {
+            // Use the same signing key as release so debug and release APKs
+            // can be installed over each other without data loss.
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
+        }
     }
 }
 
