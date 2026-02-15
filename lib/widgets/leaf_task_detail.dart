@@ -46,7 +46,7 @@ class LeafTaskDetail extends StatelessWidget {
     if (uri == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open link')),
+          const SnackBar(content: Text('Could not open link'), persist: false),
         );
       }
       return;
@@ -55,13 +55,13 @@ class LeafTaskDetail extends StatelessWidget {
       final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!launched && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open link')),
+          const SnackBar(content: Text('Could not open link'), persist: false),
         );
       }
     } catch (_) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open link')),
+          const SnackBar(content: Text('Could not open link'), persist: false),
         );
       }
     }

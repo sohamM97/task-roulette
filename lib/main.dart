@@ -40,6 +40,9 @@ class TaskRouletteApp extends StatelessWidget {
                 ),
                 clipBehavior: Clip.antiAlias,
               ),
+              snackBarTheme: const SnackBarThemeData(
+                behavior: SnackBarBehavior.floating,
+              ),
             ),
             darkTheme: ThemeData(
               colorScheme: ColorScheme.fromSeed(
@@ -52,6 +55,9 @@ class TaskRouletteApp extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                 ),
                 clipBehavior: Clip.antiAlias,
+              ),
+              snackBarTheme: const SnackBarThemeData(
+                behavior: SnackBarBehavior.floating,
               ),
             ),
             themeMode: themeProvider.themeMode,

@@ -129,6 +129,7 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
           },
         ),
         showCloseIcon: true,
+        persist: false,
         duration: const Duration(seconds: 5),
       ),
     );
@@ -164,6 +165,7 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
           },
         ),
         showCloseIcon: true,
+        persist: false,
         duration: const Duration(seconds: 5),
       ),
     );

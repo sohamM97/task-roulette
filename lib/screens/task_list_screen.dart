@@ -59,7 +59,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added ${names.length} tasks')),
+          SnackBar(content: Text('Added ${names.length} tasks'), persist: false),
         );
       }
     }
@@ -114,7 +114,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final success = await provider.linkChildToCurrent(selected.id!);
     if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot link: would create a cycle')),
+        const SnackBar(content: Text('Cannot link: would create a cycle'), persist: false),
       );
     }
   }
@@ -155,7 +155,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final success = await provider.addParentToTask(task.id!, selected.id!);
     if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot link: would create a cycle')),
+        const SnackBar(content: Text('Cannot link: would create a cycle'), persist: false),
       );
     }
   }
@@ -203,7 +203,20 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   Future<void> _workedOn(Task task) async {
     final provider = context.read<TaskProvider>();
+    await showCompletionAnimation(context);
+    if (!mounted) return;
     await provider.markWorkedOn(task.id!);
+    if (!task.isStarted) await provider.startTask(task.id!);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('"${task.name}" — nice progress! Back tomorrow.'),
+        showCloseIcon: true,
+        persist: false,
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
   Future<void> _moveTask(Task task) async {
@@ -242,7 +255,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final success = await provider.moveTask(task.id!, selected.id!);
     if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot move: would create a cycle')),
+        const SnackBar(content: Text('Cannot move: would create a cycle'), persist: false),
       );
     }
   }
@@ -302,6 +315,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           },
         ),
         showCloseIcon: true,
+        persist: false,
         duration: const Duration(seconds: 5),
       ),
     );
@@ -332,6 +346,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           onPressed: () => provider.unskipTask(task.id!),
         ),
         showCloseIcon: true,
+        persist: false,
         duration: const Duration(seconds: 5),
       ),
     );
@@ -356,6 +371,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           onPressed: () => provider.uncompleteTask(task.id!),
         ),
         showCloseIcon: true,
+        persist: false,
         duration: const Duration(seconds: 5),
       ),
     );
@@ -421,7 +437,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     if (picked == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No tasks to pick from')),
+          const SnackBar(content: Text('No tasks to pick from'), persist: false),
         );
       }
       return;
@@ -564,7 +580,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final success = await provider.addDependency(task.id!, selected.id!);
     if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot add: would create a cycle')),
+        const SnackBar(content: Text('Cannot add: would create a cycle'), persist: false),
       );
     }
   }
