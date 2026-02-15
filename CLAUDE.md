@@ -62,3 +62,4 @@ The goal of this app is **minimal cognitive load**. The user wants a quick place
 
 - Repo: sohamM97/task-roulette
 - Branch: main
+- **Releases:** Auto-created via GitHub Actions on tag push — just push the tag (e.g. `git tag v0.3.0 && git push origin v0.3.0`), don't manually create with `gh release create`.
