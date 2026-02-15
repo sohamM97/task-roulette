@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/task.dart';
+import '../theme/app_colors.dart';
+import '../utils/display_utils.dart';
 
 class TaskCard extends StatelessWidget {
   final Task task;
@@ -14,7 +16,6 @@ class TaskCard extends StatelessWidget {
   final bool hasStartedDescendant;
   final bool isBlocked;
   final String? blockedByName;
-  final int indicatorStyle;
 
   const TaskCard({
     super.key,
@@ -30,7 +31,6 @@ class TaskCard extends StatelessWidget {
     this.hasStartedDescendant = false,
     this.isBlocked = false,
     this.blockedByName,
-    this.indicatorStyle = 2,
   });
 
   void _showDeleteBottomSheet(BuildContext context) {
@@ -121,39 +121,10 @@ class TaskCard extends StatelessWidget {
     );
   }
 
-  static const _cardColors = [
-    Color(0xFFE8DEF8), // purple
-    Color(0xFFD0E8FF), // blue
-    Color(0xFFDCEDC8), // green
-    Color(0xFFFFE0B2), // orange
-    Color(0xFFF8BBD0), // pink
-    Color(0xFFB2EBF2), // cyan
-    Color(0xFFFFF9C4), // yellow
-    Color(0xFFD1C4E9), // lavender
-  ];
-
-  static const _cardColorsDark = [
-    Color(0xFF352E4D), // purple
-    Color(0xFF2E354D), // blue
-    Color(0xFF2E3E35), // sage
-    Color(0xFF3E3530), // warm grey
-    Color(0xFF3E2E38), // mauve
-    Color(0xFF2E3E3E), // teal
-    Color(0xFF38362E), // taupe
-    Color(0xFF302E45), // slate
-  ];
-
   Color _cardColor(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final colors = isDark ? _cardColorsDark : _cardColors;
-    return colors[(task.id ?? 0) % colors.length];
+    return AppColors.cardColor(context, task.id ?? 0);
   }
 
-  String _displayUrl(String url) {
-    var display = url.replaceFirst(RegExp(r'^https?://'), '');
-    if (display.endsWith('/')) display = display.substring(0, display.length - 1);
-    return display.length > 30 ? '${display.substring(0, 30)}...' : display;
-  }
 
   bool get _showIndicator => task.isStarted || hasStartedDescendant;
 
@@ -177,20 +148,6 @@ class TaskCard extends StatelessWidget {
           onLongPress: () => _showDeleteBottomSheet(context),
           child: Stack(
             children: [
-              // Style 1: colored left border strip
-              if (showIndicator && indicatorStyle == 1)
-                Positioned(
-                  left: 0,
-                  top: 8,
-                  bottom: 8,
-                  child: Container(
-                    width: 4,
-                    decoration: BoxDecoration(
-                      color: indicatorColor,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
               Center(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -214,7 +171,7 @@ class TaskCard extends StatelessWidget {
                               const SizedBox(width: 3),
                               Flexible(
                                 child: Text(
-                                  _displayUrl(task.url!),
+                                  displayUrl(task.url!, maxLength: 30),
                                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                     color: Theme.of(context).colorScheme.primary,
                                     fontSize: 11,
@@ -259,19 +216,7 @@ class TaskCard extends StatelessWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (showIndicator && indicatorStyle == 0)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 2),
-                          child: Container(
-                            width: 10,
-                            height: 10,
-                            decoration: BoxDecoration(
-                              color: indicatorColor,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ),
-                      if (showIndicator && indicatorStyle == 2)
+                      if (showIndicator)
                         Icon(
                           Icons.play_circle_filled,
                           size: 18,

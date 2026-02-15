@@ -11,16 +11,15 @@ class DatabaseHelper {
   factory DatabaseHelper() => _instance;
   DatabaseHelper._internal();
 
-  Database? _database;
+  Future<Database>? _dbFuture;
 
   /// Override in tests to use inMemoryDatabasePath instead of the real DB.
   @visibleForTesting
   static String? testDatabasePath;
 
-  Future<Database> get database async {
-    if (_database != null) return _database!;
-    _database = await _initDatabase();
-    return _database!;
+  Future<Database> get database {
+    _dbFuture ??= _initDatabase();
+    return _dbFuture!;
   }
 
   Future<Database> _initDatabase() async {
@@ -47,6 +46,9 @@ class DatabaseHelper {
     return openDatabase(
       path,
       version: 11,
+      onConfigure: (db) async {
+        await db.execute('PRAGMA foreign_keys = ON');
+      },
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE tasks (
@@ -186,15 +188,21 @@ class DatabaseHelper {
   Future<void> importDatabase(String sourcePath) async {
     await _validateBackup(sourcePath);
     final dbPath = await getDatabasePath();
-    await _database?.close();
-    _database = null;
+    if (_dbFuture != null) {
+      final db = await _dbFuture!;
+      await db.close();
+    }
+    _dbFuture = null;
     await File(sourcePath).copy(dbPath);
   }
 
   @visibleForTesting
   Future<void> reset() async {
-    await _database?.close();
-    _database = null;
+    if (_dbFuture != null) {
+      final db = await _dbFuture!;
+      await db.close();
+    }
+    _dbFuture = null;
   }
 
   /// Shared conversion: maps DB rows to Task objects.
@@ -486,6 +494,7 @@ class DatabaseHelper {
       case 'monthly':
         offset = const Duration(days: 30);
       default:
+        assert(false, 'Unknown repeat interval: $repeatInterval');
         offset = const Duration(days: 1);
     }
     final nextDue = now.add(offset).millisecondsSinceEpoch;
