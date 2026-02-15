@@ -380,74 +380,74 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       );
     }
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header — matches All Tasks branding
-          Row(
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Task Roulette',
-                    style: const TextStyle(
-                      fontFamily: 'Outfit',
-                      fontSize: 30,
-                      fontWeight: FontWeight.w400,
-                      letterSpacing: -0.3,
-                    ),
-                  ),
-                  Text(
-                    "Today's 5",
-                    style: textTheme.titleMedium?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
+    return Scaffold(
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Task Roulette',
+              style: const TextStyle(
+                fontFamily: 'Outfit',
+                fontSize: 30,
+                fontWeight: FontWeight.w400,
+                letterSpacing: -0.3,
               ),
-              const Spacer(),
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: _generateNewSet,
-                tooltip: 'New set',
+            ),
+            Text(
+              "Today's 5",
+              style: textTheme.titleSmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          // Progress bar
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: totalCount > 0 ? completedCount / totalCount : 0,
-              minHeight: 8,
-              backgroundColor: colorScheme.surfaceContainerHighest,
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            completedCount == 0
-                ? 'Completing even 1 is a win!'
-                : '$completedCount of $totalCount done',
-            style: textTheme.bodySmall?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 16),
-          // Task list
-          Expanded(
-            child: ListView.builder(
-              itemCount: _todaysTasks.length,
-              itemBuilder: (context, index) {
-                final task = _todaysTasks[index];
-                final isDone = _completedIds.contains(task.id);
-                return _buildTaskCard(context, task, index, isDone);
-              },
-            ),
+          ],
+        ),
+        toolbarHeight: 72,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _generateNewSet,
+            tooltip: 'New set',
           ),
         ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Progress bar
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: totalCount > 0 ? completedCount / totalCount : 0,
+                minHeight: 8,
+                backgroundColor: colorScheme.surfaceContainerHighest,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              completedCount == 0
+                  ? 'Completing even 1 is a win!'
+                  : '$completedCount of $totalCount done',
+              style: textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Task list
+            Expanded(
+              child: ListView.builder(
+                itemCount: _todaysTasks.length,
+                itemBuilder: (context, index) {
+                  final task = _todaysTasks[index];
+                  final isDone = _completedIds.contains(task.id);
+                  return _buildTaskCard(context, task, index, isDone);
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
