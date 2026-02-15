@@ -152,13 +152,20 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
 
     final leafIds = allLeaves.map((t) => t.id!).toList();
     final blockedIds = await provider.getBlockedChildIds(leafIds);
-    final eligible = allLeaves.where((t) => !blockedIds.contains(t.id)).toList();
 
-    final picked = provider.pickWeightedN(eligible, 5);
+    // Keep done tasks, only replace undone ones
+    final kept = _todaysTasks.where((t) => _completedIds.contains(t.id)).toList();
+    final keptIds = kept.map((t) => t.id).toSet();
+
+    final eligible = allLeaves.where(
+      (t) => !blockedIds.contains(t.id) && !keptIds.contains(t.id),
+    ).toList();
+
+    final slotsToFill = 5 - kept.length;
+    final picked = provider.pickWeightedN(eligible, slotsToFill);
     if (!mounted) return;
     setState(() {
-      _todaysTasks = picked;
-      _completedIds.clear();
+      _todaysTasks = [...kept, ...picked];
       _loading = false;
     });
     await _persist();
@@ -350,7 +357,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await db.uncompleteTask(task.id!);
     if (!mounted) return;
 
-    _completedIds.remove(task.id!);
+    setState(() {
+      _completedIds.remove(task.id!);
+    });
 
     // If the task is no longer a leaf, swap it out immediately
     final allLeaves = await provider.getAllLeafTasks();
@@ -388,6 +397,55 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         duration: const Duration(seconds: 3),
       ),
     );
+  }
+
+  Future<void> _confirmNewSet() async {
+    final undoneCount = _todaysTasks.where(
+      (t) => !_completedIds.contains(t.id),
+    ).length;
+    final message = undoneCount == _todaysTasks.length
+        ? 'Replace all tasks with a fresh set of 5?'
+        : 'Replace $undoneCount undone ${undoneCount == 1 ? 'task' : 'tasks'} with new picks? Done tasks will stay.';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('New set?'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Replace'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _generateNewSet();
+  }
+
+  Future<void> _confirmSwapTask(int index) async {
+    final task = _todaysTasks[index];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Swap task?'),
+        content: Text('Replace "${task.name}" with another task?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Swap'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _swapTask(index);
   }
 
   Future<void> _swapTask(int index) async {
@@ -484,11 +542,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         ),
         toolbarHeight: 72,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _generateNewSet,
-            tooltip: 'New set',
-          ),
+          if (completedCount < totalCount)
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _confirmNewSet,
+              tooltip: 'New set',
+            ),
         ],
       ),
       body: Padding(
@@ -581,7 +640,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
               ? null
               : IconButton(
                   icon: const Icon(Icons.shuffle, size: 20),
-                  onPressed: () => _swapTask(index),
+                  onPressed: () => _confirmSwapTask(index),
                   tooltip: 'Swap task',
                 ),
           onTap: isDone

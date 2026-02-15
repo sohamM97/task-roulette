@@ -849,6 +849,92 @@ void main() {
     });
   });
 
+  group("Today's 5 new set preserves done tasks", () {
+    test('new set keeps done tasks and only replaces undone ones', () async {
+      // Create 8 leaf tasks (5 for today + 3 extras)
+      final todaysIds = <int>[];
+      for (int i = 0; i < 5; i++) {
+        todaysIds.add(await db.insertTask(Task(name: 'Today $i')));
+      }
+      final extras = <int>[];
+      for (int i = 0; i < 3; i++) {
+        extras.add(await db.insertTask(Task(name: 'Extra $i')));
+      }
+
+      // Mark tasks 0 and 1 as done
+      final completedIds = {todaysIds[0], todaysIds[1]};
+
+      // Simulate _generateNewSet logic: keep done, replace undone
+      final allLeaves = await provider.getAllLeafTasks();
+      final leafIds = allLeaves.map((t) => t.id!).toList();
+      final blockedIds = await provider.getBlockedChildIds(leafIds);
+
+      final todaysTasks = <Task>[];
+      for (final id in todaysIds) {
+        final t = await db.getTaskById(id);
+        if (t != null) todaysTasks.add(t);
+      }
+
+      final kept = todaysTasks.where((t) => completedIds.contains(t.id)).toList();
+      final keptIds = kept.map((t) => t.id).toSet();
+
+      final eligible = allLeaves.where(
+        (t) => !blockedIds.contains(t.id) && !keptIds.contains(t.id),
+      ).toList();
+
+      final slotsToFill = 5 - kept.length;
+      final picked = provider.pickWeightedN(eligible, slotsToFill);
+
+      final newSet = [...kept, ...picked];
+
+      // Done tasks preserved
+      expect(newSet, hasLength(5));
+      expect(newSet.map((t) => t.id), contains(todaysIds[0]));
+      expect(newSet.map((t) => t.id), contains(todaysIds[1]));
+
+      // Undone tasks (2, 3, 4) should NOT be in the new set
+      // (replaced by picks from eligible pool)
+      final newIds = newSet.map((t) => t.id).toSet();
+      // The 3 new picks come from eligible pool (excludes kept)
+      final newPicks = newIds.difference(keptIds);
+      expect(newPicks, hasLength(3));
+    });
+
+    test('new set with no tasks done replaces all', () async {
+      final todaysIds = <int>[];
+      for (int i = 0; i < 5; i++) {
+        todaysIds.add(await db.insertTask(Task(name: 'Today $i')));
+      }
+      for (int i = 0; i < 3; i++) {
+        await db.insertTask(Task(name: 'Extra $i'));
+      }
+
+      // No tasks done
+      final completedIds = <int>{};
+
+      final allLeaves = await provider.getAllLeafTasks();
+      final leafIds = allLeaves.map((t) => t.id!).toList();
+      final blockedIds = await provider.getBlockedChildIds(leafIds);
+
+      final todaysTasks = <Task>[];
+      for (final id in todaysIds) {
+        final t = await db.getTaskById(id);
+        if (t != null) todaysTasks.add(t);
+      }
+
+      final kept = todaysTasks.where((t) => completedIds.contains(t.id)).toList();
+      expect(kept, isEmpty);
+
+      final eligible = allLeaves.where(
+        (t) => !blockedIds.contains(t.id),
+      ).toList();
+      final picked = provider.pickWeightedN(eligible, 5);
+
+      // Full replacement — 5 new picks
+      expect(picked, hasLength(5));
+    });
+  });
+
   group('unstartTask on non-leaf', () {
     test('unstartTask clears started_at on a task that has children', () async {
       final parentId = await db.insertTask(Task(name: 'Parent'));
