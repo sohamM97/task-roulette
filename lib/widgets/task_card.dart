@@ -251,14 +251,32 @@ class TaskCard extends StatelessWidget {
                   ),
                 ),
               ),
-              // Top-left icons: priority flag + quick task bolt
-              if (task.isHighPriority || task.isQuickTask)
+              // Top-left icons: in-progress, priority flag, quick task bolt
+              if (task.isHighPriority || task.isQuickTask || showIndicator)
                 Positioned(
                   left: 6,
                   top: 6,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      if (showIndicator && indicatorStyle == 0)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 2),
+                          child: Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: indicatorColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                      if (showIndicator && indicatorStyle == 2)
+                        Icon(
+                          Icons.play_circle_filled,
+                          size: 18,
+                          color: indicatorColor,
+                        ),
                       if (task.isHighPriority)
                         Icon(
                           Icons.flag,
@@ -272,31 +290,6 @@ class TaskCard extends StatelessWidget {
                           color: Colors.amber,
                         ),
                     ],
-                  ),
-                ),
-              // Style 0: dot in top-right corner
-              if (showIndicator && indicatorStyle == 0)
-                Positioned(
-                  right: 8,
-                  top: 8,
-                  child: Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: indicatorColor,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-              // Style 2: play icon in top-right corner
-              if (showIndicator && indicatorStyle == 2)
-                Positioned(
-                  right: 6,
-                  top: 6,
-                  child: Icon(
-                    Icons.play_circle_filled,
-                    size: 18,
-                    color: indicatorColor,
                   ),
                 ),
             ],

@@ -92,6 +92,7 @@ class _AppShellState extends State<AppShell> {
     return Scaffold(
       body: PageView(
         controller: _pageController,
+        physics: const _LessAggressivePagePhysics(),
         onPageChanged: (index) {
           if (index == 0) {
             _todaysFiveKey.currentState?.refreshSnapshots();
@@ -132,4 +133,19 @@ class _AppShellState extends State<AppShell> {
       ),
     );
   }
+}
+
+/// PageScrollPhysics with a higher drag start threshold so small
+/// horizontal movements (common with thumb taps) don't steal taps
+/// from child widgets like task cards.
+class _LessAggressivePagePhysics extends PageScrollPhysics {
+  const _LessAggressivePagePhysics({super.parent});
+
+  @override
+  _LessAggressivePagePhysics applyTo(ScrollPhysics? ancestor) {
+    return _LessAggressivePagePhysics(parent: buildParent(ancestor));
+  }
+
+  @override
+  double get dragStartDistanceMotionThreshold => 24.0;
 }
