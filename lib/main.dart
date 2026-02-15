@@ -79,12 +79,27 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _currentIndex = 0;
   final _todaysFiveKey = GlobalKey<TodaysFiveScreenState>();
+  final _pageController = PageController();
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
+      body: PageView(
+        controller: _pageController,
+        onPageChanged: (index) {
+          if (index == 0) {
+            _todaysFiveKey.currentState?.refreshSnapshots();
+          }
+          setState(() {
+            _currentIndex = index;
+          });
+        },
         children: [
           TodaysFiveScreen(key: _todaysFiveKey),
           const TaskListScreen(),
@@ -96,9 +111,11 @@ class _AppShellState extends State<AppShell> {
           if (index == 0) {
             _todaysFiveKey.currentState?.refreshSnapshots();
           }
-          setState(() {
-            _currentIndex = index;
-          });
+          _pageController.animateToPage(
+            index,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+          );
         },
         destinations: const [
           NavigationDestination(
