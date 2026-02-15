@@ -206,6 +206,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.markWorkedOn(task.id!);
+    if (!task.isStarted) await provider.startTask(task.id!);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(

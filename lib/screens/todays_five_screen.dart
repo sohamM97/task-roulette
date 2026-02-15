@@ -224,6 +224,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await showCompletionAnimation(context);
     if (!mounted) return;
     await db.markWorkedOn(task.id!);
+    if (!task.isStarted) await db.startTask(task.id!);
     setState(() {
       _completedIds.add(task.id!);
     });
