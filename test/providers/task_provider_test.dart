@@ -339,6 +339,140 @@ void main() {
     });
   });
 
+  group('deleteTask and undo', () {
+    test('deleteTask removes task from current list', () async {
+      final id = await db.insertTask(Task(name: 'Doomed'));
+
+      await provider.loadRootTasks();
+      expect(provider.tasks.map((t) => t.id), contains(id));
+
+      await provider.deleteTask(id);
+      expect(provider.tasks.map((t) => t.id), isNot(contains(id)));
+    });
+
+    test('restoreTask brings back deleted task', () async {
+      final id = await db.insertTask(Task(name: 'Resurrected'));
+
+      await provider.loadRootTasks();
+      final result = await provider.deleteTask(id);
+
+      // Task gone
+      expect(provider.tasks.map((t) => t.id), isNot(contains(id)));
+
+      // Undo
+      await provider.restoreTask(
+        result.task, result.parentIds, result.childIds,
+        dependsOnIds: result.dependsOnIds,
+        dependedByIds: result.dependedByIds,
+      );
+
+      expect(provider.tasks.map((t) => t.id), contains(id));
+    });
+
+    test('delete+undo preserves parent-child relationships', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      // Delete child
+      final result = await provider.deleteTask(childId);
+      expect(provider.tasks, isEmpty);
+
+      // Undo
+      await provider.restoreTask(
+        result.task, result.parentIds, result.childIds,
+        dependsOnIds: result.dependsOnIds,
+        dependedByIds: result.dependedByIds,
+      );
+
+      expect(provider.tasks.map((t) => t.id), contains(childId));
+    });
+
+    test('delete+undo preserves dependencies', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a); // B depends on A
+
+      await provider.loadRootTasks();
+      final result = await provider.deleteTask(b);
+
+      await provider.restoreTask(
+        result.task, result.parentIds, result.childIds,
+        dependsOnIds: result.dependsOnIds,
+        dependedByIds: result.dependedByIds,
+      );
+
+      final deps = await provider.getDependencies(b);
+      expect(deps.map((t) => t.id), contains(a));
+    });
+  });
+
+  group('navigateToTask', () {
+    test('navigateToTask sets currentParent and clears stack', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final child = (await db.getAllTasks()).firstWhere((t) => t.id == childId);
+      await provider.navigateToTask(child);
+
+      expect(provider.currentParent!.id, childId);
+    });
+
+    test('navigateBack after navigateToTask returns to root', () async {
+      final id = await db.insertTask(Task(name: 'Deep task'));
+
+      await provider.loadRootTasks();
+      final task = provider.tasks.firstWhere((t) => t.id == id);
+      await provider.navigateToTask(task);
+
+      expect(provider.currentParent!.id, id);
+
+      await provider.navigateBack();
+      expect(provider.currentParent, isNull);
+    });
+  });
+
+  group('deep navigation', () {
+    test('navigateInto 3 levels deep then back to root', () async {
+      final a = await db.insertTask(Task(name: 'Level 1'));
+      final b = await db.insertTask(Task(name: 'Level 2'));
+      final c = await db.insertTask(Task(name: 'Level 3'));
+      await db.addRelationship(a, b);
+      await db.addRelationship(b, c);
+
+      await provider.loadRootTasks();
+      // Navigate: root → a → b → c
+      await provider.navigateInto(provider.tasks.firstWhere((t) => t.id == a));
+      expect(provider.currentParent!.id, a);
+      await provider.navigateInto(provider.tasks.firstWhere((t) => t.id == b));
+      expect(provider.currentParent!.id, b);
+      await provider.navigateInto(provider.tasks.firstWhere((t) => t.id == c));
+      expect(provider.currentParent!.id, c);
+
+      // Navigate back: c → b → a → root
+      await provider.navigateBack();
+      expect(provider.currentParent!.id, b);
+      await provider.navigateBack();
+      expect(provider.currentParent!.id, a);
+      await provider.navigateBack();
+      expect(provider.currentParent, isNull);
+    });
+
+    test('navigateBack at root is a no-op', () async {
+      await provider.loadRootTasks();
+      expect(provider.currentParent, isNull);
+
+      await provider.navigateBack();
+      expect(provider.currentParent, isNull);
+    });
+  });
+
   group('renameTask', () {
     test('updates currentParent name immediately on leaf view', () async {
       final leafId = await db.insertTask(Task(name: 'Old name'));

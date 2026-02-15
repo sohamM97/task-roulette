@@ -787,6 +787,186 @@ void main() {
     });
   });
 
+  group('hasPath (cycle detection)', () {
+    test('returns false when no path exists', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      expect(await db.hasPath(a, b), isFalse);
+      expect(await db.hasPath(b, a), isFalse);
+    });
+
+    test('returns true for direct parent-child', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      await db.addRelationship(a, b);
+      expect(await db.hasPath(a, b), isTrue);
+      expect(await db.hasPath(b, a), isFalse);
+    });
+
+    test('returns true for transitive path A→B→C', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final c = await db.insertTask(Task(name: 'C'));
+      await db.addRelationship(a, b);
+      await db.addRelationship(b, c);
+      expect(await db.hasPath(a, c), isTrue);
+      expect(await db.hasPath(c, a), isFalse);
+    });
+
+    test('returns true for deep path A→B→C→D→E', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final c = await db.insertTask(Task(name: 'C'));
+      final d = await db.insertTask(Task(name: 'D'));
+      final e = await db.insertTask(Task(name: 'E'));
+      await db.addRelationship(a, b);
+      await db.addRelationship(b, c);
+      await db.addRelationship(c, d);
+      await db.addRelationship(d, e);
+      expect(await db.hasPath(a, e), isTrue);
+      expect(await db.hasPath(a, d), isTrue);
+      expect(await db.hasPath(e, a), isFalse);
+    });
+
+    test('multi-parent DAG: path exists through either parent', () async {
+      //   A
+      //  / \
+      // B   C
+      //  \ /
+      //   D
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final c = await db.insertTask(Task(name: 'C'));
+      final d = await db.insertTask(Task(name: 'D'));
+      await db.addRelationship(a, b);
+      await db.addRelationship(a, c);
+      await db.addRelationship(b, d);
+      await db.addRelationship(c, d);
+      expect(await db.hasPath(a, d), isTrue);
+      expect(await db.hasPath(b, d), isTrue);
+      expect(await db.hasPath(c, d), isTrue);
+      expect(await db.hasPath(d, a), isFalse);
+    });
+
+    test('returns false for self (no self-loop)', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      expect(await db.hasPath(a, a), isFalse);
+    });
+
+    test('returns false for unrelated branches', () async {
+      // A→B, C→D (separate branches)
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final c = await db.insertTask(Task(name: 'C'));
+      final d = await db.insertTask(Task(name: 'D'));
+      await db.addRelationship(a, b);
+      await db.addRelationship(c, d);
+      expect(await db.hasPath(a, d), isFalse);
+      expect(await db.hasPath(c, b), isFalse);
+    });
+  });
+
+  group('getAllLeafTasks', () {
+    test('returns tasks with no active children', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      final standalone = await db.insertTask(Task(name: 'Standalone'));
+      await db.addRelationship(parent, child);
+
+      final leaves = await db.getAllLeafTasks();
+      final leafIds = leaves.map((t) => t.id).toSet();
+      // Child and Standalone are leaves; Parent is not
+      expect(leafIds, contains(child));
+      expect(leafIds, contains(standalone));
+      expect(leafIds, isNot(contains(parent)));
+    });
+
+    test('parent becomes leaf when all children are completed', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      var leaves = await db.getAllLeafTasks();
+      expect(leaves.map((t) => t.id), isNot(contains(parent)));
+
+      await db.completeTask(child);
+
+      leaves = await db.getAllLeafTasks();
+      expect(leaves.map((t) => t.id), contains(parent));
+    });
+
+    test('parent becomes leaf when all children are skipped', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.skipTask(child);
+
+      final leaves = await db.getAllLeafTasks();
+      expect(leaves.map((t) => t.id), contains(parent));
+    });
+
+    test('excludes completed and skipped tasks from leaves', () async {
+      final a = await db.insertTask(Task(name: 'Active'));
+      final b = await db.insertTask(Task(name: 'Completed'));
+      final c = await db.insertTask(Task(name: 'Skipped'));
+      await db.completeTask(b);
+      await db.skipTask(c);
+
+      final leaves = await db.getAllLeafTasks();
+      final leafIds = leaves.map((t) => t.id).toSet();
+      expect(leafIds, contains(a));
+      expect(leafIds, isNot(contains(b)));
+      expect(leafIds, isNot(contains(c)));
+    });
+
+    test('returns empty when no tasks exist', () async {
+      final leaves = await db.getAllLeafTasks();
+      expect(leaves, isEmpty);
+    });
+
+    test('multi-parent leaf: task with two parents but no children', () async {
+      final p1 = await db.insertTask(Task(name: 'Parent 1'));
+      final p2 = await db.insertTask(Task(name: 'Parent 2'));
+      final child = await db.insertTask(Task(name: 'Shared child'));
+      await db.addRelationship(p1, child);
+      await db.addRelationship(p2, child);
+
+      final leaves = await db.getAllLeafTasks();
+      final leafIds = leaves.map((t) => t.id).toSet();
+      expect(leafIds, contains(child));
+      // Both parents have active children, so they are not leaves
+      expect(leafIds, isNot(contains(p1)));
+      expect(leafIds, isNot(contains(p2)));
+    });
+  });
+
+  group('getAllRelationships', () {
+    test('returns all active relationships', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final c = await db.insertTask(Task(name: 'C'));
+      await db.addRelationship(a, b);
+      await db.addRelationship(b, c);
+
+      final rels = await db.getAllRelationships();
+      expect(rels, hasLength(2));
+    });
+
+    test('excludes relationships where parent or child is completed', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final c = await db.insertTask(Task(name: 'C'));
+      await db.addRelationship(a, b);
+      await db.addRelationship(b, c);
+      await db.completeTask(b);
+
+      final rels = await db.getAllRelationships();
+      // Both relationships involve B, which is completed
+      expect(rels, isEmpty);
+    });
+  });
+
   group('deleteTaskAndReparentChildren', () {
     test('reparents children to grandparent', () async {
       // Grandparent → Parent → Child
