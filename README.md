@@ -4,7 +4,7 @@
 
 <h1 align="center">Task Roulette</h1>
 
-<p align="center">A DAG-based task manager built with Flutter. Tasks can have multiple parents and children, forming a directed acyclic graph. Navigate the hierarchy and randomly pick a task at any level.</p>
+<p align="center">A task manager that helps you stop overthinking and start doing. Organize tasks into flexible groups, let the app pick what to work on next, and track your daily progress — all designed to reduce decision fatigue.</p>
 
 > **Note:** This app was vibe-coded — planned and ideated by a human, implemented with AI assistance.
 
@@ -20,11 +20,17 @@ flutter test
 
 ## Features
 
-- Hierarchical task management (DAG structure)
-- Random task selection with "Go Deeper" for recursive picks
-- SQLite persistence
-- Material 3 UI
-- Supported platforms: Linux desktop and Android
+- **Flexible task groups** — tasks can live under multiple groups, so you organize things the way you think
+- **Today's 5** — a daily focus list of 5 tasks, picked by weighted random to surface what matters
+- **Random pick** — can't decide what to do? Let the app choose for you, with "Go Deeper" for drilling into subtasks
+- **Start working / Done today** — track what you're actively working on and what you finished today
+- **Priority & difficulty** — tag tasks to influence how often they get picked
+- **Quick task & brain dump** — rapidly capture ideas without worrying about where they go
+- **Search** — find any task instantly from anywhere in the app
+- **Soft dependencies** — mark tasks as "do after..." to gently guide your order without hard blocking
+- **Export / import** — back up your data anytime, restore on any device
+- **Dark mode** — easy on the eyes, with colorful task cards
+- **Supported platforms:** Android
 
 ## Setup
 

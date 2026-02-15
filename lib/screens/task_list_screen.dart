@@ -813,8 +813,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
                     : LayoutBuilder(
                     builder: (context, constraints) {
                       final columns = _crossAxisCount(constraints.maxWidth);
-                      return GridView.builder(
+                      return SingleChildScrollView(
                         padding: const EdgeInsets.all(8),
+                        child: GridView.builder(
+                        physics: const NeverScrollableScrollPhysics(),
+                        shrinkWrap: true,
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: columns,
                           childAspectRatio: _childAspectRatio(columns),
@@ -845,6 +848,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                             blockedByName: provider.blockedByNames[task.id],
                           );
                         },
+                      ),
                       );
                     },
                   ),
