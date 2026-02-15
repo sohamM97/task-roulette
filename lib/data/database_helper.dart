@@ -122,6 +122,16 @@ class DatabaseHelper {
           await db.execute('CREATE INDEX idx_task_dependencies_depends_on_id ON task_dependencies(depends_on_id)');
         }
         if (oldVersion < 8) {
+          // Columns were added to the v6 onCreate retroactively, so DBs at v6/v7
+          // won't have them. Add if missing before the UPDATE.
+          final cols = await db.rawQuery('PRAGMA table_info(tasks)');
+          final colNames = cols.map((c) => c['name'] as String).toSet();
+          if (!colNames.contains('priority')) {
+            await db.execute('ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0');
+          }
+          if (!colNames.contains('difficulty')) {
+            await db.execute('ALTER TABLE tasks ADD COLUMN difficulty INTEGER NOT NULL DEFAULT 0');
+          }
           // Remap 3-level priority (0=Low,1=Medium,2=High) to 2-level (0=Normal,1=High)
           await db.execute('UPDATE tasks SET priority = CASE WHEN priority >= 2 THEN 1 ELSE 0 END');
         }
