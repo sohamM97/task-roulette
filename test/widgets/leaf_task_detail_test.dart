@@ -14,6 +14,7 @@ void main() {
     ValueChanged<int>? onUpdatePriority,
     ValueChanged<int>? onUpdateQuickTask,
     VoidCallback? onWorkedOn,
+    VoidCallback? onUndoWorkedOn,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -27,6 +28,7 @@ void main() {
           onUpdatePriority: onUpdatePriority ?? (_) {},
           onUpdateQuickTask: onUpdateQuickTask ?? (_) {},
           onWorkedOn: onWorkedOn,
+          onUndoWorkedOn: onUndoWorkedOn,
         ),
       ),
     );
@@ -61,20 +63,27 @@ void main() {
       expect(renamed, isTrue);
     });
 
-    testWidgets('does not show Add link placeholder when no URL', (tester) async {
+    testWidgets('shows add_link icon when no URL', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
       ));
 
-      expect(find.text('Add link'), findsNothing);
+      expect(find.byIcon(Icons.add_link), findsOneWidget);
+      expect(find.byIcon(Icons.link), findsNothing);
     });
 
-    testWidgets('URL row hidden when no URL', (tester) async {
+    testWidgets('shows link icon when URL is set', (tester) async {
       await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+        task: Task(
+          id: 1,
+          name: 'Task',
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          url: 'https://example.com',
+        ),
       ));
 
-      expect(find.byIcon(Icons.link), findsNothing);
+      expect(find.byIcon(Icons.link), findsOneWidget);
+      expect(find.byIcon(Icons.add_link), findsNothing);
     });
 
     testWidgets('"Done for good!" fires onDone callback', (tester) async {
@@ -88,15 +97,15 @@ void main() {
       expect(doneTapped, isTrue);
     });
 
-    testWidgets('shows Start working button when task is not started', (tester) async {
+    testWidgets('shows Start button when task is not started', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
       ));
 
-      expect(find.text('Start working'), findsOneWidget);
+      expect(find.text('Start'), findsOneWidget);
     });
 
-    testWidgets('shows Started chip when task is started', (tester) async {
+    testWidgets('shows Started text when task is started', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(
           id: 1,
@@ -107,7 +116,7 @@ void main() {
       ));
 
       expect(find.textContaining('Started'), findsOneWidget);
-      expect(find.text('Start working'), findsNothing);
+      expect(find.text('Start'), findsNothing);
     });
 
     testWidgets('shows "Started just now" inside chip for recently started task', (tester) async {
@@ -137,14 +146,14 @@ void main() {
       expect(find.textContaining('2h ago'), findsOneWidget);
     });
 
-    testWidgets('Start working chip fires onToggleStarted', (tester) async {
+    testWidgets('Start button fires onToggleStarted', (tester) async {
       var toggled = false;
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
         onToggleStarted: () => toggled = true,
       ));
 
-      await tester.tap(find.text('Start working'));
+      await tester.tap(find.text('Start'));
       expect(toggled, isTrue);
     });
 
@@ -164,13 +173,13 @@ void main() {
       expect(toggled, isTrue);
     });
 
-    testWidgets('shows Skip as plain TextButton without icon', (tester) async {
+    testWidgets('shows Skip as TextButton with skip_next icon', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
       ));
 
       expect(find.text('Skip'), findsOneWidget);
-      expect(find.byIcon(Icons.not_interested), findsNothing);
+      expect(find.byIcon(Icons.not_interested), findsOneWidget);
     });
 
     testWidgets('Skip button fires onSkip callback', (tester) async {
@@ -184,7 +193,7 @@ void main() {
       expect(skipped, isTrue);
     });
 
-    testWidgets('displays URL when task has one', (tester) async {
+    testWidgets('URL shown as icon with tooltip, not as text row', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(
           id: 1,
@@ -194,16 +203,18 @@ void main() {
         ),
       ));
 
-      expect(find.textContaining('example.com'), findsOneWidget);
+      // URL text should not be visible — it's in the tooltip
+      expect(find.text('example.com'), findsNothing);
+      // But the link icon should be shown
       expect(find.byIcon(Icons.link), findsOneWidget);
     });
 
-    testWidgets('Start working button is an ActionChip', (tester) async {
+    testWidgets('Start button is a TextButton', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
       ));
 
-      expect(find.widgetWithText(ActionChip, 'Start working'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, 'Start'), findsOneWidget);
     });
 
     testWidgets('showEditUrlDialog static method shows dialog', (tester) async {
@@ -291,14 +302,75 @@ void main() {
       expect(find.byIcon(Icons.flag_outlined), findsNothing);
     });
 
-    testWidgets('always shows "Done today" and "Done for good!" buttons', (tester) async {
+    testWidgets('shows "Done today" when not worked on today', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
         onWorkedOn: () {},
       ));
 
       expect(find.text('Done today'), findsOneWidget);
+      expect(find.text('Worked on today'), findsNothing);
       expect(find.text('Done for good!'), findsOneWidget);
+    });
+
+    testWidgets('shows "Worked on today" when already worked on today', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(
+          id: 1,
+          name: 'Task',
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          lastWorkedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+        onWorkedOn: () {},
+        onUndoWorkedOn: () {},
+      ));
+
+      expect(find.text('Worked on today'), findsOneWidget);
+      expect(find.text('Done today'), findsNothing);
+    });
+
+    testWidgets('shows "Done today" when lastWorkedAt is yesterday', (tester) async {
+      final yesterday = DateTime.now().subtract(const Duration(days: 1));
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(
+          id: 1,
+          name: 'Task',
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          lastWorkedAt: yesterday.millisecondsSinceEpoch,
+        ),
+        onWorkedOn: () {},
+      ));
+
+      expect(find.text('Done today'), findsOneWidget);
+      expect(find.text('Worked on today'), findsNothing);
+    });
+
+    testWidgets('"Done today" fires onWorkedOn callback', (tester) async {
+      var workedOn = false;
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+        onWorkedOn: () => workedOn = true,
+      ));
+
+      await tester.tap(find.text('Done today'));
+      expect(workedOn, isTrue);
+    });
+
+    testWidgets('"Worked on today" fires onUndoWorkedOn callback', (tester) async {
+      var undone = false;
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(
+          id: 1,
+          name: 'Task',
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          lastWorkedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+        onWorkedOn: () {},
+        onUndoWorkedOn: () => undone = true,
+      ));
+
+      await tester.tap(find.text('Worked on today'));
+      expect(undone, isTrue);
     });
 
     testWidgets('no repeat icon in chips', (tester) async {

@@ -495,7 +495,44 @@ class TaskProvider extends ChangeNotifier {
 
   Future<void> markWorkedOn(int taskId) async {
     await _db.markWorkedOn(taskId);
-    await navigateBack();
+    if (_currentParent?.id == taskId) {
+      _currentParent = Task(
+        id: _currentParent!.id,
+        name: _currentParent!.name,
+        completedAt: _currentParent!.completedAt,
+        createdAt: _currentParent!.createdAt,
+        startedAt: _currentParent!.startedAt,
+        url: _currentParent!.url,
+        skippedAt: _currentParent!.skippedAt,
+        priority: _currentParent!.priority,
+        difficulty: _currentParent!.difficulty,
+        lastWorkedAt: DateTime.now().millisecondsSinceEpoch,
+        repeatInterval: _currentParent!.repeatInterval,
+        nextDueAt: _currentParent!.nextDueAt,
+      );
+    }
+    notifyListeners();
+  }
+
+  Future<void> unmarkWorkedOn(int taskId, {int? restoreTo}) async {
+    await _db.unmarkWorkedOn(taskId, restoreTo: restoreTo);
+    if (_currentParent?.id == taskId) {
+      _currentParent = Task(
+        id: _currentParent!.id,
+        name: _currentParent!.name,
+        completedAt: _currentParent!.completedAt,
+        createdAt: _currentParent!.createdAt,
+        startedAt: _currentParent!.startedAt,
+        url: _currentParent!.url,
+        skippedAt: _currentParent!.skippedAt,
+        priority: _currentParent!.priority,
+        difficulty: _currentParent!.difficulty,
+        lastWorkedAt: restoreTo,
+        repeatInterval: _currentParent!.repeatInterval,
+        nextDueAt: _currentParent!.nextDueAt,
+      );
+    }
+    notifyListeners();
   }
 
   /// Removes a task from the current parent only (does not delete the task).

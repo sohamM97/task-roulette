@@ -29,6 +29,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
   int? _leafDepsTaskId;
   Future<List<Task>>? _leafDepsFuture;
 
+  // Previous last_worked_at value — for undoing "Done today" via button or snackbar.
+  int? _previousLastWorkedAt;
+
   @override
   void initState() {
     super.initState();
@@ -59,7 +62,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added ${names.length} tasks'), persist: false),
+          SnackBar(content: Text('Added ${names.length} tasks'), showCloseIcon: true, persist: false),
         );
       }
     }
@@ -114,7 +117,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final success = await provider.linkChildToCurrent(selected.id!);
     if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot link: would create a cycle'), persist: false),
+        const SnackBar(content: Text('Cannot link: would create a cycle'), showCloseIcon: true, persist: false),
       );
     }
   }
@@ -155,7 +158,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final success = await provider.addParentToTask(task.id!, selected.id!);
     if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot link: would create a cycle'), persist: false),
+        const SnackBar(content: Text('Cannot link: would create a cycle'), showCloseIcon: true, persist: false),
       );
     }
   }
@@ -203,6 +206,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   Future<void> _workedOn(Task task) async {
     final provider = context.read<TaskProvider>();
+    _previousLastWorkedAt = task.lastWorkedAt;
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.markWorkedOn(task.id!);
@@ -211,12 +215,21 @@ class _TaskListScreenState extends State<TaskListScreen> {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('"${task.name}" — nice work! We\'ll remind you again soon.'),
+        content: Text('"${task.name}" — nice work!'),
         showCloseIcon: true,
         persist: false,
         duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () => _undoWorkedOn(task),
+        ),
       ),
     );
+  }
+
+  Future<void> _undoWorkedOn(Task task) async {
+    final provider = context.read<TaskProvider>();
+    await provider.unmarkWorkedOn(task.id!, restoreTo: _previousLastWorkedAt);
   }
 
   Future<void> _moveTask(Task task) async {
@@ -255,7 +268,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final success = await provider.moveTask(task.id!, selected.id!);
     if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot move: would create a cycle'), persist: false),
+        const SnackBar(content: Text('Cannot move: would create a cycle'), showCloseIcon: true, persist: false),
       );
     }
   }
@@ -398,6 +411,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           onUpdatePriority: (p) => _updatePriority(task, p),
           onUpdateQuickTask: (q) => _updateQuickTask(task, q),
           onWorkedOn: () => _workedOn(task),
+          onUndoWorkedOn: () => _undoWorkedOn(task),
           dependencies: deps,
           onRemoveDependency: (depId) async {
             _leafDepsTaskId = null; // invalidate before await
@@ -437,7 +451,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     if (picked == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No tasks to pick from'), persist: false),
+          const SnackBar(content: Text('No tasks to pick from'), showCloseIcon: true, persist: false),
         );
       }
       return;
@@ -580,7 +594,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     final success = await provider.addDependency(task.id!, selected.id!);
     if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot add: would create a cycle'), persist: false),
+        const SnackBar(content: Text('Cannot add: would create a cycle'), showCloseIcon: true, persist: false),
       );
     }
   }
@@ -711,15 +725,15 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   itemBuilder: (_) => [
                     if (!provider.isRoot && provider.tasks.isEmpty) ...[
                       const PopupMenuItem(
-                        value: 'rename',
-                        child: Text('Rename'),
-                      ),
-                      const PopupMenuItem(
                         value: 'add_parent',
                         child: Text('Also show under...'),
                       ),
                     ],
                     if (!provider.isRoot && provider.tasks.isNotEmpty) ...[
+                      const PopupMenuItem(
+                        value: 'rename',
+                        child: Text('Rename'),
+                      ),
                       PopupMenuItem(
                         value: 'edit_link',
                         child: Text(
@@ -728,14 +742,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
                               : 'Add link',
                         ),
                       ),
-                    ],
-                    if (!provider.isRoot) ...[
                       const PopupMenuItem(
                         value: 'do_after',
                         child: Text('Do after...'),
                       ),
-                      const PopupMenuDivider(),
                     ],
+                    if (!provider.isRoot)
+                      const PopupMenuDivider(),
                     const PopupMenuItem(
                       value: 'export',
                       child: Text('Export backup'),

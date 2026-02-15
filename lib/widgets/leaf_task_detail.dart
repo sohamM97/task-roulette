@@ -12,6 +12,7 @@ class LeafTaskDetail extends StatelessWidget {
   final ValueChanged<int> onUpdatePriority;
   final ValueChanged<int> onUpdateQuickTask;
   final VoidCallback? onWorkedOn;
+  final VoidCallback? onUndoWorkedOn;
   final List<Task> dependencies;
   final void Function(int)? onRemoveDependency;
   final VoidCallback? onAddDependency;
@@ -27,6 +28,7 @@ class LeafTaskDetail extends StatelessWidget {
     required this.onUpdatePriority,
     required this.onUpdateQuickTask,
     this.onWorkedOn,
+    this.onUndoWorkedOn,
     this.dependencies = const [],
     this.onRemoveDependency,
     this.onAddDependency,
@@ -46,7 +48,7 @@ class LeafTaskDetail extends StatelessWidget {
     if (uri == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open link'), persist: false),
+          const SnackBar(content: Text('Could not open link'), showCloseIcon: true, persist: false),
         );
       }
       return;
@@ -55,13 +57,13 @@ class LeafTaskDetail extends StatelessWidget {
       final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!launched && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open link'), persist: false),
+          const SnackBar(content: Text('Could not open link'), showCloseIcon: true, persist: false),
         );
       }
     } catch (_) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open link'), persist: false),
+          const SnackBar(content: Text('Could not open link'), showCloseIcon: true, persist: false),
         );
       }
     }
@@ -129,77 +131,10 @@ class LeafTaskDetail extends StatelessWidget {
     );
   }
 
-  Widget _buildUrlRow(
-      BuildContext context, ColorScheme colorScheme, TextTheme textTheme) {
-    if (!task.hasUrl) return const SizedBox.shrink();
-    return InkWell(
-      onTap: () => _openUrl(context),
-      onLongPress: () => showEditUrlDialog(context, task.url, onUpdateUrl),
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.link, size: 18, color: colorScheme.primary),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                _displayUrl(task.url!),
-                style: textTheme.bodyMedium?.copyWith(
-                  color: colorScheme.primary,
-                  decoration: TextDecoration.underline,
-                  decorationColor: colorScheme.primary,
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 4),
-            GestureDetector(
-              onTap: () => showEditUrlDialog(context, task.url, onUpdateUrl),
-              child: Icon(
-                Icons.edit_outlined,
-                size: 14,
-                color: colorScheme.onSurfaceVariant.withAlpha(180),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   String _displayUrl(String url) {
     var display = url.replaceFirst(RegExp(r'^https?://'), '');
     if (display.endsWith('/')) display = display.substring(0, display.length - 1);
     return display.length > 40 ? '${display.substring(0, 40)}...' : display;
-  }
-
-  Widget _buildDependencyChips(BuildContext context, ColorScheme colorScheme) {
-    final dep = dependencies.isNotEmpty ? dependencies.first : null;
-    if (dep != null) {
-      // Show current dependency with X to remove
-      return InputChip(
-        avatar: Icon(
-          dep.isCompleted || dep.isSkipped
-              ? Icons.check
-              : Icons.hourglass_top,
-          size: 16,
-        ),
-        label: Text(
-          'After: ${dep.name}',
-          style: TextStyle(
-            color: dep.isCompleted || dep.isSkipped
-                ? colorScheme.onSurfaceVariant.withAlpha(150)
-                : null,
-          ),
-        ),
-        onDeleted: onRemoveDependency != null
-            ? () => onRemoveDependency!(dep.id!)
-            : null,
-      );
-    }
-    return const SizedBox.shrink();
   }
 
   @override
@@ -242,82 +177,103 @@ class LeafTaskDetail extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 4),
-            // URL row — only if URL exists
-            _buildUrlRow(context, colorScheme, textTheme),
-            if (task.hasUrl) const SizedBox(height: 4),
-            // Dependency chips
-            if (dependencies.isNotEmpty || onAddDependency != null)
-              _buildDependencyChips(context, colorScheme),
-            if (dependencies.isNotEmpty || onAddDependency != null)
-              const SizedBox(height: 4),
-            // Chips row: Start + Priority toggle + Quick task + add-link icon
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 8,
-              runSpacing: 4,
+            // Task settings icons — right below title
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                if (!task.isStarted)
-                  ActionChip(
-                    avatar: const Icon(Icons.play_arrow, size: 18),
-                    label: const Text('Start working'),
-                    onPressed: onToggleStarted,
-                  )
-                else
-                  ActionChip(
-                    avatar: const Icon(Icons.check, size: 18),
-                    label: Text('Started ${_formatTimeAgo(task.startedAt!)}'),
-                    onPressed: onToggleStarted,
-                    backgroundColor: colorScheme.secondaryContainer,
-                  ),
-                GestureDetector(
-                  onTap: () => onUpdatePriority(isHighPriority ? 0 : 1),
-                  child: Tooltip(
-                    message: isHighPriority ? 'High priority' : 'Set high priority',
-                    child: Icon(
-                      isHighPriority ? Icons.flag : Icons.flag_outlined,
-                      size: 20,
-                      color: isHighPriority
-                          ? colorScheme.error
-                          : colorScheme.onSurfaceVariant.withAlpha(120),
-                    ),
+                IconButton(
+                  onPressed: () => onUpdatePriority(isHighPriority ? 0 : 1),
+                  tooltip: isHighPriority ? 'High priority' : 'Set high priority',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    isHighPriority ? Icons.flag : Icons.flag_outlined,
+                    size: 20,
+                    color: isHighPriority
+                        ? colorScheme.error
+                        : colorScheme.onSurfaceVariant.withAlpha(120),
                   ),
                 ),
-                GestureDetector(
-                  onTap: () => onUpdateQuickTask(task.isQuickTask ? 0 : 1),
-                  child: Tooltip(
-                    message: task.isQuickTask ? 'Quick task' : 'Mark as quick task',
-                    child: Icon(
-                      task.isQuickTask ? Icons.bolt : Icons.bolt_outlined,
-                      size: 20,
-                      color: task.isQuickTask
-                          ? Colors.amber
-                          : colorScheme.onSurfaceVariant.withAlpha(120),
-                    ),
+                IconButton(
+                  onPressed: () => onUpdateQuickTask(task.isQuickTask ? 0 : 1),
+                  tooltip: task.isQuickTask ? 'Quick task' : 'Mark as quick task',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    task.isQuickTask ? Icons.bolt : Icons.bolt_outlined,
+                    size: 20,
+                    color: task.isQuickTask
+                        ? Colors.amber
+                        : colorScheme.onSurfaceVariant.withAlpha(120),
                   ),
                 ),
-                if (!task.hasUrl)
-                  GestureDetector(
-                    onTap: () => showEditUrlDialog(context, task.url, onUpdateUrl),
-                    child: Icon(
-                      Icons.add_link,
+                // Link icon — always shown
+                IconButton(
+                  onPressed: task.hasUrl
+                      ? () => _openUrl(context)
+                      : () => showEditUrlDialog(context, task.url, onUpdateUrl),
+                  onLongPress: task.hasUrl
+                      ? () => showEditUrlDialog(context, task.url, onUpdateUrl)
+                      : null,
+                  tooltip: task.hasUrl ? _displayUrl(task.url!) : 'Add link',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    task.hasUrl ? Icons.link : Icons.add_link,
+                    size: 20,
+                    color: task.hasUrl
+                        ? colorScheme.primary
+                        : colorScheme.onSurfaceVariant.withAlpha(120),
+                  ),
+                ),
+                // Dependency icon — shown when callback available
+                if (onAddDependency != null || dependencies.isNotEmpty)
+                  IconButton(
+                    onPressed: dependencies.isNotEmpty
+                        ? () {
+                            final dep = dependencies.first;
+                            if (onRemoveDependency != null) {
+                              onRemoveDependency!(dep.id!);
+                            }
+                          }
+                        : onAddDependency,
+                    tooltip: dependencies.isNotEmpty
+                        ? 'After: ${dependencies.first.name}'
+                        : 'Do after...',
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(
+                      dependencies.isNotEmpty
+                          ? Icons.hourglass_top
+                          : Icons.add_task,
                       size: 20,
-                      color: colorScheme.onSurfaceVariant.withAlpha(120),
+                      color: dependencies.isNotEmpty
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant.withAlpha(120),
                     ),
                   ),
               ],
             ),
-            const SizedBox(height: 20),
-            // "Done today" — primary action (soft-skip, back tomorrow)
-            FilledButton.icon(
-              onPressed: onWorkedOn ?? onDone,
-              icon: const Icon(Icons.today),
-              label: const Text('Done today'),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                textStyle: textTheme.titleMedium,
+            const SizedBox(height: 16),
+            // "Done today" — toggle: mark / undo
+            if (task.isWorkedOnToday)
+              OutlinedButton.icon(
+                onPressed: onUndoWorkedOn,
+                icon: const Icon(Icons.undo),
+                label: const Text('Worked on today'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                  textStyle: textTheme.titleMedium,
+                  side: BorderSide(color: colorScheme.primary),
+                ),
+              )
+            else
+              FilledButton.icon(
+                onPressed: onWorkedOn ?? onDone,
+                icon: const Icon(Icons.today),
+                label: const Text('Done today'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                  textStyle: textTheme.titleMedium,
+                ),
               ),
-            ),
             const SizedBox(height: 8),
             // "Done for good!" — permanently complete
             OutlinedButton.icon(
@@ -325,14 +281,41 @@ class LeafTaskDetail extends StatelessWidget {
               icon: const Icon(Icons.check_circle_outline),
               label: const Text('Done for good!'),
             ),
-            const SizedBox(height: 8),
-            // Skip — de-emphasized
-            TextButton(
-              onPressed: onSkip,
-              style: TextButton.styleFrom(
-                textStyle: textTheme.bodyMedium,
-              ),
-              child: const Text('Skip'),
+            const SizedBox(height: 16),
+            // Secondary row: Start | Skip
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextButton.icon(
+                  onPressed: onToggleStarted,
+                  icon: Icon(
+                    task.isStarted ? Icons.check : Icons.play_arrow,
+                    size: 18,
+                  ),
+                  label: Text(
+                    task.isStarted
+                        ? 'Started ${_formatTimeAgo(task.startedAt!)}'
+                        : 'Start',
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: task.isStarted
+                        ? colorScheme.primary
+                        : colorScheme.onSurfaceVariant,
+                    textStyle: textTheme.bodySmall,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                TextButton.icon(
+                  onPressed: onSkip,
+                  icon: const Icon(Icons.not_interested, size: 18),
+                  label: const Text('Skip'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: colorScheme.onSurfaceVariant,
+                    textStyle: textTheme.bodySmall,
+                  ),
+                ),
+              ],
             ),
           ],
         ),

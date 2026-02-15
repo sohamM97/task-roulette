@@ -326,7 +326,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     if (eligible.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No other tasks to swap in'), persist: false),
+          const SnackBar(content: Text('No other tasks to swap in'), showCloseIcon: true, persist: false),
         );
       }
       return;

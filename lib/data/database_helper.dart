@@ -441,6 +441,16 @@ class DatabaseHelper {
     );
   }
 
+  Future<void> unmarkWorkedOn(int taskId, {int? restoreTo}) async {
+    final db = await database;
+    await db.update(
+      'tasks',
+      {'last_worked_at': restoreTo},
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
   Future<void> updateRepeatInterval(int taskId, String? interval) async {
     final db = await database;
     await db.update(
