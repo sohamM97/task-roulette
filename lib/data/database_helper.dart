@@ -374,6 +374,16 @@ class DatabaseHelper {
     return maps.map((m) => TaskRelationship.fromMap(m)).toList();
   }
 
+  /// Returns true if a task has at least one child in task_relationships.
+  Future<bool> hasChildren(int taskId) async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT 1 FROM task_relationships WHERE parent_id = ? LIMIT 1',
+      [taskId],
+    );
+    return result.isNotEmpty;
+  }
+
   /// Returns true if [toId] is reachable from [fromId] via parent→child edges.
   Future<bool> hasPath(int fromId, int toId) async {
     final db = await database;
@@ -591,6 +601,8 @@ class DatabaseHelper {
   }
 
   /// Restores a previously deleted task with its original ID and relationships.
+  /// If [removeReparentLinks] is provided, those reparent links are removed
+  /// (used to undo the reparenting that happened during delete-and-reparent).
   // PERFORMANCE: transaction batches task insert + N relationship inserts
   Future<void> restoreTask(
     Task task,
@@ -598,9 +610,16 @@ class DatabaseHelper {
     List<int> childIds, {
     List<int> dependsOnIds = const [],
     List<int> dependedByIds = const [],
+    List<({int parentId, int childId})> removeReparentLinks = const [],
   }) async {
     final db = await database;
     await db.transaction((txn) async {
+      // Remove reparent links that were added during deletion
+      for (final link in removeReparentLinks) {
+        await txn.delete('task_relationships',
+            where: 'parent_id = ? AND child_id = ?',
+            whereArgs: [link.parentId, link.childId]);
+      }
       await txn.insert('tasks', task.toMap());
       for (final parentId in parentIds) {
         await txn.insert('task_relationships', {
@@ -744,6 +763,159 @@ class DatabaseHelper {
       SELECT 1 FROM dep_chain WHERE id = ? LIMIT 1
     ''', [fromId, toId]);
     return result.isNotEmpty;
+  }
+
+  /// Deletes a task and reparents its children to its parents.
+  /// Returns info needed for undo, including which reparent links were added.
+  Future<({
+    Task task,
+    List<int> parentIds,
+    List<int> childIds,
+    List<int> dependsOnIds,
+    List<int> dependedByIds,
+    List<({int parentId, int childId})> addedReparentLinks,
+  })> deleteTaskAndReparentChildren(int taskId) async {
+    final db = await database;
+    // Load task data before deleting
+    final taskMaps = await db.query('tasks', where: 'id = ?', whereArgs: [taskId]);
+    if (taskMaps.isEmpty) throw StateError('Task $taskId not found');
+    final task = Task.fromMap(taskMaps.first);
+
+    return db.transaction((txn) async {
+      final parentMaps = await txn.query('task_relationships',
+          columns: ['parent_id'], where: 'child_id = ?', whereArgs: [taskId]);
+      final childMaps = await txn.query('task_relationships',
+          columns: ['child_id'], where: 'parent_id = ?', whereArgs: [taskId]);
+      final dependsOnMaps = await txn.query('task_dependencies',
+          columns: ['depends_on_id'], where: 'task_id = ?', whereArgs: [taskId]);
+      final dependedByMaps = await txn.query('task_dependencies',
+          columns: ['task_id'], where: 'depends_on_id = ?', whereArgs: [taskId]);
+
+      final parentIds = parentMaps.map((m) => m['parent_id'] as int).toList();
+      final childIds = childMaps.map((m) => m['child_id'] as int).toList();
+      final dependsOnIds = dependsOnMaps.map((m) => m['depends_on_id'] as int).toList();
+      final dependedByIds = dependedByMaps.map((m) => m['task_id'] as int).toList();
+
+      // Reparent: connect each child to each parent. Track which links are new.
+      final addedLinks = <({int parentId, int childId})>[];
+      for (final parentId in parentIds) {
+        for (final childId in childIds) {
+          final existing = await txn.query('task_relationships',
+              where: 'parent_id = ? AND child_id = ?',
+              whereArgs: [parentId, childId]);
+          if (existing.isEmpty) {
+            await txn.insert('task_relationships', {
+              'parent_id': parentId,
+              'child_id': childId,
+            });
+            addedLinks.add((parentId: parentId, childId: childId));
+          }
+        }
+      }
+
+      // Delete the task and its relationships/dependencies
+      await txn.delete('task_relationships',
+          where: 'parent_id = ? OR child_id = ?', whereArgs: [taskId, taskId]);
+      await txn.delete('task_dependencies',
+          where: 'task_id = ? OR depends_on_id = ?', whereArgs: [taskId, taskId]);
+      await txn.delete('tasks', where: 'id = ?', whereArgs: [taskId]);
+
+      return (
+        task: task,
+        parentIds: parentIds,
+        childIds: childIds,
+        dependsOnIds: dependsOnIds,
+        dependedByIds: dependedByIds,
+        addedReparentLinks: addedLinks,
+      );
+    });
+  }
+
+  /// Deletes a task and all its descendants (the entire subtree).
+  /// Returns all deleted data for undo support.
+  Future<({
+    List<Task> deletedTasks,
+    List<({int parentId, int childId})> deletedRelationships,
+    List<({int taskId, int dependsOnId})> deletedDependencies,
+  })> deleteTaskSubtree(int taskId) async {
+    final db = await database;
+    return db.transaction((txn) async {
+      // Find all descendant IDs via recursive CTE
+      final descendantRows = await txn.rawQuery('''
+        WITH RECURSIVE subtree(id) AS (
+          VALUES(?)
+          UNION
+          SELECT tr.child_id FROM task_relationships tr
+          INNER JOIN subtree s ON tr.parent_id = s.id
+        )
+        SELECT id FROM subtree
+      ''', [taskId]);
+      final subtreeIds = descendantRows.map((r) => r['id'] as int).toSet();
+
+      // Load all Task objects in the subtree
+      final placeholders = subtreeIds.map((_) => '?').join(',');
+      final taskMaps = await txn.rawQuery(
+        'SELECT * FROM tasks WHERE id IN ($placeholders)', subtreeIds.toList());
+      final deletedTasks = _tasksFromMaps(taskMaps);
+
+      // Capture all relationships touching the subtree
+      final relRows = await txn.rawQuery('''
+        SELECT parent_id, child_id FROM task_relationships
+        WHERE parent_id IN ($placeholders) OR child_id IN ($placeholders)
+      ''', [...subtreeIds, ...subtreeIds]);
+      final deletedRelationships = relRows
+          .map((r) => (parentId: r['parent_id'] as int, childId: r['child_id'] as int))
+          .toList();
+
+      // Capture all dependencies touching the subtree
+      final depRows = await txn.rawQuery('''
+        SELECT task_id, depends_on_id FROM task_dependencies
+        WHERE task_id IN ($placeholders) OR depends_on_id IN ($placeholders)
+      ''', [...subtreeIds, ...subtreeIds]);
+      final deletedDependencies = depRows
+          .map((r) => (taskId: r['task_id'] as int, dependsOnId: r['depends_on_id'] as int))
+          .toList();
+
+      // Delete everything
+      await txn.rawDelete(
+        'DELETE FROM task_relationships WHERE parent_id IN ($placeholders) OR child_id IN ($placeholders)',
+        [...subtreeIds, ...subtreeIds]);
+      await txn.rawDelete(
+        'DELETE FROM task_dependencies WHERE task_id IN ($placeholders) OR depends_on_id IN ($placeholders)',
+        [...subtreeIds, ...subtreeIds]);
+      await txn.rawDelete(
+        'DELETE FROM tasks WHERE id IN ($placeholders)', subtreeIds.toList());
+
+      return (
+        deletedTasks: deletedTasks,
+        deletedRelationships: deletedRelationships,
+        deletedDependencies: deletedDependencies,
+      );
+    });
+  }
+
+  /// Restores a previously deleted subtree (inverse of deleteTaskSubtree).
+  Future<void> restoreTaskSubtree({
+    required List<Task> tasks,
+    required List<({int parentId, int childId})> relationships,
+    required List<({int taskId, int dependsOnId})> dependencies,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final task in tasks) {
+        await txn.insert('tasks', task.toMap());
+      }
+      for (final rel in relationships) {
+        await txn.rawInsert(
+          'INSERT OR IGNORE INTO task_relationships (parent_id, child_id) VALUES (?, ?)',
+          [rel.parentId, rel.childId]);
+      }
+      for (final dep in dependencies) {
+        await txn.rawInsert(
+          'INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)',
+          [dep.taskId, dep.dependsOnId]);
+      }
+    });
   }
 
   /// Returns the set of task IDs (from the given list) that have at least one

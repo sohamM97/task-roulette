@@ -111,9 +111,57 @@ class TaskProvider extends ChangeNotifier {
     List<int> childIds, {
     List<int> dependsOnIds = const [],
     List<int> dependedByIds = const [],
+    List<({int parentId, int childId})> removeReparentLinks = const [],
   }) async {
     await _db.restoreTask(task, parentIds, childIds,
-        dependsOnIds: dependsOnIds, dependedByIds: dependedByIds);
+        dependsOnIds: dependsOnIds,
+        dependedByIds: dependedByIds,
+        removeReparentLinks: removeReparentLinks);
+    await _refreshCurrentList();
+  }
+
+  /// Returns true if a task has at least one child.
+  Future<bool> hasChildren(int taskId) async {
+    return _db.hasChildren(taskId);
+  }
+
+  /// Deletes a task and reparents its children to its parents.
+  /// Returns info needed for undo.
+  Future<({
+    Task task,
+    List<int> parentIds,
+    List<int> childIds,
+    List<int> dependsOnIds,
+    List<int> dependedByIds,
+    List<({int parentId, int childId})> addedReparentLinks,
+  })> deleteTaskAndReparent(int taskId) async {
+    final result = await _db.deleteTaskAndReparentChildren(taskId);
+    await _refreshCurrentList();
+    return result;
+  }
+
+  /// Deletes a task and its entire subtree. Returns info needed for undo.
+  Future<({
+    List<Task> deletedTasks,
+    List<({int parentId, int childId})> deletedRelationships,
+    List<({int taskId, int dependsOnId})> deletedDependencies,
+  })> deleteTaskSubtree(int taskId) async {
+    final result = await _db.deleteTaskSubtree(taskId);
+    await _refreshCurrentList();
+    return result;
+  }
+
+  /// Restores a previously deleted subtree.
+  Future<void> restoreTaskSubtree({
+    required List<Task> tasks,
+    required List<({int parentId, int childId})> relationships,
+    required List<({int taskId, int dependsOnId})> dependencies,
+  }) async {
+    await _db.restoreTaskSubtree(
+      tasks: tasks,
+      relationships: relationships,
+      dependencies: dependencies,
+    );
     await _refreshCurrentList();
   }
 

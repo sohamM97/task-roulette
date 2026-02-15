@@ -12,6 +12,7 @@ import '../widgets/empty_state.dart';
 import '../widgets/leaf_task_detail.dart';
 import '../widgets/random_result_dialog.dart';
 import '../widgets/task_card.dart';
+import '../widgets/delete_task_dialog.dart';
 import '../widgets/task_picker_dialog.dart';
 import '../services/backup_service.dart';
 import 'completed_tasks_screen.dart';
@@ -306,33 +307,72 @@ class _TaskListScreenState extends State<TaskListScreen> {
     await provider.unlinkFromCurrentParent(task.id!);
   }
 
-  Future<void> _deleteTaskWithUndo(Task task) async {
-    final provider = context.read<TaskProvider>();
-    final deleted = await provider.deleteTask(task.id!);
-
-    if (!mounted) return;
-
+  void _showDeleteUndoSnackbar(String description, VoidCallback onUndo) {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Deleted "${task.name}"'),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () {
-            provider.restoreTask(
-              deleted.task,
-              deleted.parentIds,
-              deleted.childIds,
-              dependsOnIds: deleted.dependsOnIds,
-              dependedByIds: deleted.dependedByIds,
-            );
-          },
-        ),
+        content: Text(description),
+        action: SnackBarAction(label: 'Undo', onPressed: onUndo),
         showCloseIcon: true,
         persist: false,
         duration: const Duration(seconds: 5),
       ),
     );
+  }
+
+  Future<void> _deleteTaskWithUndo(Task task) async {
+    final provider = context.read<TaskProvider>();
+    final hasKids = await provider.hasChildren(task.id!);
+
+    if (!hasKids) {
+      // Leaf task — delete directly, no dialog
+      final deleted = await provider.deleteTask(task.id!);
+      if (!mounted) return;
+      _showDeleteUndoSnackbar('Deleted "${task.name}"', () {
+        provider.restoreTask(
+          deleted.task, deleted.parentIds, deleted.childIds,
+          dependsOnIds: deleted.dependsOnIds,
+          dependedByIds: deleted.dependedByIds,
+        );
+      });
+      return;
+    }
+
+    // Has children — show choice dialog
+    if (!mounted) return;
+    final choice = await showDialog<DeleteChoice>(
+      context: context,
+      builder: (_) => DeleteTaskDialog(taskName: task.name),
+    );
+    if (choice == null || !mounted) return;
+
+    switch (choice) {
+      case DeleteChoice.reparent:
+        final result = await provider.deleteTaskAndReparent(task.id!);
+        if (!mounted) return;
+        _showDeleteUndoSnackbar('Deleted "${task.name}"', () {
+          provider.restoreTask(
+            result.task, result.parentIds, result.childIds,
+            dependsOnIds: result.dependsOnIds,
+            dependedByIds: result.dependedByIds,
+            removeReparentLinks: result.addedReparentLinks,
+          );
+        });
+      case DeleteChoice.deleteAll:
+        final result = await provider.deleteTaskSubtree(task.id!);
+        if (!mounted) return;
+        final count = result.deletedTasks.length - 1;
+        final desc = count > 0
+            ? 'Deleted "${task.name}" and $count sub-task${count == 1 ? '' : 's'}'
+            : 'Deleted "${task.name}"';
+        _showDeleteUndoSnackbar(desc, () {
+          provider.restoreTaskSubtree(
+            tasks: result.deletedTasks,
+            relationships: result.deletedRelationships,
+            dependencies: result.deletedDependencies,
+          );
+        });
+    }
   }
 
   Future<void> _toggleStarted(Task task) async {

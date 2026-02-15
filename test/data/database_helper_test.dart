@@ -772,4 +772,218 @@ void main() {
       expect(archived.first.name, 'Completed');
     });
   });
+
+  group('hasChildren', () {
+    test('returns false for task with no children', () async {
+      final id = await db.insertTask(Task(name: 'Leaf'));
+      expect(await db.hasChildren(id), isFalse);
+    });
+
+    test('returns true for task with children', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+      expect(await db.hasChildren(parentId), isTrue);
+    });
+  });
+
+  group('deleteTaskAndReparentChildren', () {
+    test('reparents children to grandparent', () async {
+      // Grandparent → Parent → Child
+      final gp = await db.insertTask(Task(name: 'Grandparent'));
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(gp, parent);
+      await db.addRelationship(parent, child);
+
+      final result = await db.deleteTaskAndReparentChildren(parent);
+
+      // Parent should be gone
+      expect(await db.getTaskById(parent), isNull);
+      // Child should now be under Grandparent
+      final gpChildren = await db.getChildren(gp);
+      expect(gpChildren.map((t) => t.id), contains(child));
+      // One reparent link was added
+      expect(result.addedReparentLinks, hasLength(1));
+      expect(result.addedReparentLinks.first.parentId, gp);
+      expect(result.addedReparentLinks.first.childId, child);
+    });
+
+    test('does not duplicate pre-existing grandparent link', () async {
+      // GP → Parent → Child, and GP → Child already exists
+      final gp = await db.insertTask(Task(name: 'Grandparent'));
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(gp, parent);
+      await db.addRelationship(parent, child);
+      await db.addRelationship(gp, child); // pre-existing
+
+      final result = await db.deleteTaskAndReparentChildren(parent);
+
+      // No new reparent links were needed
+      expect(result.addedReparentLinks, isEmpty);
+      // Child is still under GP (just one relationship)
+      final gpChildren = await db.getChildren(gp);
+      expect(gpChildren.map((t) => t.id), contains(child));
+    });
+
+    test('root task reparent: children become root', () async {
+      // Root Parent → Child A, Child B (no grandparent)
+      final parent = await db.insertTask(Task(name: 'Root Parent'));
+      final childA = await db.insertTask(Task(name: 'Child A'));
+      final childB = await db.insertTask(Task(name: 'Child B'));
+      await db.addRelationship(parent, childA);
+      await db.addRelationship(parent, childB);
+
+      final result = await db.deleteTaskAndReparentChildren(parent);
+
+      // No parents → no reparent links
+      expect(result.addedReparentLinks, isEmpty);
+      // Children should now be root tasks
+      final roots = await db.getRootTasks();
+      final rootIds = roots.map((t) => t.id).toSet();
+      expect(rootIds, contains(childA));
+      expect(rootIds, contains(childB));
+    });
+
+    test('undo restores original structure', () async {
+      final gp = await db.insertTask(Task(name: 'Grandparent'));
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(gp, parent);
+      await db.addRelationship(parent, child);
+
+      final result = await db.deleteTaskAndReparentChildren(parent);
+
+      // Undo: restore with removeReparentLinks
+      await db.restoreTask(
+        result.task, result.parentIds, result.childIds,
+        dependsOnIds: result.dependsOnIds,
+        dependedByIds: result.dependedByIds,
+        removeReparentLinks: result.addedReparentLinks,
+      );
+
+      // Parent should be back
+      expect(await db.getTaskById(parent), isNotNull);
+      // Grandparent's children should be just Parent (not Child directly)
+      final gpChildren = await db.getChildren(gp);
+      expect(gpChildren.map((t) => t.id), contains(parent));
+      expect(gpChildren.map((t) => t.id), isNot(contains(child)));
+      // Parent's children should be just Child
+      final parentChildren = await db.getChildren(parent);
+      expect(parentChildren.map((t) => t.id), contains(child));
+    });
+
+    test('preserves dependencies during reparent', () async {
+      final gp = await db.insertTask(Task(name: 'Grandparent'));
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      final other = await db.insertTask(Task(name: 'Other'));
+      await db.addRelationship(gp, parent);
+      await db.addRelationship(parent, child);
+      await db.addDependency(parent, other); // parent depends on other
+
+      final result = await db.deleteTaskAndReparentChildren(parent);
+      expect(result.dependsOnIds, contains(other));
+
+      // Undo
+      await db.restoreTask(
+        result.task, result.parentIds, result.childIds,
+        dependsOnIds: result.dependsOnIds,
+        dependedByIds: result.dependedByIds,
+        removeReparentLinks: result.addedReparentLinks,
+      );
+      final deps = await db.getDependencies(parent);
+      expect(deps.map((t) => t.id), contains(other));
+    });
+  });
+
+  group('deleteTaskSubtree', () {
+    test('deletes entire subtree', () async {
+      // Root → Parent → Child
+      final root = await db.insertTask(Task(name: 'Root'));
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(root, parent);
+      await db.addRelationship(parent, child);
+
+      final result = await db.deleteTaskSubtree(parent);
+
+      // Both parent and child should be deleted
+      expect(result.deletedTasks.map((t) => t.id).toSet(), {parent, child});
+      expect(await db.getTaskById(parent), isNull);
+      expect(await db.getTaskById(child), isNull);
+      // Root should still exist
+      expect(await db.getTaskById(root), isNotNull);
+    });
+
+    test('subtree undo restores all tasks and relationships', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(root, parent);
+      await db.addRelationship(parent, child);
+
+      final result = await db.deleteTaskSubtree(parent);
+
+      // Restore
+      await db.restoreTaskSubtree(
+        tasks: result.deletedTasks,
+        relationships: result.deletedRelationships,
+        dependencies: result.deletedDependencies,
+      );
+
+      // Everything should be back
+      expect(await db.getTaskById(parent), isNotNull);
+      expect(await db.getTaskById(child), isNotNull);
+      final rootChildren = await db.getChildren(root);
+      expect(rootChildren.map((t) => t.id), contains(parent));
+      final parentChildren = await db.getChildren(parent);
+      expect(parentChildren.map((t) => t.id), contains(child));
+    });
+
+    test('subtree delete with external dependencies captures them', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      final external = await db.insertTask(Task(name: 'External'));
+      await db.addRelationship(root, parent);
+      await db.addRelationship(parent, child);
+      await db.addDependency(child, external); // child depends on external
+
+      final result = await db.deleteTaskSubtree(parent);
+
+      expect(result.deletedDependencies, isNotEmpty);
+      // External should not be deleted
+      expect(await db.getTaskById(external), isNotNull);
+
+      // Undo should restore the dependency
+      await db.restoreTaskSubtree(
+        tasks: result.deletedTasks,
+        relationships: result.deletedRelationships,
+        dependencies: result.deletedDependencies,
+      );
+      final deps = await db.getDependencies(child);
+      expect(deps.map((t) => t.id), contains(external));
+    });
+
+    test('deep subtree with multiple levels', () async {
+      // A → B → C → D
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final c = await db.insertTask(Task(name: 'C'));
+      final d = await db.insertTask(Task(name: 'D'));
+      await db.addRelationship(a, b);
+      await db.addRelationship(b, c);
+      await db.addRelationship(c, d);
+
+      final result = await db.deleteTaskSubtree(b);
+
+      expect(result.deletedTasks.map((t) => t.id).toSet(), {b, c, d});
+      expect(await db.getTaskById(a), isNotNull);
+      expect(await db.getTaskById(b), isNull);
+      expect(await db.getTaskById(c), isNull);
+      expect(await db.getTaskById(d), isNull);
+    });
+  });
 }
