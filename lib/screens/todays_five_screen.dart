@@ -189,6 +189,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       SnackBar(
         content: Text('"${task.name}" — stopped.'),
         showCloseIcon: true,
+        persist: false,
         duration: const Duration(seconds: 3),
       ),
     );
@@ -212,6 +213,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       SnackBar(
         content: Text('"${task.name}" — on it!'),
         showCloseIcon: true,
+        persist: false,
         duration: const Duration(seconds: 3),
       ),
     );
@@ -232,6 +234,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       SnackBar(
         content: Text('"${task.name}" — nice progress! Back tomorrow.'),
         showCloseIcon: true,
+        persist: false,
         duration: const Duration(seconds: 4),
       ),
     );
@@ -265,6 +268,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
           },
         ),
         showCloseIcon: true,
+        persist: false,
         duration: const Duration(seconds: 5),
       ),
     );
@@ -293,6 +297,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       SnackBar(
         content: Text('"${task.name}" restored.'),
         showCloseIcon: true,
+        persist: false,
         duration: const Duration(seconds: 3),
       ),
     );
@@ -314,7 +319,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     if (eligible.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No other tasks to swap in')),
+          const SnackBar(content: Text('No other tasks to swap in'), persist: false),
         );
       }
       return;

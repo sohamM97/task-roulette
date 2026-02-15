@@ -14,7 +14,7 @@ class BackupService {
     if (!dbFile.existsSync()) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No database to export')),
+          const SnackBar(content: Text('No database to export'), persist: false),
         );
       }
       return;
@@ -45,7 +45,7 @@ class BackupService {
     if (context.mounted) {
       ScaffoldMessenger.of(context).clearSnackBars();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Backup saved to Downloads/$fileName')),
+        SnackBar(content: Text('Backup saved to Downloads/$fileName'), persist: false),
       );
     }
   }
@@ -92,7 +92,7 @@ class BackupService {
       if (context.mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.message)),
+          SnackBar(content: Text(e.message), persist: false),
         );
       }
       return;
@@ -103,7 +103,7 @@ class BackupService {
     if (context.mounted) {
       ScaffoldMessenger.of(context).clearSnackBars();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Backup restored')),
+        const SnackBar(content: Text('Backup restored'), persist: false),
       );
     }
   }
