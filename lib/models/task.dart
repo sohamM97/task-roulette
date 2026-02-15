@@ -50,6 +50,36 @@ class Task {
         worked.day == now.day;
   }
 
+  Task copyWith({
+    int? id,
+    String? name,
+    int? createdAt,
+    int? Function()? completedAt,
+    int? Function()? startedAt,
+    String? Function()? url,
+    int? Function()? skippedAt,
+    int? priority,
+    int? difficulty,
+    int? Function()? lastWorkedAt,
+    String? Function()? repeatInterval,
+    int? Function()? nextDueAt,
+  }) {
+    return Task(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      createdAt: createdAt ?? this.createdAt,
+      completedAt: completedAt != null ? completedAt() : this.completedAt,
+      startedAt: startedAt != null ? startedAt() : this.startedAt,
+      url: url != null ? url() : this.url,
+      skippedAt: skippedAt != null ? skippedAt() : this.skippedAt,
+      priority: priority ?? this.priority,
+      difficulty: difficulty ?? this.difficulty,
+      lastWorkedAt: lastWorkedAt != null ? lastWorkedAt() : this.lastWorkedAt,
+      repeatInterval: repeatInterval != null ? repeatInterval() : this.repeatInterval,
+      nextDueAt: nextDueAt != null ? nextDueAt() : this.nextDueAt,
+    );
+  }
+
   Map<String, dynamic> toMap() {
     return {
       if (id != null) 'id': id,

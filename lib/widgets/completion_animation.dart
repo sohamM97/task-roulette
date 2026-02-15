@@ -8,7 +8,9 @@ Future<void> showCompletionAnimation(BuildContext context) {
 
   entry = OverlayEntry(
     builder: (_) => _CompletionOverlay(
-      onDone: () => entry.remove(),
+      onDone: () {
+        if (entry.mounted) entry.remove();
+      },
     ),
   );
 

@@ -58,3 +58,6 @@ devtools_options.yaml
 /macos/
 /web/
 /windows/
+
+# Code review notes
+CODE_REVIEW.md

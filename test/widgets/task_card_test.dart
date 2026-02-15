@@ -7,7 +7,6 @@ void main() {
   Widget buildTestWidget({
     required Task task,
     bool hasStartedDescendant = false,
-    int indicatorStyle = 2,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -19,7 +18,6 @@ void main() {
             onTap: () {},
             onDelete: () {},
             hasStartedDescendant: hasStartedDescendant,
-            indicatorStyle: indicatorStyle,
           ),
         ),
       ),
@@ -61,24 +59,6 @@ void main() {
       expect(find.byIcon(Icons.play_circle_filled), findsNothing);
     });
 
-    testWidgets('indicator style 0 shows dot instead of play icon', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'WIP', createdAt: 1000, startedAt: 2000),
-        indicatorStyle: 0,
-      ));
-
-      expect(find.byIcon(Icons.play_circle_filled), findsNothing);
-      // Dot is a Container with BoxShape.circle — verify no play icon is shown
-    });
-
-    testWidgets('indicator style 1 shows border instead of play icon', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'WIP', createdAt: 1000, startedAt: 2000),
-        indicatorStyle: 1,
-      ));
-
-      expect(find.byIcon(Icons.play_circle_filled), findsNothing);
-    });
   });
 
   group('TaskCard long-press menu', () {

@@ -93,7 +93,9 @@ class TaskProvider extends ChangeNotifier {
   /// Deletes a task and returns info needed for undo.
   /// Returns a record of (task, parentIds, childIds, dependsOnIds, dependedByIds).
   Future<({Task task, List<int> parentIds, List<int> childIds, List<int> dependsOnIds, List<int> dependedByIds})> deleteTask(int taskId) async {
-    final task = _tasks.firstWhere((t) => t.id == taskId);
+    final task = _currentParent?.id == taskId
+        ? _currentParent!
+        : _tasks.firstWhere((t) => t.id == taskId);
     final rels = await _db.deleteTaskWithRelationships(taskId);
     await _refreshCurrentList();
     return (
@@ -349,18 +351,8 @@ class TaskProvider extends ChangeNotifier {
     // Update _currentParent in place so the leaf detail view reflects the change
     // immediately without needing to navigate away and back.
     if (_currentParent?.id == taskId) {
-      _currentParent = Task(
-        id: _currentParent!.id,
-        name: _currentParent!.name,
-        createdAt: _currentParent!.createdAt,
-        completedAt: _currentParent!.completedAt,
-        startedAt: DateTime.now().millisecondsSinceEpoch,
-        url: _currentParent!.url,
-        priority: _currentParent!.priority,
-        difficulty: _currentParent!.difficulty,
-        lastWorkedAt: _currentParent!.lastWorkedAt,
-        repeatInterval: _currentParent!.repeatInterval,
-        nextDueAt: _currentParent!.nextDueAt,
+      _currentParent = _currentParent!.copyWith(
+        startedAt: () => DateTime.now().millisecondsSinceEpoch,
       );
     }
     await _refreshCurrentList();
@@ -370,19 +362,7 @@ class TaskProvider extends ChangeNotifier {
   Future<void> unstartTask(int taskId) async {
     await _db.unstartTask(taskId);
     if (_currentParent?.id == taskId) {
-      _currentParent = Task(
-        id: _currentParent!.id,
-        name: _currentParent!.name,
-        createdAt: _currentParent!.createdAt,
-        completedAt: _currentParent!.completedAt,
-        startedAt: null,
-        url: _currentParent!.url,
-        priority: _currentParent!.priority,
-        difficulty: _currentParent!.difficulty,
-        lastWorkedAt: _currentParent!.lastWorkedAt,
-        repeatInterval: _currentParent!.repeatInterval,
-        nextDueAt: _currentParent!.nextDueAt,
-      );
+      _currentParent = _currentParent!.copyWith(startedAt: () => null);
     }
     await _refreshCurrentList();
   }
@@ -464,19 +444,7 @@ class TaskProvider extends ChangeNotifier {
   Future<void> renameTask(int taskId, String name) async {
     await _db.updateTaskName(taskId, name);
     if (_currentParent?.id == taskId) {
-      _currentParent = Task(
-        id: _currentParent!.id,
-        name: name,
-        createdAt: _currentParent!.createdAt,
-        completedAt: _currentParent!.completedAt,
-        startedAt: _currentParent!.startedAt,
-        url: _currentParent!.url,
-        priority: _currentParent!.priority,
-        difficulty: _currentParent!.difficulty,
-        lastWorkedAt: _currentParent!.lastWorkedAt,
-        repeatInterval: _currentParent!.repeatInterval,
-        nextDueAt: _currentParent!.nextDueAt,
-      );
+      _currentParent = _currentParent!.copyWith(name: name);
     }
     await _refreshCurrentList();
   }
@@ -484,19 +452,7 @@ class TaskProvider extends ChangeNotifier {
   Future<void> updateTaskUrl(int taskId, String? url) async {
     await _db.updateTaskUrl(taskId, url);
     if (_currentParent?.id == taskId) {
-      _currentParent = Task(
-        id: _currentParent!.id,
-        name: _currentParent!.name,
-        createdAt: _currentParent!.createdAt,
-        completedAt: _currentParent!.completedAt,
-        startedAt: _currentParent!.startedAt,
-        url: url,
-        priority: _currentParent!.priority,
-        difficulty: _currentParent!.difficulty,
-        lastWorkedAt: _currentParent!.lastWorkedAt,
-        repeatInterval: _currentParent!.repeatInterval,
-        nextDueAt: _currentParent!.nextDueAt,
-      );
+      _currentParent = _currentParent!.copyWith(url: () => url);
     }
     await _refreshCurrentList();
   }
@@ -504,19 +460,7 @@ class TaskProvider extends ChangeNotifier {
   Future<void> updateTaskPriority(int taskId, int priority) async {
     await _db.updateTaskPriority(taskId, priority);
     if (_currentParent?.id == taskId) {
-      _currentParent = Task(
-        id: _currentParent!.id,
-        name: _currentParent!.name,
-        createdAt: _currentParent!.createdAt,
-        completedAt: _currentParent!.completedAt,
-        startedAt: _currentParent!.startedAt,
-        url: _currentParent!.url,
-        priority: priority,
-        difficulty: _currentParent!.difficulty,
-        lastWorkedAt: _currentParent!.lastWorkedAt,
-        repeatInterval: _currentParent!.repeatInterval,
-        nextDueAt: _currentParent!.nextDueAt,
-      );
+      _currentParent = _currentParent!.copyWith(priority: priority);
     }
     await _refreshCurrentList();
   }
@@ -524,19 +468,7 @@ class TaskProvider extends ChangeNotifier {
   Future<void> updateQuickTask(int taskId, int quickTask) async {
     await _db.updateTaskQuickTask(taskId, quickTask);
     if (_currentParent?.id == taskId) {
-      _currentParent = Task(
-        id: _currentParent!.id,
-        name: _currentParent!.name,
-        createdAt: _currentParent!.createdAt,
-        completedAt: _currentParent!.completedAt,
-        startedAt: _currentParent!.startedAt,
-        url: _currentParent!.url,
-        priority: _currentParent!.priority,
-        difficulty: quickTask,
-        lastWorkedAt: _currentParent!.lastWorkedAt,
-        repeatInterval: _currentParent!.repeatInterval,
-        nextDueAt: _currentParent!.nextDueAt,
-      );
+      _currentParent = _currentParent!.copyWith(difficulty: quickTask);
     }
     await _refreshCurrentList();
   }
@@ -544,19 +476,8 @@ class TaskProvider extends ChangeNotifier {
   Future<void> markWorkedOn(int taskId) async {
     await _db.markWorkedOn(taskId);
     if (_currentParent?.id == taskId) {
-      _currentParent = Task(
-        id: _currentParent!.id,
-        name: _currentParent!.name,
-        completedAt: _currentParent!.completedAt,
-        createdAt: _currentParent!.createdAt,
-        startedAt: _currentParent!.startedAt,
-        url: _currentParent!.url,
-        skippedAt: _currentParent!.skippedAt,
-        priority: _currentParent!.priority,
-        difficulty: _currentParent!.difficulty,
-        lastWorkedAt: DateTime.now().millisecondsSinceEpoch,
-        repeatInterval: _currentParent!.repeatInterval,
-        nextDueAt: _currentParent!.nextDueAt,
+      _currentParent = _currentParent!.copyWith(
+        lastWorkedAt: () => DateTime.now().millisecondsSinceEpoch,
       );
     }
     notifyListeners();
@@ -565,20 +486,7 @@ class TaskProvider extends ChangeNotifier {
   Future<void> unmarkWorkedOn(int taskId, {int? restoreTo}) async {
     await _db.unmarkWorkedOn(taskId, restoreTo: restoreTo);
     if (_currentParent?.id == taskId) {
-      _currentParent = Task(
-        id: _currentParent!.id,
-        name: _currentParent!.name,
-        completedAt: _currentParent!.completedAt,
-        createdAt: _currentParent!.createdAt,
-        startedAt: _currentParent!.startedAt,
-        url: _currentParent!.url,
-        skippedAt: _currentParent!.skippedAt,
-        priority: _currentParent!.priority,
-        difficulty: _currentParent!.difficulty,
-        lastWorkedAt: restoreTo,
-        repeatInterval: _currentParent!.repeatInterval,
-        nextDueAt: _currentParent!.nextDueAt,
-      );
+      _currentParent = _currentParent!.copyWith(lastWorkedAt: () => restoreTo);
     }
     notifyListeners();
   }

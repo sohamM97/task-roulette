@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/task.dart';
+import '../utils/display_utils.dart';
 
 class LeafTaskDetail extends StatelessWidget {
   final Task task;
@@ -131,11 +132,6 @@ class LeafTaskDetail extends StatelessWidget {
     );
   }
 
-  String _displayUrl(String url) {
-    var display = url.replaceFirst(RegExp(r'^https?://'), '');
-    if (display.endsWith('/')) display = display.substring(0, display.length - 1);
-    return display.length > 40 ? '${display.substring(0, 40)}...' : display;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -214,7 +210,7 @@ class LeafTaskDetail extends StatelessWidget {
                   onLongPress: task.hasUrl
                       ? () => showEditUrlDialog(context, task.url, onUpdateUrl)
                       : null,
-                  tooltip: task.hasUrl ? _displayUrl(task.url!) : 'Add link',
+                  tooltip: task.hasUrl ? displayUrl(task.url!) : 'Add link',
                   visualDensity: VisualDensity.compact,
                   icon: Icon(
                     task.hasUrl ? Icons.link : Icons.add_link,
