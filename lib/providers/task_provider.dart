@@ -632,6 +632,12 @@ class TaskProvider extends ChangeNotifier {
     } else {
       _tasks = await _db.getChildren(_currentParent!.id!);
     }
+    // Sort worked-on-today tasks to the end, preserving DB order otherwise
+    _tasks.sort((a, b) {
+      final aWorked = a.isWorkedOnToday ? 1 : 0;
+      final bWorked = b.isWorkedOnToday ? 1 : 0;
+      return aWorked.compareTo(bWorked);
+    });
     await _loadAuxiliaryData();
     notifyListeners();
   }

@@ -168,7 +168,7 @@ class TaskCard extends StatelessWidget {
     final indicatorColor = _indicatorColor(context);
 
     return Opacity(
-      opacity: isBlocked ? 0.6 : 1.0,
+      opacity: isBlocked ? 0.6 : task.isWorkedOnToday ? 0.5 : 1.0,
       child: Card(
         color: _cardColor(context),
         child: InkWell(
@@ -251,14 +251,20 @@ class TaskCard extends StatelessWidget {
                   ),
                 ),
               ),
-              // Top-left icons: in-progress, priority flag, quick task bolt
-              if (task.isHighPriority || task.isQuickTask || showIndicator)
+              // Top-left icons: in-progress, priority flag, quick task bolt, worked-on-today
+              if (task.isHighPriority || task.isQuickTask || showIndicator || task.isWorkedOnToday)
                 Positioned(
                   left: 6,
                   top: 6,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      if (task.isWorkedOnToday)
+                        Icon(
+                          Icons.check_circle,
+                          size: 18,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
                       if (showIndicator && indicatorStyle == 0)
                         Padding(
                           padding: const EdgeInsets.only(right: 2),

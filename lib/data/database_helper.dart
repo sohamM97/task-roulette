@@ -253,7 +253,7 @@ class DatabaseHelper {
       )
       AND t.completed_at IS NULL
       AND t.skipped_at IS NULL
-      ORDER BY t.created_at ASC
+      ORDER BY t.priority DESC, t.created_at ASC
     ''');
     return _tasksFromMaps(maps);
   }
@@ -266,7 +266,7 @@ class DatabaseHelper {
       WHERE tr.parent_id = ?
       AND t.completed_at IS NULL
       AND t.skipped_at IS NULL
-      ORDER BY t.created_at ASC
+      ORDER BY t.priority DESC, t.created_at ASC
     ''', [parentId]);
     return _tasksFromMaps(maps);
   }

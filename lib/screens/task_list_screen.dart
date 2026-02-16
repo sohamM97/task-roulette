@@ -108,7 +108,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
       context: context,
       builder: (_) => TaskPickerDialog(
         candidates: candidates,
-        title: 'Link task under "${currentParent.name}"',
+        title: 'Add task under "${currentParent.name}"',
         parentNamesMap: parentNamesMap,
         priorityIds: siblingIds,
       ),
@@ -213,6 +213,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     if (!mounted) return;
     await provider.markWorkedOn(task.id!);
     if (!task.isStarted) await provider.startTask(task.id!);
+    await provider.navigateBack();
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -876,7 +877,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                         onPressed: _linkExistingTask,
                         backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                         foregroundColor: Theme.of(context).colorScheme.onSurface,
-                        child: const Icon(Icons.link),
+                        child: const Icon(Icons.playlist_add),
                       ),
                       const SizedBox(width: 12),
                       FloatingActionButton(
