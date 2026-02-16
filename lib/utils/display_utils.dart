@@ -5,12 +5,14 @@ String displayUrl(String url, {int maxLength = 40}) {
 }
 
 /// Normalizes a URL: auto-prepends https:// for bare domains.
-/// Returns null if the input is empty/null.
+/// Returns null if the input is empty/null or not a valid URL with a host.
 String? normalizeUrl(String? raw) {
   if (raw == null || raw.trim().isEmpty) return null;
   final trimmed = raw.trim();
-  if (!trimmed.contains('://')) return 'https://$trimmed';
-  return trimmed;
+  final normalized = trimmed.contains('://') ? trimmed : 'https://$trimmed';
+  final uri = Uri.tryParse(normalized);
+  if (uri == null || !uri.host.contains('.')) return null;
+  return normalized;
 }
 
 /// Returns true if the URL has an allowed scheme (http or https).

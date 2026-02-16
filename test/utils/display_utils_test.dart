@@ -38,6 +38,14 @@ void main() {
     test('preserves other schemes (they get normalized but fail isAllowedUrl)', () {
       expect(normalizeUrl('ftp://example.com'), 'ftp://example.com');
     });
+
+    test('returns null for random text without valid host', () {
+      expect(normalizeUrl('hello world'), isNull);
+    });
+
+    test('returns null for text with no host after scheme', () {
+      expect(normalizeUrl('https://'), isNull);
+    });
   });
 
   group('isAllowedUrl', () {

@@ -91,9 +91,11 @@ class LeafTaskDetail extends StatelessWidget {
           },
           child: TextField(
             controller: controller,
+            maxLength: 2048,
             decoration: const InputDecoration(
               hintText: 'https://...',
               border: OutlineInputBorder(),
+              counterText: '',
             ),
             keyboardType: TextInputType.url,
             autofocus: true,

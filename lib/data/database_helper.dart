@@ -220,6 +220,11 @@ class DatabaseHelper {
   Future<void> importDatabase(String sourcePath) async {
     await _validateBackup(sourcePath);
     final dbPath = await getDatabasePath();
+    // Create safety backup before overwriting
+    final existingDb = File(dbPath);
+    if (await existingDb.exists()) {
+      await existingDb.copy('$dbPath.bak');
+    }
     if (_dbFuture != null) {
       final db = await _dbFuture!;
       await db.close();

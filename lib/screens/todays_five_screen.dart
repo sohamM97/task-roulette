@@ -311,6 +311,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   Future<void> _workedOnTask(Task task) async {
     final provider = context.read<TaskProvider>();
     final wasStarted = task.isStarted;
+    final previousLastWorkedAt = task.lastWorkedAt;
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.markWorkedOn(task.id!);
@@ -335,7 +336,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () async {
-            await provider.unmarkWorkedOn(task.id!);
+            await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
             if (!wasStarted) await provider.unstartTask(task.id!);
             final restored = await DatabaseHelper().getTaskById(task.id!);
             if (!mounted) return;

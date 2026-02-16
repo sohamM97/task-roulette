@@ -15,6 +15,8 @@ val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+} else {
+    logger.warn("WARNING: key.properties not found — release builds will use debug signing!")
 }
 
 android {
