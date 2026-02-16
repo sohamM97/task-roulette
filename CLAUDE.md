@@ -49,6 +49,11 @@ The goal of this app is **minimal cognitive load**. The user wants a quick place
 - Avoid jargon like "DAG", "node", "link" in UI — keep it simple for end users.
 - Material 3 theming throughout.
 
+## Slash Commands
+
+- `/code-review` and `/sec-review` — **always run these in a fresh Claude Code session**, not the current one. They need a clean context window for thorough review. Remind the user if they try to run them mid-session.
+- `/code-review-fix` and `/sec-review-fix` — also best in a fresh session, separate from the review session.
+
 ## Development Preferences
 
 - Ask user about committing and pushing occasionally — don't wait until asked. But first remind them to review the changes and test on Linux (via `./dev.sh`, not `flutter build`) before committing.
