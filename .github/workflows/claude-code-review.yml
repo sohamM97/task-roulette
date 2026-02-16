@@ -18,6 +18,11 @@ jobs:
         with:
           fetch-depth: 1
 
+      # Uses the direct prompt pattern from the official docs:
+      # https://github.com/anthropics/claude-code-action/blob/main/docs/solutions.md
+      # The plugin_marketplaces + plugins approach (code-review@claude-code-plugins)
+      # crashes immediately (exit code 1, 0 cost). This prompt-based approach
+      # works and gives us control over what the review focuses on.
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
