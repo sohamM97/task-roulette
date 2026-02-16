@@ -247,9 +247,10 @@ class _TaskListScreenState extends State<TaskListScreen>
     _preWorkedOnTimestamps[task.id!] = previousLastWorkedAt;
     await showCompletionAnimation(context);
     if (!mounted) return;
-    await provider.markWorkedOn(task.id!);
-    if (!task.isStarted) await provider.startTask(task.id!);
-    await provider.navigateBack();
+    await provider.markWorkedOnAndNavigateBack(
+      task.id!,
+      alsoStart: !task.isStarted,
+    );
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
