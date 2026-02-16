@@ -54,12 +54,19 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             final match = allLeaves.where((t) => t.id == id);
             if (match.isNotEmpty) {
               tasks.add(match.first);
+              // Detect external completion (e.g. worked-on from All Tasks)
+              if (match.first.isWorkedOnToday && !savedCompletedIds.contains(id)) {
+                savedCompletedIds.add(id);
+              }
             }
-          } else if (savedCompletedIds.contains(id)) {
-            // No longer a leaf but was done — keep for progress
+          } else {
+            // No longer a leaf — check if completed/done externally
             final fresh = await db.getTaskById(id);
             if (fresh != null) {
-              tasks.add(fresh);
+              if (savedCompletedIds.contains(id) || fresh.isCompleted || fresh.isWorkedOnToday) {
+                savedCompletedIds.add(id);
+                tasks.add(fresh);
+              }
             }
           }
         }
@@ -115,12 +122,21 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         final fresh = await db.getTaskById(t.id!);
         if (fresh != null) {
           refreshed.add(fresh);
+          // Detect "worked on today" done externally (e.g. from All Tasks leaf detail)
+          if (fresh.isWorkedOnToday && !_completedIds.contains(fresh.id)) {
+            _completedIds.add(fresh.id!);
+          }
         }
-      } else if (_completedIds.contains(t.id)) {
-        // No longer a leaf but already done — keep for progress tracking
+      } else {
+        // No longer a leaf — check if completed/done externally
         final fresh = await db.getTaskById(t.id!);
         if (fresh != null) {
-          refreshed.add(fresh);
+          if (_completedIds.contains(t.id) || fresh.isCompleted || fresh.isWorkedOnToday) {
+            // Keep for progress tracking
+            _completedIds.add(fresh.id!);
+            refreshed.add(fresh);
+          }
+          // Otherwise: became non-leaf without being done — will be backfilled
         }
       }
     }

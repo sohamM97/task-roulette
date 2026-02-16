@@ -927,6 +927,100 @@ void main() {
       // No eligible replacement → stays at 4
       expect(refreshed, hasLength(4));
     });
+
+    test('externally completed task shows as done, not vanished', () async {
+      // Bug: task completed from All Tasks leaf detail vanishes from Today's 5
+      // instead of showing struck out
+      final todaysIds = <int>[];
+      for (int i = 0; i < 5; i++) {
+        todaysIds.add(await db.insertTask(Task(name: 'Today $i')));
+      }
+
+      final completedIds = <int>{};
+
+      // Simulate: user completes task 0 from All Tasks (not from Today's 5)
+      await db.completeTask(todaysIds[0]);
+
+      // refreshSnapshots logic (updated)
+      final allLeaves = await provider.getAllLeafTasks();
+      final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+      final refreshed = <Task>[];
+      for (final id in todaysIds) {
+        if (leafIdSet.contains(id)) {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) {
+            refreshed.add(fresh);
+            if (fresh.isWorkedOnToday && !completedIds.contains(fresh.id)) {
+              completedIds.add(fresh.id!);
+            }
+          }
+        } else {
+          // Not a leaf — check if completed externally
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) {
+            if (completedIds.contains(id) || fresh.isCompleted || fresh.isWorkedOnToday) {
+              completedIds.add(fresh.id!);
+              refreshed.add(fresh);
+            }
+          }
+        }
+      }
+
+      // Task 0 should still be in the list (not vanished)
+      expect(refreshed, hasLength(5));
+      expect(refreshed.map((t) => t.id), contains(todaysIds[0]));
+      // And it should be in completedIds (shown as struck out)
+      expect(completedIds, contains(todaysIds[0]));
+    });
+
+    test('externally worked-on task shows as done, not in-progress', () async {
+      // Bug: task marked "done today" from All Tasks leaf detail shows as
+      // in-progress in Today's 5 instead of struck out
+      final todaysIds = <int>[];
+      for (int i = 0; i < 5; i++) {
+        todaysIds.add(await db.insertTask(Task(name: 'Today $i')));
+      }
+
+      final completedIds = <int>{};
+
+      // Simulate: user marks task 0 as "worked on today" from All Tasks
+      await db.markWorkedOn(todaysIds[0]);
+      await db.startTask(todaysIds[0]);
+
+      // refreshSnapshots logic (updated)
+      final allLeaves = await provider.getAllLeafTasks();
+      final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+      final refreshed = <Task>[];
+      for (final id in todaysIds) {
+        if (leafIdSet.contains(id)) {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) {
+            refreshed.add(fresh);
+            if (fresh.isWorkedOnToday && !completedIds.contains(fresh.id)) {
+              completedIds.add(fresh.id!);
+            }
+          }
+        } else {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) {
+            if (completedIds.contains(id) || fresh.isCompleted || fresh.isWorkedOnToday) {
+              completedIds.add(fresh.id!);
+              refreshed.add(fresh);
+            }
+          }
+        }
+      }
+
+      // Task 0 should still be in the list
+      expect(refreshed, hasLength(5));
+      expect(refreshed.map((t) => t.id), contains(todaysIds[0]));
+      // And it should be in completedIds (shown as struck out, not in-progress)
+      expect(completedIds, contains(todaysIds[0]));
+      // The task should have isWorkedOnToday = true
+      final task0 = refreshed.firstWhere((t) => t.id == todaysIds[0]);
+      expect(task0.isWorkedOnToday, isTrue);
+      expect(task0.isStarted, isTrue);
+    });
   });
 
   group("Today's 5 new set preserves done tasks", () {
