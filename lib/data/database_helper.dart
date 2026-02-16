@@ -163,17 +163,49 @@ class DatabaseHelper {
     return join(appDir.path, 'task_roulette.db');
   }
 
-  /// Validates that [sourcePath] is a SQLite database with a `tasks` table.
-  /// Throws [FormatException] if it isn't.
+  static const _maxBackupSizeBytes = 100 * 1024 * 1024; // 100 MB
+  static const _expectedTables = ['tasks', 'task_relationships', 'task_dependencies'];
+
+  /// Validates that [sourcePath] is a valid TaskRoulette backup.
+  /// Checks: file size, required tables, no triggers/views, schema version.
+  /// Throws [FormatException] if validation fails.
   Future<void> _validateBackup(String sourcePath) async {
+    // Check file size
+    final fileSize = await File(sourcePath).length();
+    if (fileSize > _maxBackupSizeBytes) {
+      throw const FormatException('Backup file is too large (max 100 MB)');
+    }
+
     Database? testDb;
     try {
       testDb = await openDatabase(sourcePath, readOnly: true);
-      final tables = await testDb.rawQuery(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'",
+
+      // Check all expected tables exist
+      for (final table in _expectedTables) {
+        final result = await testDb.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+          [table],
+        );
+        if (result.isEmpty) {
+          throw FormatException('Not a valid TaskRoulette backup (missing $table)');
+        }
+      }
+
+      // Check schema version is compatible
+      final versionResult = await testDb.rawQuery('PRAGMA user_version');
+      final version = versionResult.first.values.first as int;
+      if (version < 1 || version > 11) {
+        throw FormatException(
+          'Incompatible backup version ($version). This app supports versions 1-11.',
+        );
+      }
+
+      // Reject databases with triggers or views (potential tampering)
+      final dangerous = await testDb.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type IN ('trigger', 'view')",
       );
-      if (tables.isEmpty) {
-        throw const FormatException('Not a valid TaskRoulette backup');
+      if (dangerous.isNotEmpty) {
+        throw const FormatException('Backup contains unexpected database objects');
       }
     } on DatabaseException {
       throw const FormatException('Not a valid database file');

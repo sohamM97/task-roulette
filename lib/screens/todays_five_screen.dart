@@ -44,9 +44,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       if (savedIds.isNotEmpty) {
         final allLeaves = await provider.getAllLeafTasks();
         final leafIdSet = allLeaves.map((t) => t.id!).toSet();
-        final savedCompletedIds = completedIds.map(int.parse).toSet();
+        final savedCompletedIds = completedIds.map(int.tryParse).whereType<int>().toSet();
         final db = DatabaseHelper();
-        final idSet = savedIds.map(int.parse).toSet();
+        final idSet = savedIds.map(int.tryParse).whereType<int>().toSet();
         final tasks = <Task>[];
         for (final id in idSet) {
           if (leafIdSet.contains(id)) {

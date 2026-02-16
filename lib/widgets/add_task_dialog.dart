@@ -45,9 +45,11 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
           TextField(
             controller: _controller,
             autofocus: true,
+            maxLength: 500,
             decoration: const InputDecoration(
               hintText: 'Task name',
               border: OutlineInputBorder(),
+              counterText: '',
             ),
             textCapitalization: TextCapitalization.sentences,
             onSubmitted: (_) => _submit(),

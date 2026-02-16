@@ -46,10 +46,10 @@ class LeafTaskDetail extends StatelessWidget {
 
   Future<void> _openUrl(BuildContext context) async {
     final uri = Uri.tryParse(task.url!);
-    if (uri == null) {
+    if (uri == null || !isAllowedUrl(task.url!)) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open link'), showCloseIcon: true, persist: false),
+          const SnackBar(content: Text('Only web links (http/https) are supported'), showCloseIcon: true, persist: false),
         );
       }
       return;
@@ -98,7 +98,14 @@ class LeafTaskDetail extends StatelessWidget {
             keyboardType: TextInputType.url,
             autofocus: true,
             onSubmitted: (value) {
-              final url = value.trim().isEmpty ? null : value.trim();
+              final url = normalizeUrl(value);
+              if (url != null && !isAllowedUrl(url)) {
+                Navigator.pop(dialogContext);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Only web links (http/https) are supported'), persist: false),
+                );
+                return;
+              }
               Navigator.pop(dialogContext);
               onUpdateUrl(url);
             },
@@ -119,9 +126,14 @@ class LeafTaskDetail extends StatelessWidget {
           ),
           FilledButton(
             onPressed: () {
-              final url = controller.text.trim().isEmpty
-                  ? null
-                  : controller.text.trim();
+              final url = normalizeUrl(controller.text);
+              if (url != null && !isAllowedUrl(url)) {
+                Navigator.pop(dialogContext);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Only web links (http/https) are supported'), persist: false),
+                );
+                return;
+              }
               Navigator.pop(dialogContext);
               onUpdateUrl(url);
             },

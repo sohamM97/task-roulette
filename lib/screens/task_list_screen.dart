@@ -12,6 +12,7 @@ import '../widgets/empty_state.dart';
 import '../widgets/leaf_task_detail.dart';
 import '../widgets/random_result_dialog.dart';
 import '../widgets/task_card.dart';
+import '../utils/display_utils.dart';
 import '../widgets/delete_task_dialog.dart';
 import '../widgets/task_picker_dialog.dart';
 import '../services/backup_service.dart';
@@ -203,7 +204,11 @@ class _TaskListScreenState extends State<TaskListScreen>
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(hintText: 'Task name'),
+          maxLength: 500,
+          decoration: const InputDecoration(
+            hintText: 'Task name',
+            counterText: '',
+          ),
           onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
         ),
         actions: [
@@ -725,10 +730,15 @@ class _TaskListScreenState extends State<TaskListScreen>
                   IconButton(
                     icon: const Icon(Icons.link),
                     onPressed: () {
-                      final uri = Uri.tryParse(provider.currentParent!.url!);
-                      if (uri != null) {
-                        launchUrl(uri, mode: LaunchMode.externalApplication);
+                      final url = provider.currentParent!.url!;
+                      if (!isAllowedUrl(url)) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Only web links (http/https) are supported'), persist: false),
+                        );
+                        return;
                       }
+                      final uri = Uri.parse(url);
+                      launchUrl(uri, mode: LaunchMode.externalApplication);
                     },
                     tooltip: 'Open link',
                   ),
