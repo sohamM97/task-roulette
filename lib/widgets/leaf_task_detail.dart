@@ -100,8 +100,14 @@ class LeafTaskDetail extends StatelessWidget {
             keyboardType: TextInputType.url,
             autofocus: true,
             onSubmitted: (value) {
-              final url = normalizeUrl(value);
-              if (url != null && !isAllowedUrl(url)) {
+              final trimmed = value.trim();
+              if (trimmed.isEmpty) {
+                Navigator.pop(dialogContext);
+                onUpdateUrl(null);
+                return;
+              }
+              final url = normalizeUrl(trimmed);
+              if (url == null || !isAllowedUrl(url)) {
                 Navigator.pop(dialogContext);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Only web links (http/https) are supported'), persist: false),
@@ -128,8 +134,14 @@ class LeafTaskDetail extends StatelessWidget {
           ),
           FilledButton(
             onPressed: () {
-              final url = normalizeUrl(controller.text);
-              if (url != null && !isAllowedUrl(url)) {
+              final trimmed = controller.text.trim();
+              if (trimmed.isEmpty) {
+                Navigator.pop(dialogContext);
+                onUpdateUrl(null);
+                return;
+              }
+              final url = normalizeUrl(trimmed);
+              if (url == null || !isAllowedUrl(url)) {
                 Navigator.pop(dialogContext);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Only web links (http/https) are supported'), persist: false),
