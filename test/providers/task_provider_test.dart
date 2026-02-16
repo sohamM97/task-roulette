@@ -1037,4 +1037,272 @@ void main() {
       expect(task.startedAt, isNull);
     });
   });
+
+  // Helper to navigate into a task by ID (looks up the Task object from provider.tasks)
+  Future<void> navInto(TaskProvider p, int taskId) async {
+    final task = p.tasks.firstWhere((t) => t.id == taskId);
+    await p.navigateInto(task);
+  }
+
+  group('Field updates and currentParent freshness', () {
+    test('renameTask updates currentParent in place', () async {
+      final parentId = await db.insertTask(Task(name: 'Old Name'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      await navInto(provider, parentId);
+      expect(provider.currentParent!.name, 'Old Name');
+
+      await provider.renameTask(parentId, 'New Name');
+
+      expect(provider.currentParent!.name, 'New Name');
+      // DB should also reflect the change
+      final task = await db.getTaskById(parentId);
+      expect(task!.name, 'New Name');
+    });
+
+    test('updateTaskUrl updates currentParent in place', () async {
+      final parentId = await db.insertTask(Task(name: 'Task'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      await navInto(provider, parentId);
+      expect(provider.currentParent!.url, isNull);
+
+      await provider.updateTaskUrl(parentId, 'https://example.com');
+
+      expect(provider.currentParent!.url, 'https://example.com');
+    });
+
+    test('updateTaskPriority updates currentParent in place', () async {
+      final parentId = await db.insertTask(Task(name: 'Task'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      await navInto(provider, parentId);
+      expect(provider.currentParent!.priority, 0); // default Normal
+
+      await provider.updateTaskPriority(parentId, 1); // high
+
+      expect(provider.currentParent!.priority, 1);
+      expect(provider.currentParent!.isHighPriority, isTrue);
+    });
+
+    test('updateQuickTask updates currentParent in place', () async {
+      final parentId = await db.insertTask(Task(name: 'Task'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      await navInto(provider, parentId);
+
+      await provider.updateQuickTask(parentId, 1); // quick
+
+      expect(provider.currentParent!.difficulty, 1);
+      expect(provider.currentParent!.isQuickTask, isTrue);
+    });
+
+    test('field updates on non-currentParent task do not break currentParent', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      await navInto(provider, parentId);
+
+      // Update a different task (the child, not the currentParent)
+      await provider.renameTask(childId, 'Renamed Child');
+
+      // currentParent should be unchanged
+      expect(provider.currentParent!.name, 'Parent');
+      // But the child in the list should be updated
+      final child = provider.tasks.firstWhere((t) => t.id == childId);
+      expect(child.name, 'Renamed Child');
+    });
+  });
+
+  group('markWorkedOn / unmarkWorkedOn', () {
+    test('markWorkedOn updates currentParent lastWorkedAt', () async {
+      final parentId = await db.insertTask(Task(name: 'Task'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      await navInto(provider, parentId);
+      expect(provider.currentParent!.lastWorkedAt, isNull);
+
+      await provider.markWorkedOn(parentId);
+
+      expect(provider.currentParent!.lastWorkedAt, isNotNull);
+      expect(provider.currentParent!.isWorkedOnToday, isTrue);
+    });
+
+    test('unmarkWorkedOn clears currentParent lastWorkedAt', () async {
+      final parentId = await db.insertTask(Task(name: 'Task'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      await navInto(provider, parentId);
+      await provider.markWorkedOn(parentId);
+
+      await provider.unmarkWorkedOn(parentId);
+
+      expect(provider.currentParent!.lastWorkedAt, isNull);
+      expect(provider.currentParent!.isWorkedOnToday, isFalse);
+    });
+
+    test('unmarkWorkedOn restores previous timestamp on currentParent', () async {
+      final parentId = await db.insertTask(Task(name: 'Task'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      await navInto(provider, parentId);
+
+      final oldTimestamp = DateTime.now().subtract(const Duration(days: 2)).millisecondsSinceEpoch;
+      await provider.markWorkedOn(parentId);
+      await provider.unmarkWorkedOn(parentId, restoreTo: oldTimestamp);
+
+      expect(provider.currentParent!.lastWorkedAt, oldTimestamp);
+    });
+
+    test('markWorkedOn on non-currentParent does not break currentParent', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      await navInto(provider, parentId);
+
+      await provider.markWorkedOn(childId);
+
+      // currentParent unchanged
+      expect(provider.currentParent!.lastWorkedAt, isNull);
+      expect(provider.currentParent!.name, 'Parent');
+    });
+  });
+
+  group('Multi-parent DAG operations', () {
+    test('linkChildToCurrent adds relationship', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+
+      await provider.loadRootTasks();
+      await navInto(provider, parentId);
+
+      final result = await provider.linkChildToCurrent(childId);
+      expect(result, isTrue);
+
+      // Child should now appear in parent's children
+      expect(provider.tasks.any((t) => t.id == childId), isTrue);
+    });
+
+    test('linkChildToCurrent prevents cycle', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      await db.addRelationship(a, b);
+
+      await provider.loadRootTasks();
+      await navInto(provider, a);
+      await navInto(provider, b);
+
+      // Try to link A as child of B (would create A→B→A cycle)
+      final result = await provider.linkChildToCurrent(a);
+      expect(result, isFalse);
+    });
+
+    test('addParentToTask adds second parent', () async {
+      final parent1 = await db.insertTask(Task(name: 'Parent 1'));
+      final parent2 = await db.insertTask(Task(name: 'Parent 2'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent1, child);
+
+      await provider.loadRootTasks();
+
+      final result = await provider.addParentToTask(child, parent2);
+      expect(result, isTrue);
+
+      // Child should now have two parents
+      final parents = await db.getParents(child);
+      expect(parents.length, 2);
+      expect(parents.map((t) => t.id).toSet(), {parent1, parent2});
+    });
+
+    test('addParentToTask prevents cycle', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      await db.addRelationship(a, b);
+
+      await provider.loadRootTasks();
+
+      // Try to make A a child of B (would create A→B→A cycle)
+      final result = await provider.addParentToTask(a, b);
+      expect(result, isFalse);
+    });
+
+    test('moveTask moves from one parent to another', () async {
+      final parent1 = await db.insertTask(Task(name: 'Parent 1'));
+      final parent2 = await db.insertTask(Task(name: 'Parent 2'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent1, child);
+
+      await provider.loadRootTasks();
+      await navInto(provider, parent1);
+
+      final result = await provider.moveTask(child, parent2);
+      expect(result, isTrue);
+
+      // Child should no longer be under parent1
+      final children1 = await db.getChildren(parent1);
+      expect(children1.any((t) => t.id == child), isFalse);
+      // Child should be under parent2
+      final children2 = await db.getChildren(parent2);
+      expect(children2.any((t) => t.id == child), isTrue);
+    });
+
+    test('moveTask prevents cycle', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final c = await db.insertTask(Task(name: 'C'));
+      await db.addRelationship(a, b);
+      await db.addRelationship(b, c);
+
+      await provider.loadRootTasks();
+      await navInto(provider, a);
+
+      // Try to move B under C — would create cycle since B→C exists
+      final result = await provider.moveTask(b, c);
+      expect(result, isFalse);
+    });
+
+    test('unlinkFromCurrentParent removes relationship', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      await navInto(provider, parentId);
+      expect(provider.tasks.any((t) => t.id == childId), isTrue);
+
+      await provider.unlinkFromCurrentParent(childId);
+
+      expect(provider.tasks.any((t) => t.id == childId), isFalse);
+      // But task still exists (now a root task)
+      final task = await db.getTaskById(childId);
+      expect(task, isNotNull);
+    });
+
+    test('unlinkFromCurrentParent does nothing at root', () async {
+      final id = await db.insertTask(Task(name: 'Root Task'));
+      await provider.loadRootTasks();
+      expect(provider.currentParent, isNull);
+
+      // Should not throw, just no-op
+      await provider.unlinkFromCurrentParent(id);
+    });
+  });
 }

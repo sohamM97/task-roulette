@@ -1230,4 +1230,276 @@ void main() {
       expect(await db.getTaskById(d), isNull);
     });
   });
+
+  group('Repeating tasks', () {
+    test('updateRepeatInterval sets interval and clears next_due_at', () async {
+      final id = await db.insertTask(Task(name: 'Exercise'));
+      await db.updateRepeatInterval(id, 'daily');
+
+      final task = await db.getTaskById(id);
+      expect(task!.repeatInterval, 'daily');
+      expect(task.nextDueAt, isNull);
+      expect(task.isRepeating, isTrue);
+      expect(task.isDue, isTrue); // null nextDueAt means due
+    });
+
+    test('updateRepeatInterval to null removes repeating', () async {
+      final id = await db.insertTask(Task(name: 'Exercise'));
+      await db.updateRepeatInterval(id, 'weekly');
+      await db.updateRepeatInterval(id, null);
+
+      final task = await db.getTaskById(id);
+      expect(task!.repeatInterval, isNull);
+      expect(task.isRepeating, isFalse);
+    });
+
+    test('completeRepeatingTask sets next_due_at for daily', () async {
+      final id = await db.insertTask(Task(name: 'Exercise'));
+      await db.updateRepeatInterval(id, 'daily');
+      // Start the task and mark worked on
+      await db.startTask(id);
+      await db.markWorkedOn(id);
+
+      final before = DateTime.now().millisecondsSinceEpoch;
+      await db.completeRepeatingTask(id, 'daily');
+      final after = DateTime.now().millisecondsSinceEpoch;
+
+      final task = await db.getTaskById(id);
+      // next_due_at should be ~1 day from now
+      final expectedMin = before + const Duration(days: 1).inMilliseconds;
+      final expectedMax = after + const Duration(days: 1).inMilliseconds;
+      expect(task!.nextDueAt, greaterThanOrEqualTo(expectedMin));
+      expect(task.nextDueAt, lessThanOrEqualTo(expectedMax));
+      // started_at and last_worked_at should be cleared
+      expect(task.isStarted, isFalse);
+      expect(task.startedAt, isNull);
+      expect(task.lastWorkedAt, isNull);
+      // isDue should be false (it's in the future)
+      expect(task.isDue, isFalse);
+    });
+
+    test('completeRepeatingTask sets next_due_at for weekly', () async {
+      final id = await db.insertTask(Task(name: 'Review'));
+      await db.completeRepeatingTask(id, 'weekly');
+
+      final task = await db.getTaskById(id);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final expectedApprox = now + const Duration(days: 7).inMilliseconds;
+      // Allow 1 second tolerance
+      expect(task!.nextDueAt, closeTo(expectedApprox, 1000));
+    });
+
+    test('completeRepeatingTask sets next_due_at for biweekly', () async {
+      final id = await db.insertTask(Task(name: 'Laundry'));
+      await db.completeRepeatingTask(id, 'biweekly');
+
+      final task = await db.getTaskById(id);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final expectedApprox = now + const Duration(days: 14).inMilliseconds;
+      expect(task!.nextDueAt, closeTo(expectedApprox, 1000));
+    });
+
+    test('completeRepeatingTask sets next_due_at for monthly', () async {
+      final id = await db.insertTask(Task(name: 'Bills'));
+      await db.completeRepeatingTask(id, 'monthly');
+
+      final task = await db.getTaskById(id);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final expectedApprox = now + const Duration(days: 30).inMilliseconds;
+      expect(task!.nextDueAt, closeTo(expectedApprox, 1000));
+    });
+
+    test('completeRepeatingTask clears started_at and last_worked_at', () async {
+      final id = await db.insertTask(Task(name: 'Exercise'));
+      await db.startTask(id);
+      await db.markWorkedOn(id);
+
+      // Verify state before completion
+      var task = await db.getTaskById(id);
+      expect(task!.isStarted, isTrue);
+      expect(task.lastWorkedAt, isNotNull);
+
+      await db.completeRepeatingTask(id, 'daily');
+
+      task = await db.getTaskById(id);
+      expect(task!.isStarted, isFalse);
+      expect(task.startedAt, isNull);
+      expect(task.lastWorkedAt, isNull);
+    });
+
+    test('repeating task does NOT set completed_at', () async {
+      final id = await db.insertTask(Task(name: 'Exercise'));
+      await db.updateRepeatInterval(id, 'daily');
+      await db.completeRepeatingTask(id, 'daily');
+
+      // Task should still appear in active queries (not archived)
+      final task = await db.getTaskById(id);
+      expect(task, isNotNull);
+      expect(task!.isCompleted, isFalse);
+      expect(task.completedAt, isNull);
+    });
+
+    test('repeating task becomes due after next_due_at passes', () async {
+      final id = await db.insertTask(Task(name: 'Exercise'));
+      // Manually set next_due_at to the past
+      final pastTime = DateTime.now().subtract(const Duration(hours: 1)).millisecondsSinceEpoch;
+      final dbInstance = await db.database;
+      await dbInstance.update('tasks', {'next_due_at': pastTime, 'repeat_interval': 'daily'},
+          where: 'id = ?', whereArgs: [id]);
+
+      final task = await db.getTaskById(id);
+      expect(task!.isDue, isTrue);
+      expect(task.isRepeating, isTrue);
+    });
+
+    test('repeating task is not due when next_due_at is in the future', () async {
+      final id = await db.insertTask(Task(name: 'Exercise'));
+      final futureTime = DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch;
+      final dbInstance = await db.database;
+      await dbInstance.update('tasks', {'next_due_at': futureTime, 'repeat_interval': 'daily'},
+          where: 'id = ?', whereArgs: [id]);
+
+      final task = await db.getTaskById(id);
+      expect(task!.isDue, isFalse);
+      expect(task.isRepeating, isTrue);
+    });
+  });
+
+  group('markWorkedOn / unmarkWorkedOn', () {
+    test('markWorkedOn sets last_worked_at to now', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      final before = DateTime.now().millisecondsSinceEpoch;
+      await db.markWorkedOn(id);
+      final after = DateTime.now().millisecondsSinceEpoch;
+
+      final task = await db.getTaskById(id);
+      expect(task!.lastWorkedAt, isNotNull);
+      expect(task.lastWorkedAt, greaterThanOrEqualTo(before));
+      expect(task.lastWorkedAt, lessThanOrEqualTo(after));
+      expect(task.isWorkedOnToday, isTrue);
+    });
+
+    test('unmarkWorkedOn clears last_worked_at by default', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      await db.markWorkedOn(id);
+
+      await db.unmarkWorkedOn(id);
+
+      final task = await db.getTaskById(id);
+      expect(task!.lastWorkedAt, isNull);
+      expect(task.isWorkedOnToday, isFalse);
+    });
+
+    test('unmarkWorkedOn restores to a specific timestamp', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      final oldTimestamp = DateTime.now().subtract(const Duration(days: 3)).millisecondsSinceEpoch;
+
+      // Set a worked-on timestamp
+      await db.markWorkedOn(id);
+      // Restore to the old timestamp
+      await db.unmarkWorkedOn(id, restoreTo: oldTimestamp);
+
+      final task = await db.getTaskById(id);
+      expect(task!.lastWorkedAt, oldTimestamp);
+      expect(task.isWorkedOnToday, isFalse); // 3 days ago, not today
+    });
+
+    test('markWorkedOn does not affect started_at', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      await db.startTask(id);
+      final taskBefore = await db.getTaskById(id);
+      final startedAt = taskBefore!.startedAt;
+
+      await db.markWorkedOn(id);
+
+      final taskAfter = await db.getTaskById(id);
+      expect(taskAfter!.startedAt, startedAt);
+      expect(taskAfter.isStarted, isTrue);
+      expect(taskAfter.lastWorkedAt, isNotNull);
+    });
+
+    test('markWorkedOn overwrites previous last_worked_at', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      await db.markWorkedOn(id);
+      final first = (await db.getTaskById(id))!.lastWorkedAt;
+
+      // Small delay to ensure different timestamps
+      await Future.delayed(const Duration(milliseconds: 10));
+      await db.markWorkedOn(id);
+      final second = (await db.getTaskById(id))!.lastWorkedAt;
+
+      expect(second, greaterThan(first!));
+    });
+  });
+
+  group('Field updates', () {
+    test('updateTaskName changes name', () async {
+      final id = await db.insertTask(Task(name: 'Old Name'));
+      await db.updateTaskName(id, 'New Name');
+
+      final task = await db.getTaskById(id);
+      expect(task!.name, 'New Name');
+    });
+
+    test('updateTaskUrl sets url', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      await db.updateTaskUrl(id, 'https://example.com');
+
+      final task = await db.getTaskById(id);
+      expect(task!.url, 'https://example.com');
+      expect(task.hasUrl, isTrue);
+    });
+
+    test('updateTaskUrl clears url with empty string', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      await db.updateTaskUrl(id, 'https://example.com');
+      await db.updateTaskUrl(id, '');
+
+      final task = await db.getTaskById(id);
+      expect(task!.url, '');
+    });
+
+    test('updateTaskPriority changes priority', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      expect((await db.getTaskById(id))!.priority, 0); // default Normal
+      await db.updateTaskPriority(id, 1); // high
+
+      final task = await db.getTaskById(id);
+      expect(task!.priority, 1);
+      expect(task.isHighPriority, isTrue);
+    });
+
+    test('updateTaskQuickTask changes difficulty/quick-task flag', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      await db.updateTaskQuickTask(id, 1); // quick
+
+      final task = await db.getTaskById(id);
+      expect(task!.difficulty, 1);
+      expect(task.isQuickTask, isTrue);
+    });
+
+    test('getRootTaskIds returns only IDs', () async {
+      final id1 = await db.insertTask(Task(name: 'Root 1'));
+      final id2 = await db.insertTask(Task(name: 'Root 2'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(id1, childId);
+
+      final rootIds = await db.getRootTaskIds();
+      expect(rootIds, containsAll([id1, id2]));
+      expect(rootIds, isNot(contains(childId)));
+    });
+
+    test('getRootTaskIds excludes completed and skipped tasks', () async {
+      final id1 = await db.insertTask(Task(name: 'Active'));
+      final id2 = await db.insertTask(Task(name: 'Completed'));
+      final id3 = await db.insertTask(Task(name: 'Skipped'));
+      await db.completeTask(id2);
+      await db.skipTask(id3);
+
+      final rootIds = await db.getRootTaskIds();
+      expect(rootIds, contains(id1));
+      expect(rootIds, isNot(contains(id2)));
+      expect(rootIds, isNot(contains(id3)));
+    });
+  });
 }
