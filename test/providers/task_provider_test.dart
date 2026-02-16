@@ -424,8 +424,8 @@ void main() {
       expect(provider.currentParent!.id, childId);
     });
 
-    test('navigateBack after navigateToTask returns to root', () async {
-      final id = await db.insertTask(Task(name: 'Deep task'));
+    test('navigateBack after navigateToTask on root task returns to root', () async {
+      final id = await db.insertTask(Task(name: 'Root task'));
 
       await provider.loadRootTasks();
       final task = provider.tasks.firstWhere((t) => t.id == id);
@@ -433,6 +433,32 @@ void main() {
 
       expect(provider.currentParent!.id, id);
 
+      await provider.navigateBack();
+      expect(provider.currentParent, isNull);
+    });
+
+    test('navigateBack after navigateToTask on deep task goes to parent', () async {
+      final a = await db.insertTask(Task(name: 'Grandparent'));
+      final b = await db.insertTask(Task(name: 'Parent'));
+      final c = await db.insertTask(Task(name: 'Leaf'));
+      await db.addRelationship(a, b);
+      await db.addRelationship(b, c);
+
+      await provider.loadRootTasks();
+      final leaf = (await db.getAllTasks()).firstWhere((t) => t.id == c);
+      await provider.navigateToTask(leaf);
+
+      expect(provider.currentParent!.id, c);
+
+      // Back should go to parent, not root
+      await provider.navigateBack();
+      expect(provider.currentParent!.id, b);
+
+      // Back again to grandparent
+      await provider.navigateBack();
+      expect(provider.currentParent!.id, a);
+
+      // Back to root
       await provider.navigateBack();
       expect(provider.currentParent, isNull);
     });

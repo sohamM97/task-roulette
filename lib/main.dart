@@ -102,7 +102,17 @@ class _AppShellState extends State<AppShell> {
           });
         },
         children: [
-          TodaysFiveScreen(key: _todaysFiveKey),
+          TodaysFiveScreen(
+            key: _todaysFiveKey,
+            onNavigateToTask: (task) async {
+              await context.read<TaskProvider>().navigateToTask(task);
+              _pageController.animateToPage(
+                1,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+            },
+          ),
           const TaskListScreen(),
         ],
       ),

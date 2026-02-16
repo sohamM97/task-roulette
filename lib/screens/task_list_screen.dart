@@ -25,7 +25,8 @@ class TaskListScreen extends StatefulWidget {
   State<TaskListScreen> createState() => _TaskListScreenState();
 }
 
-class _TaskListScreenState extends State<TaskListScreen> {
+class _TaskListScreenState extends State<TaskListScreen>
+    with AutomaticKeepAliveClientMixin {
   // Cached deps Future for the leaf detail view — avoids recreating on every
   // Consumer rebuild. Invalidated when dependency mutations occur.
   int? _leafDepsTaskId;
@@ -33,6 +34,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   // Previous last_worked_at value — for undoing "Done today" via button or snackbar.
   int? _previousLastWorkedAt;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -654,6 +658,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {

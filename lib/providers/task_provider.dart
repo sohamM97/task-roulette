@@ -606,8 +606,12 @@ class TaskProvider extends ChangeNotifier {
   /// Navigate directly to a task, clearing the stack.
   /// Sets stack to [null] so back returns to root.
   Future<void> navigateToTask(Task task) async {
+    final ancestors = await _db.getAncestorPath(task.id!);
     _parentStack.clear();
-    _parentStack.add(null);
+    _parentStack.add(null); // root
+    for (final ancestor in ancestors) {
+      _parentStack.add(ancestor);
+    }
     _currentParent = task;
     await _refreshCurrentList();
   }

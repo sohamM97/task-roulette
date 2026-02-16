@@ -1166,6 +1166,51 @@ void main() {
       expect(deps.map((t) => t.id), contains(external));
     });
 
+  });
+
+  group('getAncestorPath', () {
+    test('returns empty for root task', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final path = await db.getAncestorPath(root);
+      expect(path, isEmpty);
+    });
+
+    test('returns single parent for direct child', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      final path = await db.getAncestorPath(child);
+      expect(path.map((t) => t.id), [parent]);
+    });
+
+    test('returns full chain root-first for deep hierarchy', () async {
+      // A → B → C → D
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final c = await db.insertTask(Task(name: 'C'));
+      final d = await db.insertTask(Task(name: 'D'));
+      await db.addRelationship(a, b);
+      await db.addRelationship(b, c);
+      await db.addRelationship(c, d);
+
+      final path = await db.getAncestorPath(d);
+      expect(path.map((t) => t.id), [a, b, c]);
+    });
+
+    test('picks one path for multi-parent task', () async {
+      final p1 = await db.insertTask(Task(name: 'Parent1'));
+      final p2 = await db.insertTask(Task(name: 'Parent2'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(p1, child);
+      await db.addRelationship(p2, child);
+
+      final path = await db.getAncestorPath(child);
+      expect(path.length, 1);
+      // Picks min id parent
+      expect(path.first.id, p1);
+    });
+
     test('deep subtree with multiple levels', () async {
       // A → B → C → D
       final a = await db.insertTask(Task(name: 'A'));
