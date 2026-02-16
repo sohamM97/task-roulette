@@ -72,6 +72,60 @@ void main() {
     });
   });
 
+  group('completeTaskOnly', () {
+    test('completes task without navigating back', () async {
+      // Create parent → child (leaf)
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Leaf child'));
+      await db.addRelationship(parentId, childId);
+
+      // Navigate: root → parent → child (leaf)
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      final child = provider.tasks.firstWhere((t) => t.id == childId);
+      await provider.navigateInto(child);
+
+      expect(provider.currentParent!.id, childId);
+
+      // completeTaskOnly should NOT navigate back
+      await provider.completeTaskOnly(childId);
+
+      // Still on the same level (currentParent unchanged)
+      expect(provider.currentParent!.id, childId);
+
+      // Verify task is actually completed in DB
+      final freshTask = await db.getTaskById(childId);
+      expect(freshTask!.isCompleted, isTrue);
+    });
+
+    test('completeTask navigates back but completeTaskOnly does not', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      // Navigate to child leaf
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      final child = provider.tasks.firstWhere((t) => t.id == childId);
+      await provider.navigateInto(child);
+
+      // completeTask navigates back
+      await provider.completeTask(childId);
+      expect(provider.currentParent!.id, parentId);
+
+      // Restore the child and navigate back to it
+      await db.uncompleteTask(childId);
+      await provider.navigateInto(child);
+      expect(provider.currentParent!.id, childId);
+
+      // completeTaskOnly does NOT navigate back
+      await provider.completeTaskOnly(childId);
+      expect(provider.currentParent!.id, childId);
+    });
+  });
+
   group('startTask / unstartTask', () {
     test('startTask updates currentParent when on leaf', () async {
       final leafId = await db.insertTask(Task(name: 'Leaf'));

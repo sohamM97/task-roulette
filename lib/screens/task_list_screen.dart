@@ -32,8 +32,10 @@ class _TaskListScreenState extends State<TaskListScreen>
   int? _leafDepsTaskId;
   Future<List<Task>>? _leafDepsFuture;
 
-  // Previous last_worked_at value — for undoing "Done today" via button or snackbar.
-  int? _previousLastWorkedAt;
+  // Pre-mutation lastWorkedAt values, keyed by task ID.
+  // Used by the leaf detail's "Worked on today" undo button.
+  final Map<int, int?> _preWorkedOnTimestamps = {};
+
 
   @override
   bool get wantKeepAlive => true;
@@ -235,7 +237,9 @@ class _TaskListScreenState extends State<TaskListScreen>
 
   Future<void> _workedOn(Task task) async {
     final provider = context.read<TaskProvider>();
-    _previousLastWorkedAt = task.lastWorkedAt;
+    final previousLastWorkedAt = task.lastWorkedAt;
+    final wasStarted = task.isStarted;
+    _preWorkedOnTimestamps[task.id!] = previousLastWorkedAt;
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.markWorkedOn(task.id!);
@@ -251,15 +255,13 @@ class _TaskListScreenState extends State<TaskListScreen>
         duration: const Duration(seconds: 4),
         action: SnackBarAction(
           label: 'Undo',
-          onPressed: () => _undoWorkedOn(task),
+          onPressed: () async {
+            await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
+            if (!wasStarted) await provider.unstartTask(task.id!);
+          },
         ),
       ),
     );
-  }
-
-  Future<void> _undoWorkedOn(Task task) async {
-    final provider = context.read<TaskProvider>();
-    await provider.unmarkWorkedOn(task.id!, restoreTo: _previousLastWorkedAt);
   }
 
   Future<void> _moveTask(Task task) async {
@@ -480,7 +482,11 @@ class _TaskListScreenState extends State<TaskListScreen>
           onUpdatePriority: (p) => _updatePriority(task, p),
           onUpdateQuickTask: (q) => _updateQuickTask(task, q),
           onWorkedOn: () => _workedOn(task),
-          onUndoWorkedOn: () => _undoWorkedOn(task),
+          onUndoWorkedOn: () async {
+            final provider = context.read<TaskProvider>();
+            final restoreTo = _preWorkedOnTimestamps.remove(task.id!);
+            await provider.unmarkWorkedOn(task.id!, restoreTo: restoreTo);
+          },
           dependencies: deps,
           onRemoveDependency: (depId) async {
             _leafDepsTaskId = null; // invalidate before await
@@ -551,9 +557,10 @@ class _TaskListScreenState extends State<TaskListScreen>
       case RandomResultAction.goDeeper:
         // Pick random from this task's non-blocked children
         if (eligible.isNotEmpty) {
-          final deeper = eligible[
-              (eligible.length == 1) ? 0 : DateTime.now().millisecondsSinceEpoch % eligible.length];
-          await _showRandomResult(deeper);
+          final picked = provider.pickWeightedN(eligible, 1);
+          if (picked.isNotEmpty) {
+            await _showRandomResult(picked.first);
+          }
         }
       case RandomResultAction.goToTask:
         await provider.navigateInto(task);

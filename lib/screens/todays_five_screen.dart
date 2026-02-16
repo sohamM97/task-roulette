@@ -28,7 +28,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
 
   String _todayKey() {
     final now = DateTime.now();
-    return '${now.year}-${now.month}-${now.day}';
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
   }
 
   Future<void> _loadTodaysTasks() async {
@@ -243,9 +243,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   Future<void> _stopWorking(Task task) async {
-    final db = DatabaseHelper();
-    await db.unstartTask(task.id!);
-    final fresh = await db.getTaskById(task.id!);
+    final provider = context.read<TaskProvider>();
+    await provider.unstartTask(task.id!);
+    final fresh = await DatabaseHelper().getTaskById(task.id!);
     if (fresh == null || !mounted) return;
     final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
     if (idx >= 0) {
@@ -266,10 +266,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   Future<void> _markInProgress(Task task) async {
-    final db = DatabaseHelper();
-    await db.startTask(task.id!);
+    final provider = context.read<TaskProvider>();
+    await provider.startTask(task.id!);
     // Refresh the task snapshot to show the play icon
-    final fresh = await db.getTaskById(task.id!);
+    final fresh = await DatabaseHelper().getTaskById(task.id!);
     if (fresh == null || !mounted) return;
     final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
     if (idx >= 0) {
@@ -290,11 +290,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   Future<void> _workedOnTask(Task task) async {
-    final db = DatabaseHelper();
+    final provider = context.read<TaskProvider>();
     await showCompletionAnimation(context);
     if (!mounted) return;
-    await db.markWorkedOn(task.id!);
-    if (!task.isStarted) await db.startTask(task.id!);
+    await provider.markWorkedOn(task.id!);
+    if (!task.isStarted) await provider.startTask(task.id!);
     setState(() {
       _completedIds.add(task.id!);
     });
@@ -313,10 +313,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
 
   Future<void> _completeNormalTask(Task task) async {
     final provider = context.read<TaskProvider>();
-    final db = DatabaseHelper();
     await showCompletionAnimation(context);
     if (!mounted) return;
-    await db.completeTask(task.id!);
+    await provider.completeTaskOnly(task.id!);
     setState(() {
       _completedIds.add(task.id!);
     });
@@ -329,13 +328,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () async {
-            await db.uncompleteTask(task.id!);
+            await provider.uncompleteTask(task.id!);
             if (!mounted) return;
             setState(() {
               _completedIds.remove(task.id!);
             });
             await _persist();
-            provider.loadRootTasks();
           },
         ),
         showCloseIcon: true,
@@ -355,8 +353,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   /// If the task is no longer a leaf, swaps it out immediately.
   Future<void> _handleUncomplete(Task task) async {
     final provider = context.read<TaskProvider>();
-    final db = DatabaseHelper();
-    await db.uncompleteTask(task.id!);
+    await provider.uncompleteTask(task.id!);
     if (!mounted) return;
 
     setState(() {
@@ -388,7 +385,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     }
 
     await _persist();
-    provider.loadRootTasks();
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(

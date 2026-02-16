@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../models/task_relationship.dart';
 import '../providers/task_provider.dart';
+import '../theme/app_colors.dart';
 
 /// Cached edge path data extracted from SugiyamaAlgorithm.
 class _EdgePath {
@@ -58,28 +59,6 @@ class _DagViewScreenState extends State<DagViewScreen> {
   Size _estimatedNodeSize = const Size(124, 40);
   int _nodeSeparation = 20;
   int _levelSeparation = 65;
-
-  static const _nodeColors = [
-    Color(0xFFE8DEF8), // purple
-    Color(0xFFD0E8FF), // blue
-    Color(0xFFDCEDC8), // green
-    Color(0xFFFFE0B2), // orange
-    Color(0xFFF8BBD0), // pink
-    Color(0xFFB2EBF2), // cyan
-    Color(0xFFFFF9C4), // yellow
-    Color(0xFFD1C4E9), // lavender
-  ];
-
-  static const _nodeColorsDark = [
-    Color(0xFF352E4D), // purple
-    Color(0xFF2E354D), // blue
-    Color(0xFF2E3E35), // sage
-    Color(0xFF3E3530), // warm grey
-    Color(0xFF3E2E38), // mauve
-    Color(0xFF2E3E3E), // teal
-    Color(0xFF38362E), // taupe
-    Color(0xFF302E45), // slate
-  ];
 
   @override
   void initState() {
@@ -296,9 +275,7 @@ class _DagViewScreenState extends State<DagViewScreen> {
   }
 
   Color _nodeColor(int taskId) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final colors = isDark ? _nodeColorsDark : _nodeColors;
-    return colors[taskId % colors.length];
+    return AppColors.cardColor(context, taskId);
   }
 
   void _navigateToTask(Task task) {
