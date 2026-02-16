@@ -261,7 +261,7 @@ class DatabaseHelper {
       )
       AND t.completed_at IS NULL
       AND t.skipped_at IS NULL
-      ORDER BY t.created_at ASC
+      ORDER BY t.priority DESC, t.created_at ASC
     ''');
     return _tasksFromMaps(maps);
   }
@@ -274,7 +274,7 @@ class DatabaseHelper {
       WHERE tr.parent_id = ?
       AND t.completed_at IS NULL
       AND t.skipped_at IS NULL
-      ORDER BY t.created_at ASC
+      ORDER BY t.priority DESC, t.created_at ASC
     ''', [parentId]);
     return _tasksFromMaps(maps);
   }
@@ -289,6 +289,27 @@ class DatabaseHelper {
       AND t.skipped_at IS NULL
       ORDER BY t.created_at ASC
     ''', [childId]);
+    return _tasksFromMaps(maps);
+  }
+
+  /// Returns a path from root to the task's immediate parent using a single
+  /// recursive CTE. Picks the first (min id) parent at each level for DAGs.
+  /// Result is ordered root-first: [grandparent, parent].
+  Future<List<Task>> getAncestorPath(int taskId) async {
+    final db = await database;
+    final maps = await db.rawQuery('''
+      WITH RECURSIVE ancestors(id, depth) AS (
+        SELECT MIN(parent_id), 1 FROM task_relationships WHERE child_id = ?
+        UNION ALL
+        SELECT (SELECT MIN(tr.parent_id) FROM task_relationships tr WHERE tr.child_id = a.id),
+               a.depth + 1
+        FROM ancestors a
+        WHERE a.id IS NOT NULL
+      )
+      SELECT t.* FROM tasks t
+      INNER JOIN ancestors a ON t.id = a.id
+      ORDER BY a.depth DESC
+    ''', [taskId]);
     return _tasksFromMaps(maps);
   }
 

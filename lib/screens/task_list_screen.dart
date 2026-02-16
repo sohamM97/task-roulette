@@ -25,12 +25,16 @@ class TaskListScreen extends StatefulWidget {
   State<TaskListScreen> createState() => _TaskListScreenState();
 }
 
-class _TaskListScreenState extends State<TaskListScreen> {
+class _TaskListScreenState extends State<TaskListScreen>
+    with AutomaticKeepAliveClientMixin {
   // Cached deps Future for the leaf detail view — avoids recreating on every
   // Consumer rebuild. Invalidated when dependency mutations occur.
   int? _leafDepsTaskId;
   Future<List<Task>>? _leafDepsFuture;
 
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -106,7 +110,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
       context: context,
       builder: (_) => TaskPickerDialog(
         candidates: candidates,
-        title: 'Link task under "${currentParent.name}"',
+        title: 'Add task under "${currentParent.name}"',
         parentNamesMap: parentNamesMap,
         priorityIds: siblingIds,
       ),
@@ -143,6 +147,28 @@ class _TaskListScreenState extends State<TaskListScreen> {
         .where((id) => id != task.id)
         .toSet();
 
+    // Parent's siblings: grandparent's children minus the current parent
+    var parentSiblingIds = <int>{};
+    final currentParent = provider.currentParent;
+    if (currentParent != null) {
+      final grandparentIds = await provider.getParentIds(currentParent.id!);
+      for (final gpId in grandparentIds) {
+        final gpChildren = await provider.getChildIds(gpId);
+        parentSiblingIds.addAll(gpChildren);
+      }
+      // If parent is a root task, other root tasks are its siblings
+      if (grandparentIds.isEmpty) {
+        final rootTasks = await provider.getRootTaskIds();
+        parentSiblingIds.addAll(rootTasks);
+      }
+      parentSiblingIds.remove(currentParent.id);
+      // Don't include tasks already in siblings or the task itself
+      parentSiblingIds.removeAll(siblingIds);
+      parentSiblingIds.remove(task.id);
+    }
+
+    if (!mounted) return;
+
     final selected = await showDialog<Task>(
       context: context,
       builder: (_) => TaskPickerDialog(
@@ -150,6 +176,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
         title: 'Also show "${task.name}" under...',
         parentNamesMap: parentNamesMap,
         priorityIds: siblingIds,
+        secondaryPriorityIds: parentSiblingIds,
       ),
     );
 
@@ -211,6 +238,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     if (!mounted) return;
     await provider.markWorkedOn(task.id!);
     if (!task.isStarted) await provider.startTask(task.id!);
+    await provider.navigateBack();
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -652,6 +680,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
@@ -875,7 +904,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                         onPressed: _linkExistingTask,
                         backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                         foregroundColor: Theme.of(context).colorScheme.onSurface,
-                        child: const Icon(Icons.link),
+                        child: const Icon(Icons.playlist_add),
                       ),
                       const SizedBox(width: 12),
                       FloatingActionButton(

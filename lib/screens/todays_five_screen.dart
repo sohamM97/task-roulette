@@ -7,7 +7,9 @@ import '../providers/task_provider.dart';
 import '../widgets/completion_animation.dart';
 
 class TodaysFiveScreen extends StatefulWidget {
-  const TodaysFiveScreen({super.key});
+  final void Function(Task task)? onNavigateToTask;
+
+  const TodaysFiveScreen({super.key, this.onNavigateToTask});
 
   @override
   State<TodaysFiveScreen> createState() => TodaysFiveScreenState();
@@ -632,13 +634,23 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                 ),
             ],
           ),
-          trailing: isDone
-              ? null
-              : IconButton(
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (!isDone)
+                IconButton(
                   icon: const Icon(Icons.shuffle, size: 20),
                   onPressed: () => _confirmSwapTask(index),
                   tooltip: 'Swap task',
                 ),
+              if (widget.onNavigateToTask != null)
+                IconButton(
+                  icon: const Icon(Icons.open_in_new, size: 20),
+                  onPressed: () => widget.onNavigateToTask!(task),
+                  tooltip: 'Go to task',
+                ),
+            ],
+          ),
           onTap: isDone
               ? () => _handleUncomplete(task)
               : () => _handleTaskDone(task),

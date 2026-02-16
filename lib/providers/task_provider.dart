@@ -507,6 +507,11 @@ class TaskProvider extends ChangeNotifier {
     return _db.getChildIds(parentId);
   }
 
+  Future<List<int>> getRootTaskIds() async {
+    final tasks = await _db.getRootTasks();
+    return tasks.map((t) => t.id!).toList();
+  }
+
   Future<List<TaskRelationship>> getAllRelationships() async {
     return _db.getAllRelationships();
   }
@@ -514,8 +519,12 @@ class TaskProvider extends ChangeNotifier {
   /// Navigate directly to a task, clearing the stack.
   /// Sets stack to [null] so back returns to root.
   Future<void> navigateToTask(Task task) async {
+    final ancestors = await _db.getAncestorPath(task.id!);
     _parentStack.clear();
-    _parentStack.add(null);
+    _parentStack.add(null); // root
+    for (final ancestor in ancestors) {
+      _parentStack.add(ancestor);
+    }
     _currentParent = task;
     await _refreshCurrentList();
   }
@@ -540,6 +549,12 @@ class TaskProvider extends ChangeNotifier {
     } else {
       _tasks = await _db.getChildren(_currentParent!.id!);
     }
+    // Sort worked-on-today tasks to the end, preserving DB order otherwise
+    _tasks.sort((a, b) {
+      final aWorked = a.isWorkedOnToday ? 1 : 0;
+      final bWorked = b.isWorkedOnToday ? 1 : 0;
+      return aWorked.compareTo(bWorked);
+    });
     await _loadAuxiliaryData();
     notifyListeners();
   }
