@@ -52,7 +52,7 @@ The goal of this app is **minimal cognitive load**. The user wants a quick place
 ## Slash Commands
 
 - `/code-review` and `/sec-review` — **always run these in a fresh Claude Code session**, not the current one. They need a clean context window for thorough review. Remind the user if they try to run them mid-session.
-- `/code-review-fix` and `/sec-review-fix` — also best in a fresh session, separate from the review session.
+- `/code-review-fix` and `/sec-review-fix` — can run in any session **except** the one where the corresponding `/code-review` or `/sec-review` was run.
 
 ## Development Preferences
 

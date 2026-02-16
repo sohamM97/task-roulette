@@ -310,12 +310,18 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
 
   Future<void> _workedOnTask(Task task) async {
     final provider = context.read<TaskProvider>();
+    final wasStarted = task.isStarted;
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.markWorkedOn(task.id!);
-    if (!task.isStarted) await provider.startTask(task.id!);
+    if (!wasStarted) await provider.startTask(task.id!);
+    // Re-fetch fresh snapshot so the task card reflects the new state
+    final fresh = await DatabaseHelper().getTaskById(task.id!);
+    if (!mounted) return;
+    final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
     setState(() {
       _completedIds.add(task.id!);
+      if (fresh != null && idx >= 0) _todaysTasks[idx] = fresh;
     });
     await _persist();
     if (!mounted) return;
@@ -326,6 +332,21 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         showCloseIcon: true,
         persist: false,
         duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () async {
+            await provider.unmarkWorkedOn(task.id!);
+            if (!wasStarted) await provider.unstartTask(task.id!);
+            final restored = await DatabaseHelper().getTaskById(task.id!);
+            if (!mounted) return;
+            final i = _todaysTasks.indexWhere((t) => t.id == task.id);
+            setState(() {
+              _completedIds.remove(task.id!);
+              if (restored != null && i >= 0) _todaysTasks[i] = restored;
+            });
+            await _persist();
+          },
+        ),
       ),
     );
   }
@@ -348,9 +369,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
           label: 'Undo',
           onPressed: () async {
             await provider.uncompleteTask(task.id!);
+            final restored = await DatabaseHelper().getTaskById(task.id!);
             if (!mounted) return;
+            final i = _todaysTasks.indexWhere((t) => t.id == task.id);
             setState(() {
               _completedIds.remove(task.id!);
+              if (restored != null && i >= 0) _todaysTasks[i] = restored;
             });
             await _persist();
           },

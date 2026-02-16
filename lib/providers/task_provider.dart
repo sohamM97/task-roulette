@@ -487,7 +487,15 @@ class TaskProvider extends ChangeNotifier {
         lastWorkedAt: () => DateTime.now().millisecondsSinceEpoch,
       );
     }
-    notifyListeners();
+    await _refreshCurrentList();
+  }
+
+  /// Marks a task as worked on, optionally starts it, and navigates back.
+  /// Single DB refresh instead of 2-3 separate ones.
+  Future<void> markWorkedOnAndNavigateBack(int taskId, {bool alsoStart = false}) async {
+    await _db.markWorkedOn(taskId);
+    if (alsoStart) await _db.startTask(taskId);
+    await navigateBack(); // single _refreshCurrentList()
   }
 
   Future<void> unmarkWorkedOn(int taskId, {int? restoreTo}) async {
@@ -495,7 +503,7 @@ class TaskProvider extends ChangeNotifier {
     if (_currentParent?.id == taskId) {
       _currentParent = _currentParent!.copyWith(lastWorkedAt: () => restoreTo);
     }
-    notifyListeners();
+    await _refreshCurrentList();
   }
 
   /// Removes a task from the current parent only (does not delete the task).
