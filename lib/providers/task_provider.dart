@@ -203,6 +203,13 @@ class TaskProvider extends ChangeNotifier {
     await _db.skipTask(taskId);
   }
 
+  /// Completes a task without navigating back. Used by Today's 5 screen
+  /// which manages its own UI state separately.
+  Future<void> completeTaskOnly(int taskId) async {
+    await _db.completeTask(taskId);
+    await _refreshCurrentList();
+  }
+
   /// Un-completes a task and refreshes the list.
   Future<void> uncompleteTask(int taskId) async {
     await _db.uncompleteTask(taskId);
@@ -508,8 +515,7 @@ class TaskProvider extends ChangeNotifier {
   }
 
   Future<List<int>> getRootTaskIds() async {
-    final tasks = await _db.getRootTasks();
-    return tasks.map((t) => t.id!).toList();
+    return _db.getRootTaskIds();
   }
 
   Future<List<TaskRelationship>> getAllRelationships() async {

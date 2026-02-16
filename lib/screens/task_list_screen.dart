@@ -32,6 +32,10 @@ class _TaskListScreenState extends State<TaskListScreen>
   int? _leafDepsTaskId;
   Future<List<Task>>? _leafDepsFuture;
 
+  // Pre-mutation lastWorkedAt values, keyed by task ID.
+  // Used by the leaf detail's "Worked on today" undo button.
+  final Map<int, int?> _preWorkedOnTimestamps = {};
+
 
   @override
   bool get wantKeepAlive => true;
@@ -234,6 +238,8 @@ class _TaskListScreenState extends State<TaskListScreen>
   Future<void> _workedOn(Task task) async {
     final provider = context.read<TaskProvider>();
     final previousLastWorkedAt = task.lastWorkedAt;
+    final wasStarted = task.isStarted;
+    _preWorkedOnTimestamps[task.id!] = previousLastWorkedAt;
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.markWorkedOn(task.id!);
@@ -251,6 +257,7 @@ class _TaskListScreenState extends State<TaskListScreen>
           label: 'Undo',
           onPressed: () async {
             await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
+            if (!wasStarted) await provider.unstartTask(task.id!);
           },
         ),
       ),
@@ -477,7 +484,8 @@ class _TaskListScreenState extends State<TaskListScreen>
           onWorkedOn: () => _workedOn(task),
           onUndoWorkedOn: () async {
             final provider = context.read<TaskProvider>();
-            await provider.unmarkWorkedOn(task.id!);
+            final restoreTo = _preWorkedOnTimestamps.remove(task.id!);
+            await provider.unmarkWorkedOn(task.id!, restoreTo: restoreTo);
           },
           dependencies: deps,
           onRemoveDependency: (depId) async {

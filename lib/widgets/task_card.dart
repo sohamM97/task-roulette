@@ -222,19 +222,7 @@ class TaskCard extends StatelessWidget {
                           size: 18,
                           color: Theme.of(context).colorScheme.primary,
                         ),
-                      if (showIndicator && indicatorStyle == 0)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 2),
-                          child: Container(
-                            width: 10,
-                            height: 10,
-                            decoration: BoxDecoration(
-                              color: indicatorColor,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ),
-                      if (showIndicator && indicatorStyle == 2)
+                      if (showIndicator)
                         Icon(
                           Icons.play_circle_filled,
                           size: 18,

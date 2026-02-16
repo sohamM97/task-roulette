@@ -315,7 +315,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     final provider = context.read<TaskProvider>();
     await showCompletionAnimation(context);
     if (!mounted) return;
-    await provider.completeTask(task.id!);
+    await provider.completeTaskOnly(task.id!);
     setState(() {
       _completedIds.add(task.id!);
     });

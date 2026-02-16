@@ -266,6 +266,19 @@ class DatabaseHelper {
     return _tasksFromMaps(maps);
   }
 
+  Future<List<int>> getRootTaskIds() async {
+    final db = await database;
+    final maps = await db.rawQuery('''
+      SELECT id FROM tasks
+      WHERE id NOT IN (
+        SELECT child_id FROM task_relationships
+      )
+      AND completed_at IS NULL
+      AND skipped_at IS NULL
+    ''');
+    return maps.map((m) => m['id'] as int).toList();
+  }
+
   Future<List<Task>> getChildren(int parentId) async {
     final db = await database;
     final maps = await db.rawQuery('''
