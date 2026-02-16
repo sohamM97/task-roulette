@@ -538,3 +538,229 @@ One query per grandparent. Unlikely to matter in practice (most tasks have 1-2 p
 3. **CR-3** — Fix `_workedOn` undo not restoring `isStarted` (5 min)
 4. **CR-4** — Fix `onUndoWorkedOn` missing `restoreTo` (15 min)
 5. **Remaining Round 1 open items** (I6, M3, M5, M6, N1–N4) — as time permits
+
+---
+---
+
+## Round 3 (2026-02-16)
+
+Full codebase review after Round 2 fixes were merged. Verified all Round 2
+critical items, identified new state-synchronization bugs in the "Done today"
+undo flow and Today's 5 task snapshot management.
+
+---
+
+### Previous Round Verification
+
+- [x] CR-1: Build broken — merge re-introduced dead `indicatorStyle` — verified fixed, all references removed from `task_card.dart`
+- [x] CR-2: `_completeNormalTask` triggers `navigateBack()` — verified fixed, `completeTaskOnly()` added at `task_provider.dart:208` and used at `todays_five_screen.dart:337`
+- [x] CR-3: `_workedOn` undo doesn't restore `isStarted` — verified fixed, `wasStarted` captured at `task_list_screen.dart:246` and restored at line 265
+- [x] CR-4: `onUndoWorkedOn` missing `restoreTo` — verified fixed, `_preWorkedOnTimestamps` map added at line 38, populated at line 247, consumed at line 492
+- [x] M-8: `getRootTaskIds` fetched full Task objects — verified fixed, `database_helper.dart:301-312` now has a dedicated ID-only query
+
+### Round 1 Items Still Open
+
+- I6: Loading indicators for async UI transitions — still open
+- M3: `_renameTask` dialog leaks TextEditingController — still open
+- M5: `BackupService` hardcodes Android download path — still open
+- M6: DAG view doesn't recompute layout on rotation — still open
+- M9: N+1 queries in `_addParent` for grandparent siblings — still open
+- N1–N4: All still open
+
+---
+
+### Important
+
+#### I-9. `unmarkWorkedOn` doesn't refresh `_tasks` — stale grid after undo on already-started tasks
+**File:** `lib/providers/task_provider.dart:483-498`
+
+Both `markWorkedOn` and `unmarkWorkedOn` call only `notifyListeners()`, not
+`_refreshCurrentList()`. The `_tasks` list retains stale `Task` objects with
+outdated `lastWorkedAt` values.
+
+In the normal "Done today" flow, `navigateBack()` or `startTask()` eventually
+calls `_refreshCurrentList()`, masking the issue. But the undo path is
+different:
+
+1. User views a leaf task that is **already started**
+2. Taps "Done today" → `markWorkedOn` + `navigateBack` (refresh happens)
+3. Grid shows task as "worked on today" (correct — fresh data)
+4. User taps "Undo" → `unmarkWorkedOn` is called
+5. Because `wasStarted == true`, `unstartTask` is **not** called
+6. **Only `notifyListeners()` fires — `_tasks` is NOT refreshed from DB**
+7. Grid still shows the task as "worked on today" and sorted to the bottom
+
+The task stays visually "done" until the user navigates away and back.
+
+**Fix:** Change `markWorkedOn` and `unmarkWorkedOn` to call
+`_refreshCurrentList()` instead of `notifyListeners()`:
+```dart
+Future<void> markWorkedOn(int taskId) async {
+  await _db.markWorkedOn(taskId);
+  if (_currentParent?.id == taskId) {
+    _currentParent = _currentParent!.copyWith(
+      lastWorkedAt: () => DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+  await _refreshCurrentList(); // was: notifyListeners()
+}
+```
+Same for `unmarkWorkedOn`.
+
+---
+
+#### I-10. Today's 5 `_workedOnTask` doesn't refresh task snapshot after mutation
+**File:** `lib/screens/todays_five_screen.dart:311-331`
+
+After `markWorkedOn` and `startTask`, the task object in `_todaysTasks` is not
+re-fetched from the DB. Compare with `_stopWorking` (line 267) and
+`_markInProgress` (line 291), which both re-fetch the fresh task via
+`DatabaseHelper().getTaskById()` and update `_todaysTasks[idx]`.
+
+The stale task object has outdated `startedAt` and `lastWorkedAt` fields. This
+means:
+- The play icon may not appear immediately
+- `isWorkedOnToday` on the stale object returns false (it reflects the old
+  `lastWorkedAt`), which could cause inconsistent UI behavior if the
+  `_completedIds` set and the task object disagree
+
+**Fix:** Re-fetch the task after mutation, consistent with the other methods:
+```dart
+await provider.markWorkedOn(task.id!);
+if (!task.isStarted) await provider.startTask(task.id!);
+final fresh = await DatabaseHelper().getTaskById(task.id!);
+if (fresh != null && mounted) {
+  final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
+  if (idx >= 0) _todaysTasks[idx] = fresh;
+}
+setState(() { _completedIds.add(task.id!); });
+```
+
+---
+
+#### I-11. Today's 5 `_completeNormalTask` undo leaves stale task — navigate button hidden
+**File:** `lib/screens/todays_five_screen.dart:349-356`
+
+The undo handler calls `provider.uncompleteTask(task.id!)` and removes the ID
+from `_completedIds`, but does **not** refresh the `Task` object in
+`_todaysTasks`. The stale object still has `completedAt` set.
+
+In `_buildTaskCard` (line 665):
+```dart
+if (widget.onNavigateToTask != null && !task.isCompleted)
+```
+After undo, `task.isCompleted` still returns `true` on the stale object, so the
+"Go to task" navigate button stays hidden even though the task was uncompleted
+in the DB.
+
+**Fix:** Re-fetch the task in the undo handler:
+```dart
+onPressed: () async {
+  await provider.uncompleteTask(task.id!);
+  final fresh = await DatabaseHelper().getTaskById(task.id!);
+  if (!mounted) return;
+  setState(() {
+    _completedIds.remove(task.id!);
+    if (fresh != null) {
+      final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
+      if (idx >= 0) _todaysTasks[idx] = fresh;
+    }
+  });
+  await _persist();
+},
+```
+
+---
+
+#### I-12. Today's 5 "Done today" has no undo support
+**File:** `lib/screens/todays_five_screen.dart:322-330`
+
+The "Done today" action in the All Tasks leaf view provides an undo SnackBar
+(`task_list_screen.dart:261-266`). But in Today's 5, the snackbar after "Done
+today" (line 323-330) has **no undo action**:
+
+```dart
+ScaffoldMessenger.of(context).showSnackBar(
+  SnackBar(
+    content: Text('"${task.name}" — nice work! ...'),
+    showCloseIcon: true,
+    // No action: SnackBarAction(label: 'Undo', ...)
+  ),
+);
+```
+
+If the user accidentally marks the wrong task as "done today" in Today's 5,
+they have to switch to All Tasks, find the task, and undo it from there.
+
+**Fix:** Add an undo action that calls `unmarkWorkedOn` and (if auto-started)
+`unstartTask`, similar to the All Tasks implementation. Also remove the task
+from `_completedIds` and re-fetch the snapshot.
+
+---
+
+### Minor
+
+#### M-10. `showEditUrlDialog` leaks TextEditingController
+**File:** `lib/widgets/leaf_task_detail.dart:78`
+
+Same pattern as M3. The static method creates a `TextEditingController` inside
+a `showDialog` callback. When the dialog is dismissed, the controller is never
+disposed. Flutter's `AlertDialog` does not own or dispose it.
+
+**Fix:** Either use a `StatefulBuilder` that disposes the controller, or
+extract into a small `StatefulWidget` dialog.
+
+---
+
+#### M-11. Double `_refreshCurrentList()` call in `_workedOn` flow
+**File:** `lib/screens/task_list_screen.dart:250-252`
+
+```dart
+await provider.markWorkedOn(task.id!);     // notifyListeners()
+if (!task.isStarted) await provider.startTask(task.id!);  // _refreshCurrentList()
+await provider.navigateBack();              // _refreshCurrentList()
+```
+
+When `startTask` is called, it triggers `_refreshCurrentList()`. Then
+`navigateBack()` immediately triggers it again. Two consecutive DB round-trips
+and widget rebuilds for no benefit.
+
+**Fix:** If I-9 is fixed (markWorkedOn calls `_refreshCurrentList`), then this
+becomes three consecutive refreshes. Consider a batch method:
+```dart
+Future<void> markWorkedOnAndNavigateBack(int taskId) async {
+  await _db.markWorkedOn(taskId);
+  if (_currentParent?.id == taskId) {
+    final wasStarted = _currentParent!.isStarted;
+    if (!wasStarted) await _db.startTask(taskId);
+  }
+  await navigateBack(); // single _refreshCurrentList()
+}
+```
+
+---
+
+#### M-12. Repeating task code is dead code
+**Files:**
+- `lib/data/database_helper.dart:538-577` (`updateRepeatInterval`, `completeRepeatingTask`)
+- `lib/models/task.dart:41-42` (`isRepeating`, `isDue` getters)
+
+The DB schema has `repeat_interval` and `next_due_at` columns (added in v11
+migration), and the model has fields and getters. But no code in the provider
+or UI layer references these methods or getters. This is scaffolding for an
+unimplemented feature.
+
+Not harmful (the columns are populated as NULL for all tasks), but worth
+noting to avoid confusion. Either implement the feature or remove the dead
+code to keep the codebase clean.
+
+---
+
+## Round 3 — Suggested Implementation Order
+
+1. **I-9** — Fix `markWorkedOn`/`unmarkWorkedOn` to call `_refreshCurrentList()` (5 min, `task_provider.dart` only)
+2. **I-10** — Re-fetch task snapshot in Today's 5 `_workedOnTask` (5 min, consistency fix)
+3. **I-11** — Re-fetch task in `_completeNormalTask` undo handler (5 min, fixes hidden navigate button)
+4. **I-12** — Add undo support to Today's 5 "Done today" (15 min, matches All Tasks behavior)
+5. **M-11** — Consolidate triple refresh into single batch (10 min, depends on I-9)
+6. **Remaining open items** from Round 1/2 (I6, M3, M5, M6, M9, M10, N1–N4) — as time permits
