@@ -153,10 +153,13 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       );
       refreshed.addAll(replacements);
     }
-    // Clean up completed IDs for tasks no longer in the list
-    _completedIds.removeWhere(
-      (id) => !refreshed.any((t) => t.id == id),
-    );
+    // Clean up completed IDs: remove if task left the list, or was
+    // uncompleted externally (e.g. restored from archive)
+    _completedIds.removeWhere((id) {
+      final task = refreshed.where((t) => t.id == id).firstOrNull;
+      if (task == null) return true; // no longer in list
+      return !task.isCompleted && !task.isWorkedOnToday; // restored
+    });
     if (!mounted) return;
     setState(() {
       _todaysTasks = refreshed;
@@ -659,7 +662,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                   onPressed: () => _confirmSwapTask(index),
                   tooltip: 'Swap task',
                 ),
-              if (widget.onNavigateToTask != null)
+              if (widget.onNavigateToTask != null && !task.isCompleted)
                 IconButton(
                   icon: const Icon(Icons.open_in_new, size: 20),
                   onPressed: () => widget.onNavigateToTask!(task),

@@ -1021,6 +1021,58 @@ void main() {
       expect(task0.isWorkedOnToday, isTrue);
       expect(task0.isStarted, isTrue);
     });
+
+    test('uncompleted task from archive is unmarked in Today\'s 5', () async {
+      // Bug: task completed → shows struck out in Today's 5. User restores
+      // it from archive. On refresh, it should no longer be struck out.
+      final todaysIds = <int>[];
+      for (int i = 0; i < 5; i++) {
+        todaysIds.add(await db.insertTask(Task(name: 'Today $i')));
+      }
+
+      // Complete task 0 and add to completedIds (as Today's 5 would)
+      await db.completeTask(todaysIds[0]);
+      final completedIds = <int>{todaysIds[0]};
+
+      // User restores task 0 from archive
+      await db.uncompleteTask(todaysIds[0]);
+
+      // refreshSnapshots logic
+      final allLeaves = await provider.getAllLeafTasks();
+      final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+      final refreshed = <Task>[];
+      for (final id in todaysIds) {
+        if (leafIdSet.contains(id)) {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) {
+            refreshed.add(fresh);
+            if (fresh.isWorkedOnToday && !completedIds.contains(fresh.id)) {
+              completedIds.add(fresh.id!);
+            }
+          }
+        } else {
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) {
+            if (completedIds.contains(id) || fresh.isCompleted || fresh.isWorkedOnToday) {
+              completedIds.add(fresh.id!);
+              refreshed.add(fresh);
+            }
+          }
+        }
+      }
+
+      // Clean up: remove from completedIds if no longer completed/worked-on
+      completedIds.removeWhere((id) {
+        final task = refreshed.where((t) => t.id == id).firstOrNull;
+        if (task == null) return true;
+        return !task.isCompleted && !task.isWorkedOnToday;
+      });
+
+      // Task 0 should be in the list but NOT in completedIds
+      expect(refreshed, hasLength(5));
+      expect(refreshed.map((t) => t.id), contains(todaysIds[0]));
+      expect(completedIds, isNot(contains(todaysIds[0])));
+    });
   });
 
   group("Today's 5 new set preserves done tasks", () {
