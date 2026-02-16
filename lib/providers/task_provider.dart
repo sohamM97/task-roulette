@@ -95,7 +95,8 @@ class TaskProvider extends ChangeNotifier {
   Future<({Task task, List<int> parentIds, List<int> childIds, List<int> dependsOnIds, List<int> dependedByIds})> deleteTask(int taskId) async {
     final task = _currentParent?.id == taskId
         ? _currentParent!
-        : _tasks.firstWhere((t) => t.id == taskId);
+        : _tasks.firstWhere((t) => t.id == taskId,
+            orElse: () => throw StateError('Task $taskId not found in current list'));
     final rels = await _db.deleteTaskWithRelationships(taskId);
     await _refreshCurrentList();
     return (
@@ -174,7 +175,8 @@ class TaskProvider extends ChangeNotifier {
     // Done button) rather than a member of _tasks.
     final task = _currentParent?.id == taskId
         ? _currentParent!
-        : _tasks.firstWhere((t) => t.id == taskId);
+        : _tasks.firstWhere((t) => t.id == taskId,
+            orElse: () => throw StateError('Task $taskId not found in current list'));
     await _db.completeTask(taskId);
     await navigateBack();
     return task;
@@ -185,7 +187,8 @@ class TaskProvider extends ChangeNotifier {
   Future<Task> skipTask(int taskId) async {
     final task = _currentParent?.id == taskId
         ? _currentParent!
-        : _tasks.firstWhere((t) => t.id == taskId);
+        : _tasks.firstWhere((t) => t.id == taskId,
+            orElse: () => throw StateError('Task $taskId not found in current list'));
     await _db.skipTask(taskId);
     await navigateBack();
     return task;

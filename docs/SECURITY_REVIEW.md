@@ -408,3 +408,178 @@ Create `android/app/proguard-rules.pro` with rules to keep Flutter engine classe
 | **LOW** | Add `maxLength` to task name inputs | Trivial |
 | **LOW** | Add `android:allowBackup="false"` | Trivial |
 | **LOW** | Update `share_plus` to latest | Medium (breaking changes) |
+
+---
+
+## Round 2 (2026-02-16)
+
+### Previous Round Verification
+
+**Fixed (9 of 17):**
+- [x] MED-1: URL scheme validation in leaf detail — verified fixed. New `isAllowedUrl()` utility in `display_utils.dart:17-22` with http/https allowlist. Used at `leaf_task_detail.dart:49`.
+- [x] MED-2: URL scheme validation in AppBar — verified fixed. Same `isAllowedUrl()` check at `task_list_screen.dart:735`.
+- [x] MED-3: Minimal schema validation on DB import — verified fixed. `_validateBackup()` at `database_helper.dart:172-214` now checks: file size, all 3 expected tables, schema version 1-11, no triggers/views.
+- [x] MED-4: No file size limit on import — verified fixed. 100 MB limit at `database_helper.dart:166,174-177`.
+- [x] LOW-1: No URL validation on save — verified fixed. `showEditUrlDialog` checks `isAllowedUrl()` at `leaf_task_detail.dart:102,130`. Auto-prepends `https://` via `normalizeUrl()`.
+- [x] LOW-2: No input length limits (single-task) — verified fixed. `maxLength: 500` at `add_task_dialog.dart:48` and `task_list_screen.dart:207` (rename dialog).
+- [x] LOW-3: Malicious triggers/views — verified fixed. Trigger/view check at `database_helper.dart:204-209`.
+- [x] LOW-5: `int.parse` without error handling — verified fixed. `int.tryParse` with `.whereType<int>()` at `todays_five_screen.dart:47,49`.
+- [x] LOW-8: Missing `android:allowBackup="false"` — verified fixed. Present at `AndroidManifest.xml:6`.
+
+**Not fixed (5 of 17):**
+- [ ] HIGH-1: `file_picker` still at 8.3.7 (pubspec.yaml specifies `^8.1.7`, lock file has `8.3.7`). CVE patches are in 10.3.9+.
+- [ ] MED-5: No R8/ProGuard — `build.gradle.kts:51-57` still has no `isMinifyEnabled = true`.
+- [ ] LOW-4: No pre-import backup of existing data — `importDatabase` still overwrites directly.
+- [ ] LOW-9: Release signing silently falls back to debug key.
+- [ ] LOW-10: `firstWhere` without `orElse` — still present at `task_provider.dart:98, 176, 187`.
+
+**Accepted / Deferred (3 of 17):**
+- LOW-6: Unencrypted DB at rest — accepted for threat model.
+- LOW-7: Unencrypted backup export — accepted for threat model.
+- LOW-11: `share_plus` outdated (10.1.4 vs 12.x) — deferred, no CVEs.
+
+### Findings
+
+No new critical or high findings.
+
+#### MED-6: Brain Dump Dialog Has No Per-Line or Total Length Limits
+
+- **Severity:** Medium
+- **File:** `lib/widgets/brain_dump_dialog.dart:67-77`
+- **Code:**
+  ```dart
+  TextField(
+    controller: _controller,
+    maxLines: 8,
+    minLines: 4,
+    autofocus: true,
+    textInputAction: TextInputAction.newline,
+    decoration: const InputDecoration(
+      hintText: 'Buy groceries\nCall dentist\nFinish report\n...',
+      border: OutlineInputBorder(),
+    ),
+  ),
+  ```
+
+**Description:** While the single-task `AddTaskDialog` was fixed with `maxLength: 500` (LOW-2), the brain dump dialog still has no input limits. A user could paste thousands of lines or megabyte-length strings, each of which becomes a separate task and DB INSERT. This creates two risks:
+1. **Performance DoS**: Pasting 10,000+ lines triggers 10,000 INSERTs in a single transaction, potentially freezing the UI.
+2. **Per-line length**: Individual lines have no 500-char cap, so extremely long task names bypass the limit enforced elsewhere.
+
+**Recommended Fix:**
+```dart
+TextField(
+  controller: _controller,
+  maxLines: 8,
+  minLines: 4,
+  maxLength: 25000, // ~50 lines of 500 chars
+  decoration: const InputDecoration(
+    counterText: '', // hide counter
+    // ...
+  ),
+),
+```
+And in `_parseNames()`, truncate each line:
+```dart
+.map((l) => l.trim().length > 500 ? l.trim().substring(0, 500) : l.trim())
+```
+
+---
+
+#### LOW-12: URL Text Field Has No `maxLength`
+
+- **Severity:** Low
+- **File:** `lib/widgets/leaf_task_detail.dart:92-99`
+- **Code:**
+  ```dart
+  TextField(
+    controller: controller,
+    decoration: const InputDecoration(
+      hintText: 'https://...',
+      border: OutlineInputBorder(),
+    ),
+    keyboardType: TextInputType.url,
+    autofocus: true,
+  ),
+  ```
+
+**Description:** The URL input dialog has no `maxLength`. A multi-megabyte string pasted into the URL field would be stored in the database and displayed in tooltip text on the task card. While URLs are normalized and scheme-validated, extreme lengths are not checked.
+
+**Recommended Fix:** Add `maxLength: 2048` (standard URL length limit) to the URL TextField.
+
+---
+
+#### LOW-13: `normalizeUrl` May Save Non-URL Strings as URLs
+
+- **Severity:** Low
+- **File:** `lib/utils/display_utils.dart:9-14`
+- **Code:**
+  ```dart
+  String? normalizeUrl(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final trimmed = raw.trim();
+    if (!trimmed.contains('://')) return 'https://$trimmed';
+    return trimmed;
+  }
+  ```
+
+**Description:** `normalizeUrl` auto-prepends `https://` to any string without `://`. Typing random text like `hello world` becomes `https://hello world`, which passes `isAllowedUrl` (scheme is `https`) and gets stored in the database. While this is harmless (it will fail to open in a browser), it means the URL field can contain garbage data that appears as a valid link in the UI.
+
+**Recommended Fix:** After normalization, validate that the result is a parseable URL with a host:
+```dart
+final normalized = ...;
+final uri = Uri.tryParse(normalized);
+if (uri == null || uri.host.isEmpty) return null;
+return normalized;
+```
+
+---
+
+#### INFO-7: `SnackBar` Uses Non-Standard `persist` Parameter
+
+- **Severity:** Informational
+- **Files:** Throughout `task_list_screen.dart`, `todays_five_screen.dart`, `backup_service.dart`, `completed_tasks_screen.dart`
+- **Description:** All SnackBar constructors pass `persist: false`. Flutter's `SnackBar` does not have a `persist` parameter. This appears to be silently ignored (Dart named parameters on constructors can be ignored if they match an extension or the class accepts them). If this is a custom extension, it should be documented. If not, it's dead code.
+
+---
+
+### Positive Security Findings
+
+1. **URL scheme validation implemented well.** The `isAllowedUrl()` and `normalizeUrl()` utilities in `display_utils.dart` are clean, centralized, and used consistently across all three code paths (leaf detail launch, AppBar launch, and save dialog). Defense-in-depth: validation at both save time and launch time.
+
+2. **Backup import validation is thorough.** The `_validateBackup` method now checks 5 properties (file size, SQLite validity, table presence, schema version range, trigger/view absence). Error messages are constructive without leaking internal details.
+
+3. **SQL injection remains clean.** All new/modified queries continue to use parameterized `?` placeholders. The dynamic `IN (...)` pattern continues to use the safe `taskIds.map((_) => '?').join(',')` idiom throughout.
+
+4. **No new logging statements.** The codebase remains free of `print()`, `debugPrint()`, or logging calls.
+
+5. **`allowBackup="false"` properly set.** The Android manifest now explicitly disables ADB backup.
+
+6. **SharedPreferences parsing is now robust.** `int.tryParse` with `.whereType<int>()` gracefully handles corrupt data.
+
+### OWASP Mobile Top 10 Assessment (Round 2 Update)
+
+| Category | Status | Notes |
+|----------|--------|-------|
+| M1: Improper Credential Usage | N/A | App has no authentication or credentials |
+| M2: Inadequate Supply Chain Security | **Still action needed** | `file_picker` 8.3.7 still has known CVEs (HIGH-1 unfixed) |
+| M3: Insecure Authentication/Authorization | N/A | App has no auth |
+| M4: Insufficient Input/Output Validation | **Improved** | URL scheme validation fixed; brain dump dialog still unbounded (MED-6) |
+| M5: Insecure Communication | Pass | No network communication in release |
+| M6: Inadequate Privacy Controls | Pass | No PII beyond task names |
+| M7: Insufficient Binary Protections | **Still action needed** | No R8/ProGuard (MED-5 unfixed) |
+| M8: Security Misconfiguration | **Improved** | `allowBackup="false"` fixed; debug signing fallback remains (LOW-9) |
+| M9: Insecure Data Storage | Pass | Data is task names/URLs only; sandboxed on Android |
+| M10: Insufficient Cryptography | N/A | App does not use cryptography |
+
+### Remaining Priority Action Items
+
+| Priority | Finding | Status |
+|----------|---------|--------|
+| **HIGH** | HIGH-1: Update `file_picker` to 10.3.10+ | **Still open** |
+| **MEDIUM** | MED-5: Enable R8 code shrinking | **Still open** |
+| **MEDIUM** | MED-6: Add limits to brain dump dialog | **New** |
+| **LOW** | LOW-4: Pre-import backup of existing DB | **Still open** |
+| **LOW** | LOW-9: Warn on debug signing fallback | **Still open** |
+| **LOW** | LOW-10: `firstWhere` without `orElse` | **Still open** |
+| **LOW** | LOW-12: Add `maxLength` to URL field | **New** |
+| **LOW** | LOW-13: Validate URL host after normalization | **New** |

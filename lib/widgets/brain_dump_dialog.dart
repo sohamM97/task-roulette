@@ -31,6 +31,7 @@ class _BrainDumpDialogState extends State<BrainDumpDialog> {
         .split('\n')
         .map((l) => l.trim())
         .where((l) => l.isNotEmpty)
+        .map((l) => l.length > 500 ? l.substring(0, 500) : l)
         .toList();
   }
 
@@ -68,11 +69,13 @@ class _BrainDumpDialogState extends State<BrainDumpDialog> {
               controller: _controller,
               maxLines: 8,
               minLines: 4,
+              maxLength: 25000,
               autofocus: true,
               textInputAction: TextInputAction.newline,
               decoration: const InputDecoration(
                 hintText: 'Buy groceries\nCall dentist\nFinish report\n...',
                 border: OutlineInputBorder(),
+                counterText: '',
               ),
             ),
             if (_lineCount > 0) ...[
