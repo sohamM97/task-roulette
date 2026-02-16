@@ -8,6 +8,8 @@ class TaskPickerDialog extends StatefulWidget {
   final Map<int, List<String>> parentNamesMap;
   /// Task IDs to show first (e.g. current siblings).
   final Set<int> priorityIds;
+  /// Task IDs to show after primary priority (e.g. parent's siblings).
+  final Set<int> secondaryPriorityIds;
 
   const TaskPickerDialog({
     super.key,
@@ -15,6 +17,7 @@ class TaskPickerDialog extends StatefulWidget {
     this.title = 'Select a task',
     this.parentNamesMap = const {},
     this.priorityIds = const {},
+    this.secondaryPriorityIds = const {},
   });
 
   @override
@@ -32,17 +35,20 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
                 t.name.toLowerCase().contains(_filter.toLowerCase()) ||
                 (_contextFor(t.id!)?.toLowerCase().contains(_filter.toLowerCase()) ?? false))
             .toList();
-    if (widget.priorityIds.isEmpty) return base;
+    if (widget.priorityIds.isEmpty && widget.secondaryPriorityIds.isEmpty) return base;
     final priority = <Task>[];
+    final secondary = <Task>[];
     final rest = <Task>[];
     for (final t in base) {
       if (widget.priorityIds.contains(t.id)) {
         priority.add(t);
+      } else if (widget.secondaryPriorityIds.contains(t.id)) {
+        secondary.add(t);
       } else {
         rest.add(t);
       }
     }
-    return [...priority, ...rest];
+    return [...priority, ...secondary, ...rest];
   }
 
   String? _contextFor(int taskId) {

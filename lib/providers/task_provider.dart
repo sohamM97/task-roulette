@@ -599,6 +599,11 @@ class TaskProvider extends ChangeNotifier {
     return _db.getChildIds(parentId);
   }
 
+  Future<List<int>> getRootTaskIds() async {
+    final tasks = await _db.getRootTasks();
+    return tasks.map((t) => t.id!).toList();
+  }
+
   Future<List<TaskRelationship>> getAllRelationships() async {
     return _db.getAllRelationships();
   }

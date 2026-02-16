@@ -16,6 +16,7 @@ void main() {
   Widget buildDialog({
     required List<Task> candidates,
     Set<int> priorityIds = const {},
+    Set<int> secondaryPriorityIds = const {},
     Map<int, List<String>> parentNamesMap = const {},
   }) {
     return MaterialApp(
@@ -28,6 +29,7 @@ void main() {
                 builder: (_) => TaskPickerDialog(
                   candidates: candidates,
                   priorityIds: priorityIds,
+                  secondaryPriorityIds: secondaryPriorityIds,
                   parentNamesMap: parentNamesMap,
                 ),
               );
@@ -163,6 +165,53 @@ void main() {
       final names = getDisplayedTaskNames(tester);
       // Task C (priority) first, then Task B
       expect(names, ['Task C', 'Task B']);
+    });
+  });
+
+  group('TaskPickerDialog secondaryPriorityIds', () {
+    testWidgets('three-tier sorting: primary, secondary, rest', (tester) async {
+      final tasks = makeTasks(['Rest1', 'Secondary1', 'Primary1', 'Secondary2', 'Rest2', 'Primary2']);
+      // Primary: ids 3, 6. Secondary: ids 2, 4.
+      await tester.pumpWidget(buildDialog(
+        candidates: tasks,
+        priorityIds: {3, 6},
+        secondaryPriorityIds: {2, 4},
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      expect(getDisplayedTaskNames(tester),
+          ['Primary1', 'Primary2', 'Secondary1', 'Secondary2', 'Rest1', 'Rest2']);
+    });
+
+    testWidgets('secondary without primary shows secondary first', (tester) async {
+      final tasks = makeTasks(['C', 'A', 'B']);
+      await tester.pumpWidget(buildDialog(
+        candidates: tasks,
+        secondaryPriorityIds: {2}, // A
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      expect(getDisplayedTaskNames(tester), ['A', 'C', 'B']);
+    });
+
+    testWidgets('secondary sorting applies after search filter', (tester) async {
+      final tasks = makeTasks(['Buy milk', 'Buy eggs', 'Sell car', 'Buy bread']);
+      // Buy eggs (id=2) is primary, Buy bread (id=4) is secondary
+      await tester.pumpWidget(buildDialog(
+        candidates: tasks,
+        priorityIds: {2},
+        secondaryPriorityIds: {4},
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'buy');
+      await tester.pumpAndSettle();
+
+      // Primary: Buy eggs, Secondary: Buy bread, Rest: Buy milk
+      expect(getDisplayedTaskNames(tester), ['Buy eggs', 'Buy bread', 'Buy milk']);
     });
   });
 }

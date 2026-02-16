@@ -149,6 +149,28 @@ class _TaskListScreenState extends State<TaskListScreen>
         .where((id) => id != task.id)
         .toSet();
 
+    // Parent's siblings: grandparent's children minus the current parent
+    var parentSiblingIds = <int>{};
+    final currentParent = provider.currentParent;
+    if (currentParent != null) {
+      final grandparentIds = await provider.getParentIds(currentParent.id!);
+      for (final gpId in grandparentIds) {
+        final gpChildren = await provider.getChildIds(gpId);
+        parentSiblingIds.addAll(gpChildren);
+      }
+      // If parent is a root task, other root tasks are its siblings
+      if (grandparentIds.isEmpty) {
+        final rootTasks = await provider.getRootTaskIds();
+        parentSiblingIds.addAll(rootTasks);
+      }
+      parentSiblingIds.remove(currentParent.id);
+      // Don't include tasks already in siblings or the task itself
+      parentSiblingIds.removeAll(siblingIds);
+      parentSiblingIds.remove(task.id);
+    }
+
+    if (!mounted) return;
+
     final selected = await showDialog<Task>(
       context: context,
       builder: (_) => TaskPickerDialog(
@@ -156,6 +178,7 @@ class _TaskListScreenState extends State<TaskListScreen>
         title: 'Also show "${task.name}" under...',
         parentNamesMap: parentNamesMap,
         priorityIds: siblingIds,
+        secondaryPriorityIds: parentSiblingIds,
       ),
     );
 
