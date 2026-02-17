@@ -1410,6 +1410,26 @@ void main() {
       expect(children2.any((t) => t.id == child), isTrue);
     });
 
+    test('moveTask returns false when target is already a parent', () async {
+      final parent1 = await db.insertTask(Task(name: 'Parent 1'));
+      final parent2 = await db.insertTask(Task(name: 'Parent 2'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent1, child);
+      await db.addRelationship(parent2, child);
+
+      // Navigate into Parent 1
+      await provider.loadRootTasks();
+      await navInto(provider, parent1);
+
+      // Try to move child to Parent 2 (already a parent)
+      final result = await provider.moveTask(child, parent2);
+      expect(result, isFalse);
+
+      // Child should still be under both parents
+      final parents = await db.getParents(child);
+      expect(parents.map((t) => t.id).toSet(), {parent1, parent2});
+    });
+
     test('moveTask prevents cycle', () async {
       final a = await db.insertTask(Task(name: 'A'));
       final b = await db.insertTask(Task(name: 'B'));

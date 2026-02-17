@@ -276,11 +276,12 @@ class _TaskListScreenState extends State<TaskListScreen>
     if (currentParent == null) return;
 
     final (allTasks, parentNamesMap) = await _fetchCandidateData();
+    final existingParentIds = (await provider.getParentIds(task.id!)).toSet();
 
-    // Filter out: the task itself, the current parent (already here)
+    // Filter out: the task itself, all existing parents (including current)
     final candidates = allTasks.where((t) {
       if (t.id == task.id) return false;
-      if (t.id == currentParent.id) return false;
+      if (existingParentIds.contains(t.id)) return false;
       return true;
     }).toList();
 
