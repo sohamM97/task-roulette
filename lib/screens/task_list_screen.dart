@@ -16,6 +16,7 @@ import '../utils/display_utils.dart';
 import '../widgets/delete_task_dialog.dart';
 import '../widgets/task_picker_dialog.dart';
 import '../services/backup_service.dart';
+import '../widgets/profile_icon.dart';
 import 'completed_tasks_screen.dart';
 import 'dag_view_screen.dart';
 
@@ -728,6 +729,7 @@ class _TaskListScreenState extends State<TaskListScreen>
                       onPressed: () => provider.navigateBack(),
                     ),
               actions: [
+                const ProfileIcon(),
                 if (!provider.isRoot && provider.currentParent?.hasUrl == true && provider.tasks.isNotEmpty)
                   IconButton(
                     icon: const Icon(Icons.link),

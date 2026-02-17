@@ -3,10 +3,12 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'providers/auth_provider.dart';
 import 'providers/task_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/task_list_screen.dart';
 import 'screens/todays_five_screen.dart';
+import 'services/sync_service.dart';
 
 void main() {
   if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
@@ -25,6 +27,11 @@ class TaskRouletteApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => TaskProvider()),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ProxyProvider<AuthProvider, SyncService>(
+          update: (_, auth, previous) => previous ?? SyncService(auth),
+          dispose: (_, sync) => sync.dispose(),
+        ),
       ],
       child: Consumer<ThemeProvider>(
         builder: (context, themeProvider, _) {
@@ -80,6 +87,35 @@ class _AppShellState extends State<AppShell> {
   int _currentIndex = 0;
   final _todaysFiveKey = GlobalKey<TodaysFiveScreenState>();
   final _pageController = PageController();
+
+  @override
+  void initState() {
+    super.initState();
+    _initAuth();
+  }
+
+  Future<void> _initAuth() async {
+    final authProvider = context.read<AuthProvider>();
+    final syncService = context.read<SyncService>();
+    final taskProvider = context.read<TaskProvider>();
+
+    // Wire up mutation callback so sync triggers on local changes
+    taskProvider.onMutation = () => syncService.schedulePush();
+
+    // Wire up data-changed callback so UI refreshes on remote changes
+    syncService.onDataChanged = () {
+      if (mounted) taskProvider.loadRootTasks();
+    };
+
+    await authProvider.init();
+    if (authProvider.isSignedIn && mounted) {
+      final needsMigration = await syncService.needsInitialMigration();
+      if (needsMigration) {
+        await syncService.initialMigration();
+      }
+      syncService.startPeriodicPull();
+    }
+  }
 
   @override
   void dispose() {

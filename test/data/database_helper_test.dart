@@ -1617,4 +1617,482 @@ void main() {
       expect(rootIds, isNot(contains(id3)));
     });
   });
+
+  group('Sync fields', () {
+    test('insertTask generates sync_id and updated_at', () async {
+      final id = await db.insertTask(Task(name: 'New task'));
+      final task = await db.getTaskById(id);
+
+      expect(task, isNotNull);
+      expect(task!.syncId, isNotNull);
+      expect(task.syncId!.length, greaterThan(0));
+      expect(task.updatedAt, isNotNull);
+      expect(task.syncStatus, 'pending');
+    });
+
+    test('insertTask generates unique sync_ids', () async {
+      final id1 = await db.insertTask(Task(name: 'Task 1'));
+      final id2 = await db.insertTask(Task(name: 'Task 2'));
+      final task1 = await db.getTaskById(id1);
+      final task2 = await db.getTaskById(id2);
+
+      expect(task1!.syncId, isNot(equals(task2!.syncId)));
+    });
+
+    test('insertTask respects pre-set sync_id', () async {
+      final id = await db.insertTask(Task(name: 'Pre-set', syncId: 'my-uuid'));
+      final task = await db.getTaskById(id);
+
+      expect(task!.syncId, 'my-uuid');
+    });
+
+    test('insertTasksBatch generates sync_ids for each task', () async {
+      final tasks = [Task(name: 'Batch 1'), Task(name: 'Batch 2')];
+      await db.insertTasksBatch(tasks, null);
+
+      final all = await db.getAllTasks();
+      expect(all.length, 2);
+      for (final task in all) {
+        expect(task.syncId, isNotNull);
+        expect(task.updatedAt, isNotNull);
+        expect(task.syncStatus, 'pending');
+      }
+      expect(all[0].syncId, isNot(equals(all[1].syncId)));
+    });
+
+    test('insertTasksBatch enqueues relationship sync entries', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final tasks = [Task(name: 'Child 1'), Task(name: 'Child 2')];
+      await db.insertTasksBatch(tasks, parentId);
+
+      final queue = await db.drainSyncQueue();
+      final relEntries = queue.where((e) => e['entity_type'] == 'relationship').toList();
+      expect(relEntries.length, 2);
+      for (final entry in relEntries) {
+        expect(entry['action'], 'add');
+        expect(entry['key1'], isNotEmpty); // parent sync_id
+        expect(entry['key2'], isNotEmpty); // child sync_id
+      }
+    });
+  });
+
+  group('Dirty tracking', () {
+    test('updateTaskName sets pending and updated_at', () async {
+      final id = await db.insertTask(Task(name: 'Original'));
+      // Mark as synced first
+      await db.markTasksSynced([id]);
+      final before = (await db.getTaskById(id))!.updatedAt;
+
+      await Future.delayed(const Duration(milliseconds: 10));
+      await db.updateTaskName(id, 'Renamed');
+
+      final task = await db.getTaskById(id);
+      expect(task!.syncStatus, 'pending');
+      expect(task.updatedAt, greaterThan(before!));
+      expect(task.name, 'Renamed');
+    });
+
+    test('completeTask sets pending', () async {
+      final id = await db.insertTask(Task(name: 'To complete'));
+      await db.markTasksSynced([id]);
+
+      await db.completeTask(id);
+      final task = await db.getTaskById(id);
+      expect(task!.syncStatus, 'pending');
+    });
+
+    test('skipTask sets pending', () async {
+      final id = await db.insertTask(Task(name: 'To skip'));
+      await db.markTasksSynced([id]);
+
+      await db.skipTask(id);
+      final task = await db.getTaskById(id);
+      expect(task!.syncStatus, 'pending');
+    });
+
+    test('unskipTask sets pending', () async {
+      final id = await db.insertTask(Task(name: 'To unskip'));
+      await db.skipTask(id);
+      await db.markTasksSynced([id]);
+
+      await db.unskipTask(id);
+      final task = await db.getTaskById(id);
+      expect(task!.syncStatus, 'pending');
+    });
+
+    test('startTask sets pending', () async {
+      final id = await db.insertTask(Task(name: 'To start'));
+      await db.markTasksSynced([id]);
+
+      await db.startTask(id);
+      final task = await db.getTaskById(id);
+      expect(task!.syncStatus, 'pending');
+    });
+
+    test('unstartTask sets pending', () async {
+      final id = await db.insertTask(Task(name: 'To unstart'));
+      await db.startTask(id);
+      await db.markTasksSynced([id]);
+
+      await db.unstartTask(id);
+      final task = await db.getTaskById(id);
+      expect(task!.syncStatus, 'pending');
+    });
+
+    test('markWorkedOn sets pending', () async {
+      final id = await db.insertTask(Task(name: 'Worked'));
+      await db.markTasksSynced([id]);
+
+      await db.markWorkedOn(id);
+      final task = await db.getTaskById(id);
+      expect(task!.syncStatus, 'pending');
+    });
+
+    test('updateTaskUrl sets pending', () async {
+      final id = await db.insertTask(Task(name: 'URL task'));
+      await db.markTasksSynced([id]);
+
+      await db.updateTaskUrl(id, 'https://example.com');
+      final task = await db.getTaskById(id);
+      expect(task!.syncStatus, 'pending');
+    });
+
+    test('updateTaskPriority sets pending', () async {
+      final id = await db.insertTask(Task(name: 'Priority'));
+      await db.markTasksSynced([id]);
+
+      await db.updateTaskPriority(id, 1);
+      final task = await db.getTaskById(id);
+      expect(task!.syncStatus, 'pending');
+    });
+  });
+
+  group('Sync queue', () {
+    test('addRelationship enqueues sync entry', () async {
+      final id1 = await db.insertTask(Task(name: 'Parent'));
+      final id2 = await db.insertTask(Task(name: 'Child'));
+
+      await db.addRelationship(id1, id2);
+
+      final queue = await db.drainSyncQueue();
+      expect(queue.length, 1);
+      expect(queue[0]['entity_type'], 'relationship');
+      expect(queue[0]['action'], 'add');
+    });
+
+    test('removeRelationship enqueues sync entry', () async {
+      final id1 = await db.insertTask(Task(name: 'Parent'));
+      final id2 = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(id1, id2);
+      await db.drainSyncQueue(); // clear
+
+      await db.removeRelationship(id1, id2);
+
+      final queue = await db.drainSyncQueue();
+      expect(queue.length, 1);
+      expect(queue[0]['entity_type'], 'relationship');
+      expect(queue[0]['action'], 'remove');
+    });
+
+    test('addDependency enqueues sync entry', () async {
+      final id1 = await db.insertTask(Task(name: 'Task'));
+      final id2 = await db.insertTask(Task(name: 'Depends on'));
+
+      await db.addDependency(id1, id2);
+
+      final queue = await db.drainSyncQueue();
+      expect(queue.length, 1);
+      expect(queue[0]['entity_type'], 'dependency');
+      expect(queue[0]['action'], 'add');
+    });
+
+    test('removeDependency enqueues sync entry', () async {
+      final id1 = await db.insertTask(Task(name: 'Task'));
+      final id2 = await db.insertTask(Task(name: 'Depends on'));
+      await db.addDependency(id1, id2);
+      await db.drainSyncQueue(); // clear
+
+      await db.removeDependency(id1, id2);
+
+      final queue = await db.drainSyncQueue();
+      expect(queue.length, 1);
+      expect(queue[0]['entity_type'], 'dependency');
+      expect(queue[0]['action'], 'remove');
+    });
+
+    test('deleteTaskWithRelationships enqueues task deletion', () async {
+      final id = await db.insertTask(Task(name: 'To delete'));
+      await db.drainSyncQueue(); // clear insert-related entries
+
+      await db.deleteTaskWithRelationships(id);
+
+      final queue = await db.drainSyncQueue();
+      final taskEntries = queue.where((e) => e['entity_type'] == 'task').toList();
+      expect(taskEntries.length, 1);
+      expect(taskEntries[0]['action'], 'remove');
+      expect(taskEntries[0]['key1'], isNotEmpty); // sync_id
+    });
+
+    test('drainSyncQueue clears the queue', () async {
+      final id1 = await db.insertTask(Task(name: 'Parent'));
+      final id2 = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(id1, id2);
+
+      final first = await db.drainSyncQueue();
+      expect(first, isNotEmpty);
+
+      final second = await db.drainSyncQueue();
+      expect(second, isEmpty);
+    });
+  });
+
+  group('Sync query methods', () {
+    test('getPendingTasks returns tasks with pending status', () async {
+      await db.insertTask(Task(name: 'Pending 1'));
+      await db.insertTask(Task(name: 'Pending 2'));
+      // Both are pending after insert
+      final pending = await db.getPendingTasks();
+      expect(pending.length, 2);
+    });
+
+    test('markTasksSynced changes status to synced', () async {
+      final id1 = await db.insertTask(Task(name: 'Task 1'));
+      final id2 = await db.insertTask(Task(name: 'Task 2'));
+
+      await db.markTasksSynced([id1, id2]);
+
+      final pending = await db.getPendingTasks();
+      expect(pending, isEmpty);
+
+      final t1 = await db.getTaskById(id1);
+      final t2 = await db.getTaskById(id2);
+      expect(t1!.syncStatus, 'synced');
+      expect(t2!.syncStatus, 'synced');
+    });
+
+    test('getTaskBySyncId returns correct task', () async {
+      final id = await db.insertTask(Task(name: 'Find me'));
+      final task = await db.getTaskById(id);
+      final syncId = task!.syncId!;
+
+      final found = await db.getTaskBySyncId(syncId);
+      expect(found, isNotNull);
+      expect(found!.id, id);
+      expect(found.name, 'Find me');
+    });
+
+    test('getTaskBySyncId returns null for unknown sync_id', () async {
+      final found = await db.getTaskBySyncId('nonexistent-uuid');
+      expect(found, isNull);
+    });
+
+    test('getAllTasksWithSyncId returns all tasks', () async {
+      await db.insertTask(Task(name: 'Active'));
+      final completedId = await db.insertTask(Task(name: 'Completed'));
+      await db.completeTask(completedId);
+
+      final all = await db.getAllTasksWithSyncId();
+      expect(all.length, 2);
+      for (final task in all) {
+        expect(task.syncId, isNotNull);
+      }
+    });
+  });
+
+  group('Upsert from remote', () {
+    test('inserts new task when sync_id not found locally', () async {
+      final remoteTask = Task(
+        name: 'Remote task',
+        createdAt: 1000,
+        syncId: 'remote-uuid-1',
+        updatedAt: 5000,
+      );
+
+      final changed = await db.upsertFromRemote(remoteTask);
+      expect(changed, isTrue);
+
+      final local = await db.getTaskBySyncId('remote-uuid-1');
+      expect(local, isNotNull);
+      expect(local!.name, 'Remote task');
+      expect(local.syncStatus, 'synced');
+    });
+
+    test('updates local task when remote is newer', () async {
+      final id = await db.insertTask(Task(name: 'Local task'));
+      final local = await db.getTaskById(id);
+      final syncId = local!.syncId!;
+
+      final remoteTask = Task(
+        name: 'Updated remotely',
+        createdAt: local.createdAt,
+        syncId: syncId,
+        updatedAt: local.updatedAt! + 1000,
+      );
+
+      final changed = await db.upsertFromRemote(remoteTask);
+      expect(changed, isTrue);
+
+      final updated = await db.getTaskById(id);
+      expect(updated!.name, 'Updated remotely');
+      expect(updated.syncStatus, 'synced');
+    });
+
+    test('does not update when local is newer', () async {
+      final id = await db.insertTask(Task(name: 'Local newer'));
+      final local = await db.getTaskById(id);
+      final syncId = local!.syncId!;
+
+      final remoteTask = Task(
+        name: 'Old remote',
+        createdAt: local.createdAt,
+        syncId: syncId,
+        updatedAt: local.updatedAt! - 1000,
+      );
+
+      final changed = await db.upsertFromRemote(remoteTask);
+      expect(changed, isFalse);
+
+      final unchanged = await db.getTaskById(id);
+      expect(unchanged!.name, 'Local newer');
+    });
+  });
+
+  group('Relationship/dependency sync', () {
+    test('getAllRelationshipsWithSyncIds returns pairs', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      final rels = await db.getAllRelationshipsWithSyncIds();
+      expect(rels.length, 1);
+      expect(rels[0].parentSyncId, isNotEmpty);
+      expect(rels[0].childSyncId, isNotEmpty);
+      expect(rels[0].parentSyncId, isNot(equals(rels[0].childSyncId)));
+    });
+
+    test('getAllDependenciesWithSyncIds returns pairs', () async {
+      final id1 = await db.insertTask(Task(name: 'Task'));
+      final id2 = await db.insertTask(Task(name: 'Depends'));
+      await db.addDependency(id1, id2);
+
+      final deps = await db.getAllDependenciesWithSyncIds();
+      expect(deps.length, 1);
+      expect(deps[0].taskSyncId, isNotEmpty);
+      expect(deps[0].dependsOnSyncId, isNotEmpty);
+    });
+
+    test('upsertRelationshipFromRemote creates relationship', () async {
+      final id1 = await db.insertTask(Task(name: 'Parent'));
+      final id2 = await db.insertTask(Task(name: 'Child'));
+      final t1 = await db.getTaskById(id1);
+      final t2 = await db.getTaskById(id2);
+
+      await db.upsertRelationshipFromRemote(t1!.syncId!, t2!.syncId!);
+
+      final children = await db.getChildren(id1);
+      expect(children.length, 1);
+      expect(children[0].id, id2);
+    });
+
+    test('upsertRelationshipFromRemote is idempotent', () async {
+      final id1 = await db.insertTask(Task(name: 'Parent'));
+      final id2 = await db.insertTask(Task(name: 'Child'));
+      final t1 = await db.getTaskById(id1);
+      final t2 = await db.getTaskById(id2);
+
+      await db.upsertRelationshipFromRemote(t1!.syncId!, t2!.syncId!);
+      await db.upsertRelationshipFromRemote(t1.syncId!, t2.syncId!);
+
+      final children = await db.getChildren(id1);
+      expect(children.length, 1);
+    });
+
+    test('removeRelationshipFromRemote removes relationship', () async {
+      final id1 = await db.insertTask(Task(name: 'Parent'));
+      final id2 = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(id1, id2);
+      final t1 = await db.getTaskById(id1);
+      final t2 = await db.getTaskById(id2);
+
+      await db.removeRelationshipFromRemote(t1!.syncId!, t2!.syncId!);
+
+      final children = await db.getChildren(id1);
+      expect(children, isEmpty);
+    });
+
+    test('upsertDependencyFromRemote creates dependency', () async {
+      final id1 = await db.insertTask(Task(name: 'Task'));
+      final id2 = await db.insertTask(Task(name: 'Depends'));
+      final t1 = await db.getTaskById(id1);
+      final t2 = await db.getTaskById(id2);
+
+      await db.upsertDependencyFromRemote(t1!.syncId!, t2!.syncId!);
+
+      final deps = await db.getDependencies(id1);
+      expect(deps.length, 1);
+      expect(deps[0].id, id2);
+    });
+
+    test('removeDependencyFromRemote removes dependency', () async {
+      final id1 = await db.insertTask(Task(name: 'Task'));
+      final id2 = await db.insertTask(Task(name: 'Depends'));
+      await db.addDependency(id1, id2);
+      final t1 = await db.getTaskById(id1);
+      final t2 = await db.getTaskById(id2);
+
+      await db.removeDependencyFromRemote(t1!.syncId!, t2!.syncId!);
+
+      final deps = await db.getDependencies(id1);
+      expect(deps, isEmpty);
+    });
+
+    test('upsert methods ignore unknown sync_ids without error', () async {
+      // These should not throw
+      await db.upsertRelationshipFromRemote('unknown-1', 'unknown-2');
+      await db.removeRelationshipFromRemote('unknown-1', 'unknown-2');
+      await db.upsertDependencyFromRemote('unknown-1', 'unknown-2');
+      await db.removeDependencyFromRemote('unknown-1', 'unknown-2');
+    });
+  });
+
+  group('deleteAllLocalData', () {
+    test('removes all tasks, relationships, dependencies, and sync queue', () async {
+      // Create tasks
+      final id1 = await db.insertTask(Task(name: 'Task A'));
+      final id2 = await db.insertTask(Task(name: 'Task B'));
+      final id3 = await db.insertTask(Task(name: 'Task C'));
+
+      // Create relationship and dependency
+      await db.addRelationship(id1, id2);
+      await db.addDependency(id3, id1);
+
+      // Verify data exists
+      var tasks = await db.getAllTasks();
+      expect(tasks, hasLength(3));
+      var rels = await db.getAllRelationships();
+      expect(rels, hasLength(1));
+      var queue = await db.drainSyncQueue();
+      expect(queue, isNotEmpty);
+
+      // Re-add a sync queue entry since drainSyncQueue cleared it
+      await db.addRelationship(id2, id3);
+
+      // Wipe everything
+      await db.deleteAllLocalData();
+
+      // Verify all tables are empty
+      tasks = await db.getAllTasks();
+      expect(tasks, isEmpty);
+      rels = await db.getAllRelationships();
+      expect(rels, isEmpty);
+      queue = await db.drainSyncQueue();
+      expect(queue, isEmpty);
+    });
+
+    test('is safe to call on an already empty database', () async {
+      await db.deleteAllLocalData();
+      final tasks = await db.getAllTasks();
+      expect(tasks, isEmpty);
+    });
+  });
 }

@@ -70,6 +70,13 @@ The goal of this app is **minimal cognitive load**. The user wants a quick place
 
 - When something doesn't work on the user's phone, **don't jump to fixes**. First ask the user if they want to troubleshoot using ADB, logcat, etc.
 - **NEVER** run `flutter run` on the phone when a release build is installed — the signature mismatch will uninstall the app and wipe user data. Instead, build a debug APK (`flutter build apk --debug`), back up the app data first, then sideload.
+- **Android APK builds require `--dart-define` flags** from `.env` for Firebase/cloud sync to work. Always build with:
+  ```bash
+  # Read .env and pass as --dart-define flags
+  DART_DEFINES=$(while IFS='=' read -r key value; do [ -z "$key" ] || [[ "$key" == \#* ]] && continue; echo -n " --dart-define=$key=$value"; done < .env)
+  flutter build apk --debug $DART_DEFINES
+  ```
+  Without these flags, `isConfigured` returns `false` and the profile/sync icon won't appear.
 - Before pushing a new version/tag, ask the user if they want to test with a debug build on their phone first.
 - When pushing a new version, remind the user to **export their data** from the phone app before installing the new version.
 

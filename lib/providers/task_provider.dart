@@ -8,6 +8,10 @@ class TaskProvider extends ChangeNotifier {
   final DatabaseHelper _db = DatabaseHelper();
   final Random _random = Random();
 
+  /// Callback invoked after every local mutation, used by SyncService
+  /// to schedule a debounced push.
+  void Function()? onMutation;
+
   List<Task> _tasks = [];
   List<Task> get tasks => _tasks;
 
@@ -30,19 +34,19 @@ class TaskProvider extends ChangeNotifier {
   Future<void> loadRootTasks() async {
     _currentParent = null;
     _parentStack.clear();
-    await _refreshCurrentList();
+    await _refreshCurrentList(isMutation: false);
   }
 
   Future<void> navigateInto(Task task) async {
     _parentStack.add(_currentParent);
     _currentParent = task;
-    await _refreshCurrentList();
+    await _refreshCurrentList(isMutation: false);
   }
 
   Future<bool> navigateBack() async {
     if (_parentStack.isEmpty) return false;
     _currentParent = _parentStack.removeLast();
-    await _refreshCurrentList();
+    await _refreshCurrentList(isMutation: false);
     return true;
   }
 
@@ -61,7 +65,7 @@ class TaskProvider extends ChangeNotifier {
     // Trim the stack to just the entries before the target level
     _parentStack.removeRange(level, _parentStack.length);
     _currentParent = target;
-    await _refreshCurrentList();
+    await _refreshCurrentList(isMutation: false);
   }
 
   /// Inserts multiple tasks in a single transaction, refreshes once at the end.
@@ -549,7 +553,7 @@ class TaskProvider extends ChangeNotifier {
       _parentStack.add(ancestor);
     }
     _currentParent = task;
-    await _refreshCurrentList();
+    await _refreshCurrentList(isMutation: false);
   }
 
   /// Loads started-descendant and blocked-task info for the current _tasks.
@@ -566,7 +570,7 @@ class TaskProvider extends ChangeNotifier {
     _blockedByNames = blockedNames;
   }
 
-  Future<void> _refreshCurrentList() async {
+  Future<void> _refreshCurrentList({bool isMutation = true}) async {
     if (_currentParent == null) {
       _tasks = await _db.getRootTasks();
     } else {
@@ -580,5 +584,6 @@ class TaskProvider extends ChangeNotifier {
     });
     await _loadAuxiliaryData();
     notifyListeners();
+    if (isMutation) onMutation?.call();
   }
 }

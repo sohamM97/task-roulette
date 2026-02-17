@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "1009352820106",
+    "project_id": "task-roulette-d04d6",
+    "storage_bucket": "task-roulette-d04d6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1009352820106:android:48cbf8ef7b23b1843c3473",
+        "android_client_info": {
+          "package_name": "com.taskroulette.task_roulette"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1009352820106-uigevs5kld7t51s1gol27l7n85m2vp36.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB7cfz0zkCduHBerjwtZE-3BVXQJRqhaLQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1009352820106-uigevs5kld7t51s1gol27l7n85m2vp36.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
