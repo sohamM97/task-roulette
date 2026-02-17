@@ -204,6 +204,7 @@ class TaskProvider extends ChangeNotifier {
   /// not call navigateBack() since it's invoked from the archive screen.
   Future<void> reSkipTask(int taskId) async {
     await _db.skipTask(taskId);
+    await _refreshCurrentList();
   }
 
   /// Completes a task without navigating back. Used by Today's 5 screen
@@ -341,11 +342,13 @@ class TaskProvider extends ChangeNotifier {
   /// not call navigateBack() since it's invoked from the archive screen.
   Future<void> reCompleteTask(int taskId) async {
     await _db.completeTask(taskId);
+    await _refreshCurrentList();
   }
 
   /// Permanently deletes a completed task. Returns info needed for undo.
   Future<({Task task, List<int> parentIds, List<int> childIds, List<int> dependsOnIds, List<int> dependedByIds})> permanentlyDeleteTask(int taskId, Task task) async {
     final rels = await _db.deleteTaskWithRelationships(taskId);
+    await _refreshCurrentList();
     return (
       task: task,
       parentIds: rels['parentIds']!,

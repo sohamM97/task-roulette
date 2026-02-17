@@ -17,11 +17,20 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
   /// Precomputed archive labels keyed by task ID.
   Map<int, String> _archivedLabels = {};
   bool _loading = true;
+  late final TaskProvider _provider;
 
   @override
   void initState() {
     super.initState();
+    _provider = context.read<TaskProvider>();
+    _provider.addListener(_loadData);
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _provider.removeListener(_loadData);
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -99,7 +108,7 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
             );
             // task.toMap() already includes the original completedAt/skippedAt.
             // No need to re-complete or re-skip.
-            await _loadData();
+            // _loadData() called automatically via TaskProvider listener.
           },
         ),
         showCloseIcon: true,
@@ -135,7 +144,7 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
             } else {
               await provider.reCompleteTask(task.id!);
             }
-            await _loadData();
+            // _loadData() called automatically via TaskProvider listener.
           },
         ),
         showCloseIcon: true,
