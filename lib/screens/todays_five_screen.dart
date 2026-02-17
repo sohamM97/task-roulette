@@ -740,12 +740,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
               if (task.isCompleted)
                 IconButton(
                   icon: const Icon(archiveIcon, size: 20),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const CompletedTasksScreen(),
-                    ),
-                  ),
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const CompletedTasksScreen(),
+                      ),
+                    );
+                    if (mounted) await refreshSnapshots();
+                  },
                   tooltip: 'View in archive',
                 ),
             ],
