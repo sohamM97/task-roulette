@@ -19,8 +19,17 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
+# Load Firebase/OAuth secrets for cloud sync (optional)
+DART_DEFINES=""
+if [ -f ".env" ]; then
+  while IFS='=' read -r key value; do
+    [ -z "$key" ] || [[ "$key" == \#* ]] && continue
+    DART_DEFINES="$DART_DEFINES --dart-define=$key=$value"
+  done < .env
+fi
+
 # Start Flutter in the background with a PID file
-flutter run -d linux --pid-file "$PID_FILE" &
+flutter run -d linux --pid-file "$PID_FILE" $DART_DEFINES &
 FLUTTER_PID=$!
 
 # Wait for the PID file to appear (Flutter takes a moment to start)

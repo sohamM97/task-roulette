@@ -28,6 +28,7 @@ flutter test
 - **Quick task & brain dump** — rapidly capture ideas without worrying about where they go
 - **Search** — find any task instantly from anywhere in the app
 - **Soft dependencies** — mark tasks as "do after..." to gently guide your order without hard blocking
+- **Cloud sync** — optional Google Sign-In to sync tasks across devices via Firestore
 - **Export / import** — back up your data anytime, restore on any device
 - **Dark mode** — easy on the eyes, with colorful task cards
 - **Supported platforms:** Android
@@ -65,6 +66,82 @@ flutter test
    flutter doctor --android-licenses
    ```
 
+### Cloud Sync Setup (Optional)
+
+Cloud sync lets you keep tasks in sync across your phone and desktop via Google Sign-In + Firestore. It's fully optional — the app works entirely offline without it.
+
+#### 1. Create a Firebase project
+
+- Go to [Firebase Console](https://console.firebase.google.com) → **Add project**
+- Disable Google Analytics (not needed) → Create
+
+#### 2. Enable Google Sign-In
+
+- In the left sidebar: **Build** → **Authentication** → **Get started**
+- **Sign-in method** tab → **Google** → Enable
+- Set a support email → Save
+
+#### 3. Create Firestore Database
+
+- In the left sidebar: **Build** → **Firestore Database** → **Create database**
+- Pick production mode and a region close to you
+
+#### 4. Add Android app
+
+- **Project Overview** → **Add app** → **Android**
+- Package name: `com.taskroulette.task_roulette`
+- Download `google-services.json` → place in `android/app/`
+- Add your SHA-1 fingerprint:
+  ```bash
+  keytool -list -v -keystore android/upload-keystore.jks -alias upload
+  ```
+  When prompted for the keystore password, use the one from `android/key.properties` (`storePassword` field).
+  Copy the SHA-1 from the output → paste under **Project settings → Your apps → Android → SHA certificate fingerprints → Add fingerprint**
+
+#### 5. Create Desktop OAuth Client (for Linux)
+
+- Go to [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials) (same project)
+- **Create Credentials** → **OAuth client ID** → Application type: **Desktop app**
+- **Important:** Note down the **Client ID** and **Client Secret** immediately — the secret is only shown once at creation time.
+
+#### 6. Set Firestore Security Rules
+
+- **Firestore Database** → **Rules** → replace with:
+  ```
+  rules_version = '2';
+  service cloud.firestore {
+    match /databases/{database}/documents {
+      match /users/{userId}/{document=**} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+  }
+  ```
+- Publish
+
+#### 7. Create `.env` file
+
+Create a `.env` file in the project root (it's gitignored):
+
+```
+FIREBASE_API_KEY=<your Web API Key from Firebase Project settings>
+FIREBASE_PROJECT_ID=<your Project ID>
+GOOGLE_DESKTOP_CLIENT_ID=<your Desktop OAuth Client ID>
+GOOGLE_DESKTOP_CLIENT_SECRET=<your Desktop OAuth Client Secret>
+```
+
+The API key and project ID are in **Firebase Console → Project settings → General**. The desktop client ID/secret are from step 5.
+
+`./dev.sh` automatically reads `.env` and passes the values as `--dart-define` flags. For Android builds, pass them manually:
+
+```bash
+flutter build apk --debug \
+  --dart-define=FIREBASE_API_KEY=... \
+  --dart-define=FIREBASE_PROJECT_ID=...
+```
+
+(Android uses `google-services.json` for Google Sign-In, so the desktop client ID/secret are not needed for APK builds.)
+
 ### Install dependencies (first time only)
 
 ```bash
@@ -77,7 +154,7 @@ flutter pub get
 ./dev.sh
 ```
 
-This starts the app and watches `lib/` for `.dart` file changes, triggering hot reload automatically — no need to press anything.
+This starts the app and watches `lib/` for `.dart` file changes, triggering hot reload automatically — no need to press anything. If a `.env` file exists, Firebase config is passed automatically.
 
 To run without auto-reload:
 
@@ -135,7 +212,13 @@ lib/
 ├── data/
 │   └── database_helper.dart  # SQLite database operations
 ├── providers/
-│   └── task_provider.dart    # State management (ChangeNotifier)
+│   ├── task_provider.dart    # State management (ChangeNotifier)
+│   ├── auth_provider.dart    # Google auth state
+│   └── theme_provider.dart   # Theme mode state
+├── services/
+│   ├── auth_service.dart     # Google Sign-In + Firebase Auth REST API
+│   ├── firestore_service.dart # Firestore REST API for cloud sync
+│   └── sync_service.dart     # Sync orchestration (push/pull/migration)
 ├── screens/
 │   └── task_list_screen.dart # Main screen
 └── widgets/
@@ -144,6 +227,7 @@ lib/
     ├── leaf_task_detail.dart  # Leaf task detail view with Done action
     ├── empty_state.dart      # Empty state placeholder
     ├── add_task_dialog.dart  # New task dialog
+    ├── profile_icon.dart     # Google profile + sync status icon
     └── random_result_dialog.dart # Random pick result
 
 test/

@@ -408,5 +408,119 @@ void main() {
       expect(restored.repeatInterval, original.repeatInterval);
       expect(restored.nextDueAt, original.nextDueAt);
     });
+
+    // --- Sync fields ---
+
+    test('creates with default sync fields', () {
+      final task = Task(name: 'Sync test');
+      expect(task.syncId, isNull);
+      expect(task.updatedAt, isNull);
+      expect(task.syncStatus, 'synced');
+    });
+
+    test('creates with explicit sync fields', () {
+      final task = Task(
+        name: 'Sync test',
+        syncId: 'abc-123',
+        updatedAt: 5000,
+        syncStatus: 'pending',
+      );
+      expect(task.syncId, 'abc-123');
+      expect(task.updatedAt, 5000);
+      expect(task.syncStatus, 'pending');
+    });
+
+    test('toMap includes sync fields', () {
+      final task = Task(
+        id: 1,
+        name: 'T',
+        createdAt: 100,
+        syncId: 'uuid-here',
+        updatedAt: 200,
+        syncStatus: 'pending',
+      );
+      final map = task.toMap();
+      expect(map['sync_id'], 'uuid-here');
+      expect(map['updated_at'], 200);
+      expect(map['sync_status'], 'pending');
+    });
+
+    test('toMap includes null sync_id and updated_at', () {
+      final task = Task(id: 1, name: 'T', createdAt: 100);
+      final map = task.toMap();
+      expect(map['sync_id'], isNull);
+      expect(map['updated_at'], isNull);
+      expect(map['sync_status'], 'synced');
+    });
+
+    test('fromMap parses sync fields', () {
+      final task = Task.fromMap({
+        'id': 1,
+        'name': 'T',
+        'created_at': 100,
+        'sync_id': 'my-uuid',
+        'updated_at': 300,
+        'sync_status': 'pending',
+      });
+      expect(task.syncId, 'my-uuid');
+      expect(task.updatedAt, 300);
+      expect(task.syncStatus, 'pending');
+    });
+
+    test('fromMap defaults sync_status to synced when missing', () {
+      final task = Task.fromMap({
+        'id': 1,
+        'name': 'T',
+        'created_at': 100,
+      });
+      expect(task.syncStatus, 'synced');
+    });
+
+    test('copyWith updates sync fields', () {
+      final task = Task(
+        name: 'T',
+        syncId: 'old-id',
+        updatedAt: 100,
+        syncStatus: 'synced',
+      );
+      final updated = task.copyWith(
+        syncId: 'new-id',
+        updatedAt: 200,
+        syncStatus: 'pending',
+      );
+      expect(updated.syncId, 'new-id');
+      expect(updated.updatedAt, 200);
+      expect(updated.syncStatus, 'pending');
+    });
+
+    test('copyWith preserves sync fields when not specified', () {
+      final task = Task(
+        name: 'T',
+        syncId: 'keep-me',
+        updatedAt: 100,
+        syncStatus: 'pending',
+      );
+      final updated = task.copyWith(name: 'New name');
+      expect(updated.syncId, 'keep-me');
+      expect(updated.updatedAt, 100);
+      expect(updated.syncStatus, 'pending');
+      expect(updated.name, 'New name');
+    });
+
+    test('toMap/fromMap round-trip preserves sync fields', () {
+      final original = Task(
+        id: 20,
+        name: 'Sync round trip',
+        createdAt: 999,
+        syncId: 'round-trip-uuid',
+        updatedAt: 1234,
+        syncStatus: 'deleted',
+      );
+      final restored = Task.fromMap(original.toMap());
+
+      expect(restored.syncId, original.syncId);
+      expect(restored.updatedAt, original.updatedAt);
+      expect(restored.syncStatus, original.syncStatus);
+    });
   });
 }

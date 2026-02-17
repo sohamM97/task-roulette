@@ -3,8 +3,11 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'package:uuid/uuid.dart';
 import '../models/task.dart';
 import '../models/task_relationship.dart';
+
+const _uuid = Uuid();
 
 class DatabaseHelper {
   static final DatabaseHelper _instance = DatabaseHelper._internal();
@@ -45,7 +48,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 11,
+      version: 12,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -63,9 +66,13 @@ class DatabaseHelper {
             difficulty INTEGER NOT NULL DEFAULT 0,
             last_worked_at INTEGER,
             repeat_interval TEXT,
-            next_due_at INTEGER
+            next_due_at INTEGER,
+            sync_id TEXT,
+            updated_at INTEGER,
+            sync_status TEXT NOT NULL DEFAULT 'synced'
           )
         ''');
+        await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_sync_id ON tasks(sync_id)');
         await db.execute('''
           CREATE TABLE task_relationships (
             parent_id INTEGER NOT NULL,
@@ -89,6 +96,16 @@ class DatabaseHelper {
         ''');
         await db.execute('CREATE INDEX idx_task_dependencies_task_id ON task_dependencies(task_id)');
         await db.execute('CREATE INDEX idx_task_dependencies_depends_on_id ON task_dependencies(depends_on_id)');
+        await db.execute('''
+          CREATE TABLE sync_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            action TEXT NOT NULL,
+            key1 TEXT NOT NULL,
+            key2 TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+          )
+        ''');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -152,6 +169,33 @@ class DatabaseHelper {
           await db.execute('ALTER TABLE tasks ADD COLUMN repeat_interval TEXT');
           await db.execute('ALTER TABLE tasks ADD COLUMN next_due_at INTEGER');
         }
+        if (oldVersion < 12) {
+          await db.execute('ALTER TABLE tasks ADD COLUMN sync_id TEXT');
+          await db.execute('ALTER TABLE tasks ADD COLUMN updated_at INTEGER');
+          await db.execute("ALTER TABLE tasks ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'synced'");
+          await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_sync_id ON tasks(sync_id)');
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS sync_queue (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              entity_type TEXT NOT NULL,
+              action TEXT NOT NULL,
+              key1 TEXT NOT NULL,
+              key2 TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            )
+          ''');
+          // Generate UUIDs for all existing tasks
+          final existing = await db.rawQuery('SELECT id FROM tasks');
+          final now = DateTime.now().millisecondsSinceEpoch;
+          for (final row in existing) {
+            await db.update(
+              'tasks',
+              {'sync_id': _uuid.v4(), 'updated_at': now},
+              where: 'id = ?',
+              whereArgs: [row['id']],
+            );
+          }
+        }
       },
     );
   }
@@ -194,9 +238,9 @@ class DatabaseHelper {
       // Check schema version is compatible
       final versionResult = await testDb.rawQuery('PRAGMA user_version');
       final version = versionResult.first.values.first as int;
-      if (version < 1 || version > 11) {
+      if (version < 1 || version > 12) {
         throw FormatException(
-          'Incompatible backup version ($version). This app supports versions 1-11.',
+          'Incompatible backup version ($version). This app supports versions 1-12.',
         );
       }
 
@@ -242,6 +286,12 @@ class DatabaseHelper {
     _dbFuture = null;
   }
 
+  /// Returns a map with `updated_at` and `sync_status` set for dirty tracking.
+  static Map<String, dynamic> _dirtyFields() => {
+    'updated_at': DateTime.now().millisecondsSinceEpoch,
+    'sync_status': 'pending',
+  };
+
   /// Shared conversion: maps DB rows to Task objects.
   static List<Task> _tasksFromMaps(List<Map<String, Object?>> maps) {
     return maps.map((m) => Task.fromMap(m)).toList();
@@ -261,21 +311,44 @@ class DatabaseHelper {
 
   Future<int> insertTask(Task task) async {
     final db = await database;
-    return db.insert('tasks', task.toMap());
+    final map = task.toMap();
+    map['sync_id'] ??= _uuid.v4();
+    map.addAll(_dirtyFields());
+    return db.insert('tasks', map);
   }
 
   /// Inserts multiple tasks in a single transaction.
   /// If [parentId] is non-null, each task is added as a child of that parent.
   Future<void> insertTasksBatch(List<Task> tasks, int? parentId) async {
     final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
     await db.transaction((txn) async {
+      String? parentSyncId;
+      if (parentId != null) {
+        final parentRow = await txn.query('tasks', columns: ['sync_id'], where: 'id = ?', whereArgs: [parentId]);
+        parentSyncId = parentRow.firstOrNull?['sync_id'] as String?;
+      }
       for (final task in tasks) {
-        final id = await txn.insert('tasks', task.toMap());
+        final map = task.toMap();
+        final childSyncId = _uuid.v4();
+        map['sync_id'] ??= childSyncId;
+        map['updated_at'] = now;
+        map['sync_status'] = 'pending';
+        final id = await txn.insert('tasks', map);
         if (parentId != null) {
           await txn.insert('task_relationships', {
             'parent_id': parentId,
             'child_id': id,
           });
+          if (parentSyncId != null) {
+            await txn.insert('sync_queue', {
+              'entity_type': 'relationship',
+              'action': 'add',
+              'key1': parentSyncId,
+              'key2': map['sync_id'],
+              'created_at': now,
+            });
+          }
         }
       }
     });
@@ -287,6 +360,23 @@ class DatabaseHelper {
       'parent_id': parentId,
       'child_id': childId,
     });
+    // Enqueue sync
+    final rows = await db.rawQuery(
+      'SELECT id, sync_id FROM tasks WHERE id IN (?, ?)', [parentId, childId]);
+    final syncIds = <int, String>{};
+    for (final r in rows) {
+      final sid = r['sync_id'] as String?;
+      if (sid != null) syncIds[r['id'] as int] = sid;
+    }
+    if (syncIds.containsKey(parentId) && syncIds.containsKey(childId)) {
+      await db.insert('sync_queue', {
+        'entity_type': 'relationship',
+        'action': 'add',
+        'key1': syncIds[parentId],
+        'key2': syncIds[childId],
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      });
+    }
   }
 
   Future<List<Task>> getRootTasks() async {
@@ -502,29 +592,29 @@ class DatabaseHelper {
 
   Future<void> updateTaskName(int taskId, String name) async {
     final db = await database;
-    await db.update('tasks', {'name': name}, where: 'id = ?', whereArgs: [taskId]);
+    await db.update('tasks', {'name': name, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
   }
 
   Future<void> updateTaskUrl(int taskId, String? url) async {
     final db = await database;
-    await db.update('tasks', {'url': url}, where: 'id = ?', whereArgs: [taskId]);
+    await db.update('tasks', {'url': url, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
   }
 
   Future<void> updateTaskPriority(int taskId, int priority) async {
     final db = await database;
-    await db.update('tasks', {'priority': priority}, where: 'id = ?', whereArgs: [taskId]);
+    await db.update('tasks', {'priority': priority, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
   }
 
   Future<void> updateTaskQuickTask(int taskId, int quickTask) async {
     final db = await database;
-    await db.update('tasks', {'difficulty': quickTask}, where: 'id = ?', whereArgs: [taskId]);
+    await db.update('tasks', {'difficulty': quickTask, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
   }
 
   Future<void> markWorkedOn(int taskId) async {
     final db = await database;
     await db.update(
       'tasks',
-      {'last_worked_at': DateTime.now().millisecondsSinceEpoch},
+      {'last_worked_at': DateTime.now().millisecondsSinceEpoch, ..._dirtyFields()},
       where: 'id = ?',
       whereArgs: [taskId],
     );
@@ -534,7 +624,7 @@ class DatabaseHelper {
     final db = await database;
     await db.update(
       'tasks',
-      {'last_worked_at': restoreTo},
+      {'last_worked_at': restoreTo, ..._dirtyFields()},
       where: 'id = ?',
       whereArgs: [taskId],
     );
@@ -544,7 +634,7 @@ class DatabaseHelper {
     final db = await database;
     await db.update(
       'tasks',
-      {'repeat_interval': interval, 'next_due_at': null},
+      {'repeat_interval': interval, 'next_due_at': null, ..._dirtyFields()},
       where: 'id = ?',
       whereArgs: [taskId],
     );
@@ -575,6 +665,7 @@ class DatabaseHelper {
         'started_at': null,
         'last_worked_at': null,
         'next_due_at': nextDue,
+        ..._dirtyFields(),
       },
       where: 'id = ?',
       whereArgs: [taskId],
@@ -583,11 +674,28 @@ class DatabaseHelper {
 
   Future<void> removeRelationship(int parentId, int childId) async {
     final db = await database;
+    // Enqueue sync before deleting
+    final rows = await db.rawQuery(
+      'SELECT id, sync_id FROM tasks WHERE id IN (?, ?)', [parentId, childId]);
+    final syncIds = <int, String>{};
+    for (final r in rows) {
+      final sid = r['sync_id'] as String?;
+      if (sid != null) syncIds[r['id'] as int] = sid;
+    }
     await db.delete(
       'task_relationships',
       where: 'parent_id = ? AND child_id = ?',
       whereArgs: [parentId, childId],
     );
+    if (syncIds.containsKey(parentId) && syncIds.containsKey(childId)) {
+      await db.insert('sync_queue', {
+        'entity_type': 'relationship',
+        'action': 'remove',
+        'key1': syncIds[parentId],
+        'key2': syncIds[childId],
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      });
+    }
   }
 
   /// Marks a task as completed by setting completed_at to now.
@@ -595,7 +703,7 @@ class DatabaseHelper {
     final db = await database;
     await db.update(
       'tasks',
-      {'completed_at': DateTime.now().millisecondsSinceEpoch},
+      {'completed_at': DateTime.now().millisecondsSinceEpoch, ..._dirtyFields()},
       where: 'id = ?',
       whereArgs: [taskId],
     );
@@ -606,7 +714,7 @@ class DatabaseHelper {
     final db = await database;
     await db.update(
       'tasks',
-      {'skipped_at': DateTime.now().millisecondsSinceEpoch},
+      {'skipped_at': DateTime.now().millisecondsSinceEpoch, ..._dirtyFields()},
       where: 'id = ?',
       whereArgs: [taskId],
     );
@@ -617,7 +725,7 @@ class DatabaseHelper {
     final db = await database;
     await db.update(
       'tasks',
-      {'skipped_at': null},
+      {'skipped_at': null, ..._dirtyFields()},
       where: 'id = ?',
       whereArgs: [taskId],
     );
@@ -628,7 +736,7 @@ class DatabaseHelper {
     final db = await database;
     await db.update(
       'tasks',
-      {'completed_at': null},
+      {'completed_at': null, ..._dirtyFields()},
       where: 'id = ?',
       whereArgs: [taskId],
     );
@@ -640,6 +748,10 @@ class DatabaseHelper {
   Future<Map<String, List<int>>> deleteTaskWithRelationships(int taskId) async {
     final db = await database;
     return db.transaction((txn) async {
+      // Capture sync_id before deletion for sync queue
+      final taskRow = await txn.query('tasks', columns: ['sync_id'], where: 'id = ?', whereArgs: [taskId]);
+      final syncId = taskRow.firstOrNull?['sync_id'] as String?;
+
       final parentMaps = await txn.query(
         'task_relationships',
         columns: ['parent_id'],
@@ -671,6 +783,18 @@ class DatabaseHelper {
           where: 'task_id = ? OR depends_on_id = ?',
           whereArgs: [taskId, taskId]);
       await txn.delete('tasks', where: 'id = ?', whereArgs: [taskId]);
+
+      // Enqueue task deletion for sync
+      if (syncId != null) {
+        await txn.insert('sync_queue', {
+          'entity_type': 'task',
+          'action': 'remove',
+          'key1': syncId,
+          'key2': '',
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        });
+      }
+
       return {
         'parentIds': parentMaps.map((m) => m['parent_id'] as int).toList(),
         'childIds': childMaps.map((m) => m['child_id'] as int).toList(),
@@ -733,7 +857,7 @@ class DatabaseHelper {
     final db = await database;
     await db.update(
       'tasks',
-      {'started_at': DateTime.now().millisecondsSinceEpoch},
+      {'started_at': DateTime.now().millisecondsSinceEpoch, ..._dirtyFields()},
       where: 'id = ?',
       whereArgs: [taskId],
     );
@@ -744,7 +868,7 @@ class DatabaseHelper {
     final db = await database;
     await db.update(
       'tasks',
-      {'started_at': null},
+      {'started_at': null, ..._dirtyFields()},
       where: 'id = ?',
       whereArgs: [taskId],
     );
@@ -758,15 +882,49 @@ class DatabaseHelper {
       'task_id': taskId,
       'depends_on_id': dependsOnId,
     });
+    // Enqueue sync
+    final rows = await db.rawQuery(
+      'SELECT id, sync_id FROM tasks WHERE id IN (?, ?)', [taskId, dependsOnId]);
+    final syncIds = <int, String>{};
+    for (final r in rows) {
+      final sid = r['sync_id'] as String?;
+      if (sid != null) syncIds[r['id'] as int] = sid;
+    }
+    if (syncIds.containsKey(taskId) && syncIds.containsKey(dependsOnId)) {
+      await db.insert('sync_queue', {
+        'entity_type': 'dependency',
+        'action': 'add',
+        'key1': syncIds[taskId],
+        'key2': syncIds[dependsOnId],
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      });
+    }
   }
 
   Future<void> removeDependency(int taskId, int dependsOnId) async {
     final db = await database;
+    // Enqueue sync before deleting
+    final rows = await db.rawQuery(
+      'SELECT id, sync_id FROM tasks WHERE id IN (?, ?)', [taskId, dependsOnId]);
+    final syncIds = <int, String>{};
+    for (final r in rows) {
+      final sid = r['sync_id'] as String?;
+      if (sid != null) syncIds[r['id'] as int] = sid;
+    }
     await db.delete(
       'task_dependencies',
       where: 'task_id = ? AND depends_on_id = ?',
       whereArgs: [taskId, dependsOnId],
     );
+    if (syncIds.containsKey(taskId) && syncIds.containsKey(dependsOnId)) {
+      await db.insert('sync_queue', {
+        'entity_type': 'dependency',
+        'action': 'remove',
+        'key1': syncIds[taskId],
+        'key2': syncIds[dependsOnId],
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      });
+    }
   }
 
   /// Returns all tasks that [taskId] depends on (completed or not, for UI).
@@ -996,6 +1154,230 @@ class DatabaseHelper {
           [dep.taskId, dep.dependsOnId]);
       }
     });
+  }
+
+  /// Deletes all local tasks, relationships, dependencies, and sync queue.
+  /// Used when the user chooses "Replace with cloud data" on first sign-in.
+  Future<void> deleteAllLocalData() async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('sync_queue');
+      await txn.delete('task_dependencies');
+      await txn.delete('task_relationships');
+      await txn.delete('tasks');
+    });
+  }
+
+  /// Saves the current database to a pre-sign-in backup file.
+  /// Returns true if the backup was created successfully.
+  Future<bool> backupBeforeCloudReplace() async {
+    if (testDatabasePath != null) return false;
+    final dbPath = await getDatabasePath();
+    final backupPath = '$dbPath.pre-sync';
+    final dbFile = File(dbPath);
+    if (!await dbFile.exists()) return false;
+    await dbFile.copy(backupPath);
+    return true;
+  }
+
+  /// Returns true if a pre-sign-in backup exists.
+  Future<bool> hasPreSyncBackup() async {
+    if (testDatabasePath != null) return false;
+    final dbPath = await getDatabasePath();
+    return File('$dbPath.pre-sync').exists();
+  }
+
+  /// Restores the pre-sign-in backup, replacing current data.
+  /// Returns true if restored, false if no backup existed.
+  Future<bool> restorePreSyncBackup() async {
+    if (testDatabasePath != null) return false;
+    final dbPath = await getDatabasePath();
+    final backupPath = '$dbPath.pre-sync';
+    final backupFile = File(backupPath);
+    if (!await backupFile.exists()) return false;
+
+    // Close current DB, replace with backup, reopen
+    if (_dbFuture != null) {
+      final db = await _dbFuture!;
+      await db.close();
+    }
+    _dbFuture = null;
+    await backupFile.copy(dbPath);
+    await backupFile.delete();
+    return true;
+  }
+
+  /// Deletes the pre-sync backup if it exists.
+  Future<void> deletePreSyncBackup() async {
+    if (testDatabasePath != null) return;
+    final dbPath = await getDatabasePath();
+    final backupFile = File('$dbPath.pre-sync');
+    if (await backupFile.exists()) {
+      await backupFile.delete();
+    }
+  }
+
+  // --- Sync-related methods ---
+
+  /// Returns all tasks with sync_status = 'pending'.
+  Future<List<Task>> getPendingTasks() async {
+    final db = await database;
+    final maps = await db.query('tasks', where: "sync_status = 'pending'");
+    return _tasksFromMaps(maps);
+  }
+
+  /// Returns all tasks with sync_status = 'deleted'.
+  Future<List<Task>> getDeletedTasks() async {
+    final db = await database;
+    final maps = await db.query('tasks', where: "sync_status = 'deleted'");
+    return _tasksFromMaps(maps);
+  }
+
+  /// Marks tasks as synced by their IDs.
+  Future<void> markTasksSynced(List<int> taskIds) async {
+    if (taskIds.isEmpty) return;
+    final db = await database;
+    final placeholders = taskIds.map((_) => '?').join(',');
+    await db.rawUpdate(
+      "UPDATE tasks SET sync_status = 'synced' WHERE id IN ($placeholders)",
+      taskIds,
+    );
+  }
+
+  /// Drains and returns all entries from the sync_queue, deleting them.
+  Future<List<Map<String, dynamic>>> drainSyncQueue() async {
+    final db = await database;
+    return db.transaction((txn) async {
+      final rows = await txn.query('sync_queue', orderBy: 'id ASC');
+      if (rows.isNotEmpty) {
+        await txn.delete('sync_queue');
+      }
+      return rows;
+    });
+  }
+
+  /// Finds a task by its sync_id. Returns null if not found.
+  Future<Task?> getTaskBySyncId(String syncId) async {
+    final db = await database;
+    final maps = await db.query('tasks', where: 'sync_id = ?', whereArgs: [syncId]);
+    if (maps.isEmpty) return null;
+    return Task.fromMap(maps.first);
+  }
+
+  /// Upserts a task from a remote source (sync pull).
+  /// If a task with the same sync_id exists and remote is newer, updates it.
+  /// If no task with that sync_id exists, inserts it.
+  /// Returns true if a change was made.
+  Future<bool> upsertFromRemote(Task remoteTask) async {
+    final db = await database;
+    final existing = await db.query('tasks', where: 'sync_id = ?', whereArgs: [remoteTask.syncId]);
+    if (existing.isEmpty) {
+      // Insert new task from remote
+      final map = remoteTask.toMap();
+      map.remove('id'); // let local DB assign ID
+      map['sync_status'] = 'synced';
+      await db.insert('tasks', map);
+      return true;
+    } else {
+      final local = Task.fromMap(existing.first);
+      if (remoteTask.updatedAt != null &&
+          (local.updatedAt == null || remoteTask.updatedAt! > local.updatedAt!)) {
+        // Remote is newer — update local
+        final map = remoteTask.toMap();
+        map.remove('id'); // keep local ID
+        map['sync_status'] = 'synced';
+        await db.update('tasks', map, where: 'id = ?', whereArgs: [local.id]);
+        return true;
+      }
+      return false; // local is newer or same
+    }
+  }
+
+  /// Returns all relationships as (parentSyncId, childSyncId) pairs.
+  Future<List<({String parentSyncId, String childSyncId})>> getAllRelationshipsWithSyncIds() async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT p.sync_id AS parent_sync_id, c.sync_id AS child_sync_id
+      FROM task_relationships tr
+      INNER JOIN tasks p ON tr.parent_id = p.id
+      INNER JOIN tasks c ON tr.child_id = c.id
+      WHERE p.sync_id IS NOT NULL AND c.sync_id IS NOT NULL
+    ''');
+    return rows.map((r) => (
+      parentSyncId: r['parent_sync_id'] as String,
+      childSyncId: r['child_sync_id'] as String,
+    )).toList();
+  }
+
+  /// Returns all dependencies as (taskSyncId, dependsOnSyncId) pairs.
+  Future<List<({String taskSyncId, String dependsOnSyncId})>> getAllDependenciesWithSyncIds() async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT t.sync_id AS task_sync_id, d.sync_id AS depends_on_sync_id
+      FROM task_dependencies td
+      INNER JOIN tasks t ON td.task_id = t.id
+      INNER JOIN tasks d ON td.depends_on_id = d.id
+      WHERE t.sync_id IS NOT NULL AND d.sync_id IS NOT NULL
+    ''');
+    return rows.map((r) => (
+      taskSyncId: r['task_sync_id'] as String,
+      dependsOnSyncId: r['depends_on_sync_id'] as String,
+    )).toList();
+  }
+
+  /// Upserts a relationship from remote using sync_ids.
+  Future<void> upsertRelationshipFromRemote(String parentSyncId, String childSyncId) async {
+    final db = await database;
+    final parentRows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [parentSyncId]);
+    final childRows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [childSyncId]);
+    if (parentRows.isEmpty || childRows.isEmpty) return;
+    final parentId = parentRows.first['id'] as int;
+    final childId = childRows.first['id'] as int;
+    await db.rawInsert(
+      'INSERT OR IGNORE INTO task_relationships (parent_id, child_id) VALUES (?, ?)',
+      [parentId, childId],
+    );
+  }
+
+  /// Removes a relationship from remote using sync_ids.
+  Future<void> removeRelationshipFromRemote(String parentSyncId, String childSyncId) async {
+    final db = await database;
+    final parentRows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [parentSyncId]);
+    final childRows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [childSyncId]);
+    if (parentRows.isEmpty || childRows.isEmpty) return;
+    await db.delete('task_relationships',
+      where: 'parent_id = ? AND child_id = ?',
+      whereArgs: [parentRows.first['id'], childRows.first['id']]);
+  }
+
+  /// Upserts a dependency from remote using sync_ids.
+  Future<void> upsertDependencyFromRemote(String taskSyncId, String dependsOnSyncId) async {
+    final db = await database;
+    final taskRows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [taskSyncId]);
+    final depRows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [dependsOnSyncId]);
+    if (taskRows.isEmpty || depRows.isEmpty) return;
+    await db.rawInsert(
+      'INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)',
+      [taskRows.first['id'], depRows.first['id']],
+    );
+  }
+
+  /// Removes a dependency from remote using sync_ids.
+  Future<void> removeDependencyFromRemote(String taskSyncId, String dependsOnSyncId) async {
+    final db = await database;
+    final taskRows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [taskSyncId]);
+    final depRows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [dependsOnSyncId]);
+    if (taskRows.isEmpty || depRows.isEmpty) return;
+    await db.delete('task_dependencies',
+      where: 'task_id = ? AND depends_on_id = ?',
+      whereArgs: [taskRows.first['id'], depRows.first['id']]);
+  }
+
+  /// Returns all tasks (including completed/skipped) that have a sync_id.
+  Future<List<Task>> getAllTasksWithSyncId() async {
+    final db = await database;
+    final maps = await db.query('tasks', where: 'sync_id IS NOT NULL');
+    return _tasksFromMaps(maps);
   }
 
   /// Returns the set of task IDs (from the given list) that have at least one

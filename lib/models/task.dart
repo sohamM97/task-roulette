@@ -12,6 +12,9 @@ class Task {
   final int? lastWorkedAt;
   final String? repeatInterval;
   final int? nextDueAt;
+  final String? syncId;
+  final int? updatedAt;
+  final String syncStatus;
 
   static const priorityLabels = ['Normal', 'High'];
 
@@ -28,6 +31,9 @@ class Task {
     this.lastWorkedAt,
     this.repeatInterval,
     this.nextDueAt,
+    this.syncId,
+    this.updatedAt,
+    this.syncStatus = 'synced',
   }) : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch;
 
   bool get isCompleted => completedAt != null;
@@ -63,6 +69,9 @@ class Task {
     int? Function()? lastWorkedAt,
     String? Function()? repeatInterval,
     int? Function()? nextDueAt,
+    String? syncId,
+    int? updatedAt,
+    String? syncStatus,
   }) {
     return Task(
       id: id ?? this.id,
@@ -77,6 +86,9 @@ class Task {
       lastWorkedAt: lastWorkedAt != null ? lastWorkedAt() : this.lastWorkedAt,
       repeatInterval: repeatInterval != null ? repeatInterval() : this.repeatInterval,
       nextDueAt: nextDueAt != null ? nextDueAt() : this.nextDueAt,
+      syncId: syncId ?? this.syncId,
+      updatedAt: updatedAt ?? this.updatedAt,
+      syncStatus: syncStatus ?? this.syncStatus,
     );
   }
 
@@ -94,6 +106,9 @@ class Task {
       'last_worked_at': lastWorkedAt,
       'repeat_interval': repeatInterval,
       'next_due_at': nextDueAt,
+      'sync_id': syncId,
+      'updated_at': updatedAt,
+      'sync_status': syncStatus,
     };
   }
 
@@ -111,6 +126,9 @@ class Task {
       lastWorkedAt: map['last_worked_at'] as int?,
       repeatInterval: map['repeat_interval'] as String?,
       nextDueAt: map['next_due_at'] as int?,
+      syncId: map['sync_id'] as String?,
+      updatedAt: map['updated_at'] as int?,
+      syncStatus: map['sync_status'] as String? ?? 'synced',
     );
   }
 }

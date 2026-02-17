@@ -6,6 +6,7 @@ import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../utils/display_utils.dart';
 import '../widgets/completion_animation.dart';
+import '../widgets/profile_icon.dart';
 import 'completed_tasks_screen.dart';
 
 class TodaysFiveScreen extends StatefulWidget {
@@ -621,6 +622,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         ),
         toolbarHeight: 72,
         actions: [
+          const ProfileIcon(),
           if (completedCount < totalCount)
             IconButton(
               icon: const Icon(Icons.refresh),
