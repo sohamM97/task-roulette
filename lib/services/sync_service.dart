@@ -45,18 +45,11 @@ class SyncService {
     _periodicPullTimer?.cancel();
   }
 
-  /// Stops sync timers, restores pre-sync backup if one exists,
-  /// and signs out. Returns true if local data was restored from backup.
-  Future<bool> handleSignOut() async {
+  /// Stops sync timers and signs out. Local data is kept as-is.
+  Future<void> handleSignOut() async {
     _pushDebounceTimer?.cancel();
     _periodicPullTimer?.cancel();
-
-    final restored = await _db.restorePreSyncBackup();
     await _authProvider.signOut();
-    if (restored) {
-      _onDataChanged?.call();
-    }
-    return restored;
   }
 
   /// Schedule a debounced push (called after every local mutation).
@@ -127,12 +120,6 @@ class SyncService {
     } catch (e) {
       _authProvider.setSyncStatus(SyncStatus.error, error: e.toString());
     }
-  }
-
-  /// Backs up the local database. Call before any migration path
-  /// so the user can restore their pre-sign-in data on sign-out.
-  Future<void> backupLocalData() async {
-    await _db.backupBeforeCloudReplace();
   }
 
   /// Replace local data with cloud data: wipe local, pull everything from cloud.

@@ -139,11 +139,6 @@ class ProfileIcon extends StatelessWidget {
   /// After sign-in, decide whether to show the migration choice dialog
   /// or proceed directly with initial migration.
   Future<void> _handlePostSignIn(BuildContext context, SyncService syncService) async {
-    // Always back up local data on sign-in so it can be restored on sign-out.
-    // The backup is consumed (deleted) on sign-out, so we must re-create it
-    // each time the user signs in.
-    await syncService.backupLocalData();
-
     final needsMigration = await syncService.needsInitialMigration();
     if (!needsMigration) {
       syncService.startPeriodicPull();

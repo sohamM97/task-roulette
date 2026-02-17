@@ -1168,55 +1168,6 @@ class DatabaseHelper {
     });
   }
 
-  /// Saves the current database to a pre-sign-in backup file.
-  /// Returns true if the backup was created successfully.
-  Future<bool> backupBeforeCloudReplace() async {
-    if (testDatabasePath != null) return false;
-    final dbPath = await getDatabasePath();
-    final backupPath = '$dbPath.pre-sync';
-    final dbFile = File(dbPath);
-    if (!await dbFile.exists()) return false;
-    await dbFile.copy(backupPath);
-    return true;
-  }
-
-  /// Returns true if a pre-sign-in backup exists.
-  Future<bool> hasPreSyncBackup() async {
-    if (testDatabasePath != null) return false;
-    final dbPath = await getDatabasePath();
-    return File('$dbPath.pre-sync').exists();
-  }
-
-  /// Restores the pre-sign-in backup, replacing current data.
-  /// Returns true if restored, false if no backup existed.
-  Future<bool> restorePreSyncBackup() async {
-    if (testDatabasePath != null) return false;
-    final dbPath = await getDatabasePath();
-    final backupPath = '$dbPath.pre-sync';
-    final backupFile = File(backupPath);
-    if (!await backupFile.exists()) return false;
-
-    // Close current DB, replace with backup, reopen
-    if (_dbFuture != null) {
-      final db = await _dbFuture!;
-      await db.close();
-    }
-    _dbFuture = null;
-    await backupFile.copy(dbPath);
-    await backupFile.delete();
-    return true;
-  }
-
-  /// Deletes the pre-sync backup if it exists.
-  Future<void> deletePreSyncBackup() async {
-    if (testDatabasePath != null) return;
-    final dbPath = await getDatabasePath();
-    final backupFile = File('$dbPath.pre-sync');
-    if (await backupFile.exists()) {
-      await backupFile.delete();
-    }
-  }
-
   // --- Sync-related methods ---
 
   /// Returns all tasks with sync_status = 'pending'.
