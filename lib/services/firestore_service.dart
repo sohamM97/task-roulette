@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:http/http.dart' as http;
 import '../models/task.dart';
 
@@ -35,7 +36,7 @@ class FirestoreService {
       final writes = batch.map((task) => {
             'update': {
               'name': 'projects/$_projectId/databases/(default)/documents/users/$uid/tasks/${task.syncId}',
-              'fields': _taskToFirestoreFields(task),
+              'fields': taskToFirestoreFields(task),
             },
           }).toList();
 
@@ -249,7 +250,7 @@ class FirestoreService {
       final body = json.decode(response.body) as Map<String, dynamic>;
       final docs = body['documents'] as List<dynamic>? ?? [];
       for (final doc in docs) {
-        final task = _taskFromFirestoreDoc(doc as Map<String, dynamic>);
+        final task = taskFromFirestoreDoc(doc as Map<String, dynamic>);
         if (task != null) tasks.add(task);
       }
       pageToken = body['nextPageToken'] as String?;
@@ -291,13 +292,14 @@ class FirestoreService {
     for (final result in results) {
       final doc = (result as Map<String, dynamic>)['document'] as Map<String, dynamic>?;
       if (doc == null) continue;
-      final task = _taskFromFirestoreDoc(doc);
+      final task = taskFromFirestoreDoc(doc);
       if (task != null) tasks.add(task);
     }
     return tasks;
   }
 
-  Map<String, dynamic> _taskToFirestoreFields(Task task) {
+  @visibleForTesting
+  Map<String, dynamic> taskToFirestoreFields(Task task) {
     return {
       'name': {'stringValue': task.name},
       'created_at': {'integerValue': task.createdAt.toString()},
@@ -320,7 +322,8 @@ class FirestoreService {
     };
   }
 
-  Task? _taskFromFirestoreDoc(Map<String, dynamic> doc) {
+  @visibleForTesting
+  Task? taskFromFirestoreDoc(Map<String, dynamic> doc) {
     final fields = doc['fields'] as Map<String, dynamic>?;
     if (fields == null) return null;
 

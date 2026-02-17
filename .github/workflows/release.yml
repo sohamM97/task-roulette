@@ -62,7 +62,14 @@ jobs:
       #   unzip debug-symbols.zip -d symbols/
       #   flutter symbolize -i stacktrace.txt -d symbols/
       - name: Build APK
-        run: flutter build apk --release --split-debug-info=build/app/outputs/symbols --obfuscate
+        run: |
+          FIREBASE_PROJECT_ID=$(jq -r '.project_info.project_id' android/app/google-services.json)
+          FIREBASE_API_KEY=$(jq -r '.client[0].api_key[0].current_key' android/app/google-services.json)
+          flutter build apk --release \
+            --split-debug-info=build/app/outputs/symbols \
+            --obfuscate \
+            --dart-define=FIREBASE_API_KEY=$FIREBASE_API_KEY \
+            --dart-define=FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID
 
       - name: Zip debug symbols
         run: cd build/app/outputs/symbols && zip -r ../../../../debug-symbols.zip .
