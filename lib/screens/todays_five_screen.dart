@@ -23,6 +23,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   /// Tracks tasks marked "Done today" (vs "Done for good!") so
   /// _handleUncomplete can revert the correct state.
   final Set<int> _workedOnIds = {};
+  /// Tracks tasks that were auto-started by "Done today" (weren't started
+  /// before). _handleUncomplete uses this to also call unstartTask.
+  final Set<int> _autoStartedIds = {};
   bool _loading = true;
 
   @override
@@ -333,7 +336,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.markWorkedOn(task.id!);
-    if (!wasStarted) await provider.startTask(task.id!);
+    if (!wasStarted) {
+      await provider.startTask(task.id!);
+      _autoStartedIds.add(task.id!);
+    }
     // Re-fetch fresh snapshot so the task card reflects the new state
     final fresh = await DatabaseHelper().getTaskById(task.id!);
     if (!mounted) return;
@@ -363,6 +369,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             setState(() {
               _completedIds.remove(task.id!);
               _workedOnIds.remove(task.id!);
+              _autoStartedIds.remove(task.id!);
               if (restored != null && i >= 0) _todaysTasks[i] = restored;
             });
             await _persist();
@@ -426,9 +433,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     // Check actual DB state — task may have been completed externally
     // (e.g. via "Go to task" → All Tasks) even if _workedOnIds has it.
     final wasWorkedOn = _workedOnIds.remove(task.id);
+    final wasAutoStarted = _autoStartedIds.remove(task.id);
     if (wasWorkedOn && !task.isCompleted) {
       // "Done today" only — revert worked-on state
       await provider.unmarkWorkedOn(task.id!);
+      // Also unstart if the task was auto-started by "Done today"
+      if (wasAutoStarted) await provider.unstartTask(task.id!);
     } else if (task.isCompleted) {
       // "Done for good!" (or externally completed) — revert completion
       await provider.uncompleteTask(task.id!);
