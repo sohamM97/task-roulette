@@ -764,3 +764,193 @@ code to keep the codebase clean.
 4. **I-12** — Add undo support to Today's 5 "Done today" (15 min, matches All Tasks behavior)
 5. **M-11** — Consolidate triple refresh into single batch (10 min, depends on I-9)
 6. **Remaining open items** from Round 1/2 (I6, M3, M5, M6, M9, M10, N1–N4) — as time permits
+
+---
+---
+
+## Round 4 (2026-02-17)
+
+Full codebase review after Round 3 fixes and new feature commits (release version
+check, archive button for completed tasks in Today's 5, move task fix) were merged.
+Verified all Round 3 items. Found stale-snapshot bugs in Today's 5 completion
+flows and a data-loss issue in the archive permanent-delete undo.
+
+---
+
+### Previous Round Verification
+
+- [x] I-9: `markWorkedOn`/`unmarkWorkedOn` now call `_refreshCurrentList()` — verified fixed at `task_provider.dart:489-513`
+- [x] I-10: Today's 5 `_workedOnTask` re-fetches task snapshot — verified fixed at `todays_five_screen.dart:322-327`
+- [x] I-11: `_completeNormalTask` undo re-fetches task — verified fixed at `todays_five_screen.dart:375-378`
+- [x] I-12: Today's 5 "Done today" undo action added — verified fixed at `todays_five_screen.dart:338-351`
+- [x] M-11: Triple refresh consolidated into `markWorkedOnAndNavigateBack` — verified fixed at `task_provider.dart:499-505`, called at `task_list_screen.dart:250-253`
+
+### Round 1/2 Items Still Open
+
+- I6: Loading indicators for async UI transitions — still open
+- M3: `_renameTask` dialog leaks TextEditingController — still open
+- M5: `BackupService` hardcodes Android download path — still open
+- M6: DAG view doesn't recompute layout on rotation — still open
+- M9: N+1 queries in `_addParent` for grandparent siblings — still open
+- M-10: `showEditUrlDialog` leaks TextEditingController — still open
+- M-12: Repeating task code is dead code — still open
+- N1–N4: All still open
+
+---
+
+### Important
+
+#### I-13. `_completeNormalTask` doesn't update task snapshot — wrong buttons shown after "Done for good!"
+**File:** `lib/screens/todays_five_screen.dart:357-365`
+
+After "Done for good!" in Today's 5, the task object in `_todaysTasks` is NOT
+re-fetched from the DB. The `_completedIds` set correctly tracks the visual
+"done" state, but the task object is stale — its `completedAt` field is still
+`null` (never updated from the pre-completion snapshot).
+
+The trailing button logic at lines 692–708 uses `task.isCompleted` from the
+stale object:
+```dart
+if (widget.onNavigateToTask != null && !task.isCompleted)
+    IconButton(... icon: Icons.open_in_new ...),  // "Go to task"
+if (task.isCompleted)
+    IconButton(... icon: archiveIcon ...),  // "View in archive"
+```
+
+Since `task.isCompleted` is `false` on the stale object:
+- **"Go to task" button SHOWS** — tapping it navigates to a completed task,
+  which shows the leaf detail view with action buttons (Done today, Skip, etc.)
+  for an already-completed task. Confusing and can lead to double-mutations.
+- **"View in archive" button HIDDEN** — the new archive button (from commit
+  `327f165`) is never visible after completing via "Done for good!".
+
+**Fix:** Re-fetch the task snapshot after completion, same as `_workedOnTask`:
+```dart
+await provider.completeTaskOnly(task.id!);
+final fresh = await DatabaseHelper().getTaskById(task.id!);
+if (!mounted) return;
+final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
+setState(() {
+  _completedIds.add(task.id!);
+  if (fresh != null && idx >= 0) _todaysTasks[idx] = fresh;
+});
+```
+
+---
+
+#### I-14. `_handleUncomplete` doesn't revert "Done today" state — task bounces back to "done" on tab switch
+**File:** `lib/screens/todays_five_screen.dart:400-443`
+
+When a user taps a "done" task to uncomplete it, `_handleUncomplete` always
+calls `provider.uncompleteTask(task.id!)` — which clears `completedAt`. This
+works for "Done for good!" tasks, but for "Done today" tasks, `completedAt`
+was never set (it's already null). The real state that needs reverting is
+`lastWorkedAt` and (potentially) `startedAt`.
+
+**Reproduction:**
+1. In Today's 5, tap a task → choose "Done today"
+2. Let the undo snackbar auto-dismiss
+3. Tap the now-done task to uncomplete it → visual checkmark removed
+4. Switch to All Tasks tab and back → task reappears as "done"
+
+**Root cause:** After step 3, the task still has `lastWorkedAt = today` and
+`startedAt` set in the DB. On `refreshSnapshots()`, the external detection
+at line 128 re-adds it to `_completedIds`:
+```dart
+if (fresh.isWorkedOnToday && !_completedIds.contains(fresh.id)) {
+  _completedIds.add(fresh.id!);
+}
+```
+
+**Fix:** Track the completion type so `_handleUncomplete` can revert correctly.
+One approach: add a `Set<int> _workedOnIds` that tracks which tasks were marked
+"Done today" vs "Done for good!":
+```dart
+final Set<int> _workedOnIds = {};
+
+// In _workedOnTask: _workedOnIds.add(task.id!);
+// In _completeNormalTask: ensure task.id NOT in _workedOnIds
+
+Future<void> _handleUncomplete(Task task) async {
+  final provider = context.read<TaskProvider>();
+  if (_workedOnIds.contains(task.id)) {
+    // "Done today" — revert worked-on + auto-start
+    await provider.unmarkWorkedOn(task.id!);
+    // Note: original lastWorkedAt value is lost if snackbar was dismissed.
+    // This is an acceptable trade-off.
+    _workedOnIds.remove(task.id);
+  } else {
+    await provider.uncompleteTask(task.id!);
+  }
+  // ... rest of existing logic (remove from _completedIds, leaf check, etc.)
+```
+
+---
+
+#### I-15. `_permanentlyDeleteTask` undo overwrites original completion timestamp
+**File:** `lib/screens/completed_tasks_screen.dart:92-104`
+
+When undoing a permanent delete from the archive, the undo handler:
+1. Calls `restoreTask(deleted.task, ...)` — inserts the task with its original
+   `completedAt`/`skippedAt` timestamp via `task.toMap()`
+2. Then calls `reCompleteTask(task.id!)` or `reSkipTask(task.id!)` — which
+   overwrites the timestamp with `DateTime.now()`
+
+This means the original completion date (e.g., "Completed Jan 15") is replaced
+with "Completed today". The information is permanently lost.
+
+**Fix:** Remove the redundant `reCompleteTask`/`reSkipTask` calls. The task
+is already restored with the correct `completedAt`/`skippedAt` from step 1:
+```dart
+onPressed: () async {
+  await provider.restoreTask(
+    deleted.task,
+    deleted.parentIds,
+    deleted.childIds,
+    dependsOnIds: deleted.dependsOnIds,
+    dependedByIds: deleted.dependedByIds,
+  );
+  // task.toMap() already includes the original completedAt/skippedAt.
+  // No need to re-complete or re-skip.
+  await _loadData();
+},
+```
+
+---
+
+### Minor
+
+#### M-13. `_navigateToTask` in DAG view doesn't await async `navigateToTask`
+**File:** `lib/screens/dag_view_screen.dart:281-283`
+
+```dart
+void _navigateToTask(Task task) {
+  context.read<TaskProvider>().navigateToTask(task);
+  Navigator.pop(context);
+}
+```
+
+`navigateToTask` is async (returns `Future<void>`), but it's called without
+`await`, and `Navigator.pop` fires immediately. If `navigateToTask` throws
+(e.g., DB error), the error is silently swallowed. In practice this works
+because the Consumer on the All Tasks tab rebuilds when `notifyListeners()`
+fires, but it's fragile — an error during navigation would leave the provider
+in a partially-modified state (stack changed, children not loaded).
+
+**Fix:**
+```dart
+Future<void> _navigateToTask(Task task) async {
+  await context.read<TaskProvider>().navigateToTask(task);
+  if (mounted) Navigator.pop(context);
+}
+```
+
+---
+
+## Round 4 — Suggested Implementation Order
+
+1. **I-13** — Re-fetch task snapshot in `_completeNormalTask` (5 min, `todays_five_screen.dart`)
+2. **I-15** — Remove redundant `reCompleteTask`/`reSkipTask` in archive undo (2 min, `completed_tasks_screen.dart`)
+3. **I-14** — Track completion type in Today's 5 for correct undo (20 min, `todays_five_screen.dart`)
+4. **M-13** — Await async `navigateToTask` in DAG view (2 min, `dag_view_screen.dart`)
+5. **Remaining open items** from Round 1/2/3 (I6, M3, M5, M6, M9, M-10, M-12, N1–N4) — as time permits
