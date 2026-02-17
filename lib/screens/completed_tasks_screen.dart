@@ -97,11 +97,8 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
               dependsOnIds: deleted.dependsOnIds,
               dependedByIds: deleted.dependedByIds,
             );
-            if (task.isSkipped) {
-              await provider.reSkipTask(task.id!);
-            } else {
-              await provider.reCompleteTask(task.id!);
-            }
+            // task.toMap() already includes the original completedAt/skippedAt.
+            // No need to re-complete or re-skip.
             await _loadData();
           },
         ),
