@@ -20,6 +20,9 @@ class TodaysFiveScreen extends StatefulWidget {
 class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   List<Task> _todaysTasks = [];
   final Set<int> _completedIds = {};
+  /// Tracks tasks marked "Done today" (vs "Done for good!") so
+  /// _handleUncomplete can revert the correct state.
+  final Set<int> _workedOnIds = {};
   bool _loading = true;
 
   @override
@@ -43,10 +46,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       // Restore saved IDs
       final savedIds = prefs.getStringList('todays5_ids') ?? [];
       final completedIds = prefs.getStringList('todays5_completed') ?? [];
+      final workedOnIds = prefs.getStringList('todays5_worked_on') ?? [];
       if (savedIds.isNotEmpty) {
         final allLeaves = await provider.getAllLeafTasks();
         final leafIdSet = allLeaves.map((t) => t.id!).toSet();
         final savedCompletedIds = completedIds.map(int.tryParse).whereType<int>().toSet();
+        final savedWorkedOnIds = workedOnIds.map(int.tryParse).whereType<int>().toSet();
         final db = DatabaseHelper();
         final idSet = savedIds.map(int.tryParse).whereType<int>().toSet();
         final tasks = <Task>[];
@@ -85,14 +90,19 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
           );
           tasks.addAll(replacements);
         }
-        // Only keep completed IDs for tasks still in the list
+        // Only keep completed/worked-on IDs for tasks still in the list
+        final taskIdSet = tasks.map((t) => t.id).toSet();
         final validCompletedIds = savedCompletedIds
-            .where((id) => tasks.any((t) => t.id == id))
+            .where((id) => taskIdSet.contains(id))
+            .toSet();
+        final validWorkedOnIds = savedWorkedOnIds
+            .where((id) => taskIdSet.contains(id))
             .toSet();
         if (!mounted) return;
         setState(() {
           _todaysTasks = tasks;
           _completedIds.addAll(validCompletedIds);
+          _workedOnIds.addAll(validWorkedOnIds);
           _loading = false;
         });
         await _persist();
@@ -162,6 +172,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       if (task == null) return true; // no longer in list
       return !task.isCompleted && !task.isWorkedOnToday; // restored
     });
+    // Keep workedOnIds in sync — remove if no longer in completed set
+    _workedOnIds.removeWhere((id) => !_completedIds.contains(id));
     if (!mounted) return;
     setState(() {
       _todaysTasks = refreshed;
@@ -204,6 +216,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await prefs.setStringList(
       'todays5_completed',
       _completedIds.map((id) => id.toString()).toList(),
+    );
+    await prefs.setStringList(
+      'todays5_worked_on',
+      _workedOnIds.map((id) => id.toString()).toList(),
     );
   }
 
@@ -324,6 +340,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
     setState(() {
       _completedIds.add(task.id!);
+      _workedOnIds.add(task.id!);
       if (fresh != null && idx >= 0) _todaysTasks[idx] = fresh;
     });
     await _persist();
@@ -345,6 +362,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             final i = _todaysTasks.indexWhere((t) => t.id == task.id);
             setState(() {
               _completedIds.remove(task.id!);
+              _workedOnIds.remove(task.id!);
               if (restored != null && i >= 0) _todaysTasks[i] = restored;
             });
             await _persist();
@@ -359,8 +377,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.completeTaskOnly(task.id!);
+    final fresh = await DatabaseHelper().getTaskById(task.id!);
+    if (!mounted) return;
+    final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
     setState(() {
       _completedIds.add(task.id!);
+      if (fresh != null && idx >= 0) _todaysTasks[idx] = fresh;
     });
     await _persist();
     if (!mounted) return;
@@ -396,14 +418,34 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   /// Uncompletes a task that was marked done in Today's 5.
-  /// If the task is no longer a leaf, swaps it out immediately.
+  /// Correctly reverts "Done today" (unmark worked-on + unstart) vs
+  /// "Done for good!" (uncomplete). If the task is no longer a leaf,
+  /// swaps it out immediately.
   Future<void> _handleUncomplete(Task task) async {
     final provider = context.read<TaskProvider>();
-    await provider.uncompleteTask(task.id!);
+    // Check actual DB state — task may have been completed externally
+    // (e.g. via "Go to task" → All Tasks) even if _workedOnIds has it.
+    final wasWorkedOn = _workedOnIds.remove(task.id);
+    if (wasWorkedOn && !task.isCompleted) {
+      // "Done today" only — revert worked-on state
+      await provider.unmarkWorkedOn(task.id!);
+    } else if (task.isCompleted) {
+      // "Done for good!" (or externally completed) — revert completion
+      await provider.uncompleteTask(task.id!);
+      // Also clear worked-on state if it was set, otherwise
+      // refreshSnapshots would re-detect isWorkedOnToday and re-add
+      // the task to _completedIds.
+      if (wasWorkedOn) await provider.unmarkWorkedOn(task.id!);
+    }
     if (!mounted) return;
 
+    // Re-fetch fresh snapshot so UI reflects reverted state
+    final fresh = await DatabaseHelper().getTaskById(task.id!);
+    if (!mounted) return;
+    final taskIdx = _todaysTasks.indexWhere((t) => t.id == task.id);
     setState(() {
       _completedIds.remove(task.id!);
+      if (fresh != null && taskIdx >= 0) _todaysTasks[taskIdx] = fresh;
     });
 
     // If the task is no longer a leaf, swap it out immediately

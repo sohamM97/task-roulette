@@ -278,9 +278,9 @@ class _DagViewScreenState extends State<DagViewScreen> {
     return AppColors.cardColor(context, taskId);
   }
 
-  void _navigateToTask(Task task) {
-    context.read<TaskProvider>().navigateToTask(task);
-    Navigator.pop(context);
+  Future<void> _navigateToTask(Task task) async {
+    await context.read<TaskProvider>().navigateToTask(task);
+    if (mounted) Navigator.pop(context);
   }
 
   /// Builds a single node chip. Connected nodes get a colored fill;
