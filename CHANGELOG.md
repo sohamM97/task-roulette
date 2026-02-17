@@ -42,7 +42,6 @@ TaskRoulette is a DAG-based task manager designed for minimal cognitive load. Br
 ### Platform Support
 
 - **Android** (APK via GitHub Releases)
-- **Linux desktop**
 
 ### Design
 
