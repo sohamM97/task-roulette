@@ -263,7 +263,7 @@ class FirestoreService {
     int lastSyncAt,
   ) async {
     final queryUrl = Uri.parse(
-      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:runQuery',
+      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
     );
     final response = await http.post(
       queryUrl,
@@ -281,7 +281,6 @@ class FirestoreService {
             },
           },
         },
-        'parent': 'projects/$_projectId/databases/(default)/documents/users/$uid',
       }),
     );
     if (response.statusCode != 200) {
