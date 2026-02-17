@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
-import 'package:share_plus/share_plus.dart';
 import '../data/database_helper.dart';
 import '../providers/task_provider.dart';
 
@@ -20,33 +19,35 @@ class BackupService {
       return;
     }
 
-    // Copy to Downloads with a dated filename
     final date = DateTime.now().toIso8601String().substring(0, 10);
     final fileName = 'task_roulette_backup_$date.db';
 
-    final downloadsDir = Directory('/storage/emulated/0/Download');
-    final String destPath;
-    if (downloadsDir.existsSync()) {
-      // Android
-      destPath = p.join(downloadsDir.path, fileName);
-    } else {
-      // Linux desktop fallback: ~/Downloads
-      final home = Platform.environment['HOME'] ?? '.';
-      destPath = p.join(home, 'Downloads', fileName);
-    }
-
-    await dbFile.copy(destPath);
-
-    // Open share sheet (Android only — not supported on Linux desktop)
     if (Platform.isAndroid) {
-      await Share.shareXFiles([XFile(destPath)]);
-    }
-
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Backup saved to Downloads/$fileName'), showCloseIcon: true, persist: false),
+      // Use SAF save dialog — direct file copy to Downloads fails on Android 11+.
+      final bytes = await dbFile.readAsBytes();
+      final result = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save backup',
+        fileName: fileName,
+        bytes: bytes,
       );
+      if (result != null && context.mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Backup saved'), showCloseIcon: true, persist: false),
+        );
+      }
+      return;
+    } else {
+      // Linux desktop: copy to ~/Downloads
+      final home = Platform.environment['HOME'] ?? '.';
+      final destPath = p.join(home, 'Downloads', fileName);
+      await dbFile.copy(destPath);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Backup saved to Downloads/$fileName'), showCloseIcon: true, persist: false),
+        );
+      }
     }
   }
 
