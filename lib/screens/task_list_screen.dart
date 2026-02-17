@@ -749,7 +749,7 @@ class _TaskListScreenState extends State<TaskListScreen>
                   tooltip: 'Search',
                 ),
                 IconButton(
-                  icon: const Icon(Icons.archive_outlined),
+                  icon: const Icon(archiveIcon),
                   onPressed: () {
                     Navigator.push(
                       context,

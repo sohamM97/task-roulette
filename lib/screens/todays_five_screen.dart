@@ -4,7 +4,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
+import '../utils/display_utils.dart';
 import '../widgets/completion_animation.dart';
+import 'completed_tasks_screen.dart';
 
 class TodaysFiveScreen extends StatefulWidget {
   final void Function(Task task)? onNavigateToTask;
@@ -692,6 +694,17 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                   icon: const Icon(Icons.open_in_new, size: 20),
                   onPressed: () => widget.onNavigateToTask!(task),
                   tooltip: 'Go to task',
+                ),
+              if (task.isCompleted)
+                IconButton(
+                  icon: const Icon(archiveIcon, size: 20),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const CompletedTasksScreen(),
+                    ),
+                  ),
+                  tooltip: 'View in archive',
                 ),
             ],
           ),

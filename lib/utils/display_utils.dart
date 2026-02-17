@@ -1,3 +1,8 @@
+import 'package:flutter/material.dart';
+
+/// Icon used for the archive/completed-tasks screen.
+const IconData archiveIcon = Icons.inventory_2_outlined;
+
 String displayUrl(String url, {int maxLength = 40}) {
   var display = url.replaceFirst(RegExp(r'^https?://'), '');
   if (display.endsWith('/')) display = display.substring(0, display.length - 1);

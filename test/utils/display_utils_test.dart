@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:task_roulette/utils/display_utils.dart';
 
@@ -95,6 +96,12 @@ void main() {
 
     test('allows HTTP with mixed case scheme', () {
       expect(isAllowedUrl('Http://example.com'), isTrue);
+    });
+  });
+
+  group('archiveIcon', () {
+    test('is inventory_2_outlined', () {
+      expect(archiveIcon, Icons.inventory_2_outlined);
     });
   });
 
