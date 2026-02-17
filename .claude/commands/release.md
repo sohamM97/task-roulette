@@ -21,6 +21,11 @@ The user may provide a version number (e.g. `0.5.0`). If not provided, ask what 
    - Export data from their phone before installing the new APK.
    - Test on their phone once the release build is ready.
 
+## CHANGELOG
+
+- Update `CHANGELOG.md` for **major and minor** releases (e.g. 1.1.0, 2.0.0) — add a new section at the top summarizing what changed since the last entry.
+- **Skip** the changelog for patch releases (e.g. 1.0.1) — commit messages cover those.
+
 ## Rules
 
 - Do NOT create the release with `gh release create` — GitHub Actions handles that on tag push.
