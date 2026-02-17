@@ -109,10 +109,13 @@ class _AppShellState extends State<AppShell> {
 
     await authProvider.init();
     if (authProvider.isSignedIn && mounted) {
+      // Always back up local data on sign-in so it can be restored on
+      // sign-out. The backup is consumed (deleted) on sign-out, so we
+      // must re-create it each time.
+      await syncService.backupLocalData();
+
       final needsMigration = await syncService.needsInitialMigration();
       if (needsMigration) {
-        // First-time migration not yet done — back up and push local data
-        await syncService.backupLocalData();
         await syncService.initialMigration();
       }
       syncService.startPeriodicPull();
