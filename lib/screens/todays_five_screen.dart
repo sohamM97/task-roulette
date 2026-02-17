@@ -226,6 +226,42 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     );
   }
 
+  /// Re-fetches a single task from DB and updates it in [_todaysTasks].
+  /// Does NOT call setState — callers handle that.
+  /// Returns the fresh task, or null if not found.
+  Future<Task?> _refreshTaskSnapshot(int taskId) async {
+    final fresh = await DatabaseHelper().getTaskById(taskId);
+    if (fresh != null) {
+      final idx = _todaysTasks.indexWhere((t) => t.id == taskId);
+      if (idx >= 0) _todaysTasks[idx] = fresh;
+    }
+    return fresh;
+  }
+
+  /// Marks a task as done: updates sets, refreshes snapshot, setState, persist.
+  /// [workedOn] — true for "Done today", false for "Done for good!"
+  /// [autoStarted] — true if the task was auto-started by "Done today"
+  Future<void> _markDone(int taskId, {required bool workedOn, required bool autoStarted}) async {
+    _completedIds.add(taskId);
+    if (workedOn) _workedOnIds.add(taskId);
+    if (autoStarted) _autoStartedIds.add(taskId);
+    await _refreshTaskSnapshot(taskId);
+    if (!mounted) return;
+    setState(() {});
+    await _persist();
+  }
+
+  /// Unmarks a task as done: updates sets, refreshes snapshot, setState, persist.
+  Future<void> _unmarkDone(int taskId, {required bool workedOn, required bool autoStarted}) async {
+    _completedIds.remove(taskId);
+    if (workedOn) _workedOnIds.remove(taskId);
+    if (autoStarted) _autoStartedIds.remove(taskId);
+    await _refreshTaskSnapshot(taskId);
+    if (!mounted) return;
+    setState(() {});
+    await _persist();
+  }
+
   /// Shows a bottom sheet: "In progress" / "Done today" / "Done for good!"
   void _showTaskOptions(Task task) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -285,15 +321,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   Future<void> _stopWorking(Task task) async {
     final provider = context.read<TaskProvider>();
     await provider.unstartTask(task.id!);
-    final fresh = await DatabaseHelper().getTaskById(task.id!);
-    if (fresh == null || !mounted) return;
-    final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
-    if (idx >= 0) {
-      setState(() {
-        _todaysTasks[idx] = fresh;
-      });
-    }
+    await _refreshTaskSnapshot(task.id!);
     if (!mounted) return;
+    setState(() {});
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -308,16 +338,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   Future<void> _markInProgress(Task task) async {
     final provider = context.read<TaskProvider>();
     await provider.startTask(task.id!);
-    // Refresh the task snapshot to show the play icon
-    final fresh = await DatabaseHelper().getTaskById(task.id!);
-    if (fresh == null || !mounted) return;
-    final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
-    if (idx >= 0) {
-      setState(() {
-        _todaysTasks[idx] = fresh;
-      });
-    }
+    await _refreshTaskSnapshot(task.id!);
     if (!mounted) return;
+    setState(() {});
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -336,20 +359,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.markWorkedOn(task.id!);
-    if (!wasStarted) {
-      await provider.startTask(task.id!);
-      _autoStartedIds.add(task.id!);
-    }
-    // Re-fetch fresh snapshot so the task card reflects the new state
-    final fresh = await DatabaseHelper().getTaskById(task.id!);
-    if (!mounted) return;
-    final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
-    setState(() {
-      _completedIds.add(task.id!);
-      _workedOnIds.add(task.id!);
-      if (fresh != null && idx >= 0) _todaysTasks[idx] = fresh;
-    });
-    await _persist();
+    if (!wasStarted) await provider.startTask(task.id!);
+    await _markDone(task.id!, workedOn: true, autoStarted: !wasStarted);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -363,16 +374,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
           onPressed: () async {
             await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
             if (!wasStarted) await provider.unstartTask(task.id!);
-            final restored = await DatabaseHelper().getTaskById(task.id!);
-            if (!mounted) return;
-            final i = _todaysTasks.indexWhere((t) => t.id == task.id);
-            setState(() {
-              _completedIds.remove(task.id!);
-              _workedOnIds.remove(task.id!);
-              _autoStartedIds.remove(task.id!);
-              if (restored != null && i >= 0) _todaysTasks[i] = restored;
-            });
-            await _persist();
+            await _unmarkDone(task.id!, workedOn: true, autoStarted: !wasStarted);
           },
         ),
       ),
@@ -384,14 +386,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.completeTaskOnly(task.id!);
-    final fresh = await DatabaseHelper().getTaskById(task.id!);
-    if (!mounted) return;
-    final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
-    setState(() {
-      _completedIds.add(task.id!);
-      if (fresh != null && idx >= 0) _todaysTasks[idx] = fresh;
-    });
-    await _persist();
+    await _markDone(task.id!, workedOn: false, autoStarted: false);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -401,14 +396,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
           label: 'Undo',
           onPressed: () async {
             await provider.uncompleteTask(task.id!);
-            final restored = await DatabaseHelper().getTaskById(task.id!);
-            if (!mounted) return;
-            final i = _todaysTasks.indexWhere((t) => t.id == task.id);
-            setState(() {
-              _completedIds.remove(task.id!);
-              if (restored != null && i >= 0) _todaysTasks[i] = restored;
-            });
-            await _persist();
+            await _unmarkDone(task.id!, workedOn: false, autoStarted: false);
           },
         ),
         showCloseIcon: true,
@@ -424,6 +412,35 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     _showTaskOptions(task);
   }
 
+  /// If [task] is no longer a leaf, replaces it in [_todaysTasks] with
+  /// a randomly picked eligible leaf (or removes it if none available).
+  /// Calls setState if a replacement happens.
+  Future<void> _replaceIfNoLongerLeaf(Task task) async {
+    final provider = context.read<TaskProvider>();
+    final allLeaves = await provider.getAllLeafTasks();
+    final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+    if (leafIdSet.contains(task.id)) return;
+
+    final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
+    if (idx < 0) return;
+
+    final currentIds = _todaysTasks.map((t) => t.id).toSet();
+    final leafIds = allLeaves.map((t) => t.id!).toList();
+    final blockedIds = await provider.getBlockedChildIds(leafIds);
+    final eligible = allLeaves.where(
+      (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
+    ).toList();
+    final replacements = provider.pickWeightedN(eligible, 1);
+    if (!mounted) return;
+    setState(() {
+      if (replacements.isNotEmpty) {
+        _todaysTasks[idx] = replacements.first;
+      } else {
+        _todaysTasks.removeAt(idx);
+      }
+    });
+  }
+
   /// Uncompletes a task that was marked done in Today's 5.
   /// Correctly reverts "Done today" (unmark worked-on + unstart) vs
   /// "Done for good!" (uncomplete). If the task is no longer a leaf,
@@ -432,58 +449,24 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     final provider = context.read<TaskProvider>();
     // Check actual DB state — task may have been completed externally
     // (e.g. via "Go to task" → All Tasks) even if _workedOnIds has it.
-    final wasWorkedOn = _workedOnIds.remove(task.id);
-    final wasAutoStarted = _autoStartedIds.remove(task.id);
+    final wasWorkedOn = _workedOnIds.contains(task.id);
+    final wasAutoStarted = _autoStartedIds.contains(task.id);
     if (wasWorkedOn && !task.isCompleted) {
       // "Done today" only — revert worked-on state
       await provider.unmarkWorkedOn(task.id!);
-      // Also unstart if the task was auto-started by "Done today"
       if (wasAutoStarted) await provider.unstartTask(task.id!);
     } else if (task.isCompleted) {
       // "Done for good!" (or externally completed) — revert completion
       await provider.uncompleteTask(task.id!);
-      // Also clear worked-on state if it was set, otherwise
-      // refreshSnapshots would re-detect isWorkedOnToday and re-add
-      // the task to _completedIds.
       if (wasWorkedOn) await provider.unmarkWorkedOn(task.id!);
     }
     if (!mounted) return;
 
-    // Re-fetch fresh snapshot so UI reflects reverted state
-    final fresh = await DatabaseHelper().getTaskById(task.id!);
+    await _unmarkDone(task.id!, workedOn: wasWorkedOn, autoStarted: wasAutoStarted);
     if (!mounted) return;
-    final taskIdx = _todaysTasks.indexWhere((t) => t.id == task.id);
-    setState(() {
-      _completedIds.remove(task.id!);
-      if (fresh != null && taskIdx >= 0) _todaysTasks[taskIdx] = fresh;
-    });
-
-    // If the task is no longer a leaf, swap it out immediately
-    final allLeaves = await provider.getAllLeafTasks();
-    final leafIdSet = allLeaves.map((t) => t.id!).toSet();
-    if (!leafIdSet.contains(task.id)) {
-      final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
-      if (idx >= 0) {
-        final currentIds = _todaysTasks.map((t) => t.id).toSet();
-        final leafIds = allLeaves.map((t) => t.id!).toList();
-        final blockedIds = await provider.getBlockedChildIds(leafIds);
-        final eligible = allLeaves.where(
-          (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
-        ).toList();
-        final replacements = provider.pickWeightedN(eligible, 1);
-        if (!mounted) return;
-        setState(() {
-          if (replacements.isNotEmpty) {
-            _todaysTasks[idx] = replacements.first;
-          } else {
-            _todaysTasks.removeAt(idx);
-          }
-        });
-      }
-    }
-
-    await _persist();
+    await _replaceIfNoLongerLeaf(task);
     if (!mounted) return;
+
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
