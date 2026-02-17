@@ -423,13 +423,19 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   /// swaps it out immediately.
   Future<void> _handleUncomplete(Task task) async {
     final provider = context.read<TaskProvider>();
-    if (_workedOnIds.contains(task.id)) {
-      // "Done today" — revert worked-on state
+    // Check actual DB state — task may have been completed externally
+    // (e.g. via "Go to task" → All Tasks) even if _workedOnIds has it.
+    final wasWorkedOn = _workedOnIds.remove(task.id);
+    if (wasWorkedOn && !task.isCompleted) {
+      // "Done today" only — revert worked-on state
       await provider.unmarkWorkedOn(task.id!);
-      _workedOnIds.remove(task.id!);
-    } else {
-      // "Done for good!" — revert completion
+    } else if (task.isCompleted) {
+      // "Done for good!" (or externally completed) — revert completion
       await provider.uncompleteTask(task.id!);
+      // Also clear worked-on state if it was set, otherwise
+      // refreshSnapshots would re-detect isWorkedOnToday and re-add
+      // the task to _completedIds.
+      if (wasWorkedOn) await provider.unmarkWorkedOn(task.id!);
     }
     if (!mounted) return;
 
