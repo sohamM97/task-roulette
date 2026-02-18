@@ -1405,6 +1405,58 @@ class DatabaseHelper {
     return _tasksFromMaps(maps);
   }
 
+  /// Returns all active leaf descendants of [taskId].
+  /// A leaf descendant is one with no active (non-completed, non-skipped) children.
+  Future<List<Task>> getLeafDescendants(int taskId) async {
+    final db = await database;
+    final maps = await db.rawQuery('''
+      WITH RECURSIVE descendants(id) AS (
+        SELECT child_id FROM task_relationships WHERE parent_id = ?
+        UNION
+        SELECT tr.child_id FROM task_relationships tr
+        INNER JOIN descendants d ON tr.parent_id = d.id
+      )
+      SELECT t.* FROM tasks t
+      INNER JOIN descendants d ON t.id = d.id
+      WHERE t.completed_at IS NULL
+      AND t.skipped_at IS NULL
+      AND t.id NOT IN (
+        SELECT DISTINCT tr2.parent_id FROM task_relationships tr2
+        INNER JOIN tasks c ON tr2.child_id = c.id
+        WHERE c.completed_at IS NULL AND c.skipped_at IS NULL
+      )
+    ''', [taskId]);
+    return _tasksFromMaps(maps);
+  }
+
+  /// Returns the set of task IDs (from the given list) that have at least one
+  /// descendant which is in progress (started_at IS NOT NULL AND completed_at IS NULL).
+  /// Uses a single query with a recursive CTE from all started tasks upward
+  /// to find which ancestors have started descendants.
+  Future<Set<int>> getTaskIdsWithStartedDescendants(List<int> taskIds) async {
+    if (taskIds.isEmpty) return {};
+    final db = await database;
+    // Walk upward from all started tasks to find their ancestors,
+    // then intersect with the requested taskIds.
+    final placeholders = taskIds.map((_) => '?').join(',');
+    final rows = await db.rawQuery('''
+      WITH RECURSIVE ancestors(id) AS (
+        -- Start from parents of all in-progress tasks
+        SELECT tr.parent_id FROM task_relationships tr
+        INNER JOIN tasks t ON tr.child_id = t.id
+        WHERE t.started_at IS NOT NULL AND t.completed_at IS NULL AND t.skipped_at IS NULL
+        UNION
+        -- Walk upward through parent relationships
+        SELECT tr.parent_id
+        FROM task_relationships tr
+        INNER JOIN ancestors a ON tr.child_id = a.id
+      )
+      SELECT DISTINCT id FROM ancestors
+      WHERE id IN ($placeholders)
+    ''', taskIds);
+    return rows.map((r) => r['id'] as int).toSet();
+  }
+
   // --- Today's 5 state methods ---
 
   /// Saves Today's 5 state to the DB, replacing any existing data for [date].

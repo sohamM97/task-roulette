@@ -79,7 +79,7 @@ class TaskProvider extends ChangeNotifier {
     await _refreshCurrentList();
   }
 
-  Future<void> addTask(String name, {List<int>? additionalParentIds}) async {
+  Future<int> addTask(String name, {List<int>? additionalParentIds}) async {
     final task = Task(name: name);
     final taskId = await _db.insertTask(task);
 
@@ -96,6 +96,7 @@ class TaskProvider extends ChangeNotifier {
     }
 
     await _refreshCurrentList();
+    return taskId;
   }
 
   /// Deletes a task and returns info needed for undo.

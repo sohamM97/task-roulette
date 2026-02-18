@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../data/database_helper.dart';
 import '../models/task.dart';
@@ -42,6 +43,11 @@ class TaskListScreenState extends State<TaskListScreen>
   /// IDs of tasks currently in Today's 5 (for showing indicator on cards).
   Set<int> _todaysFiveIds = {};
 
+  // Cached Today's 5 pinned IDs — loaded lazily for the leaf detail pin icon.
+  Set<int>? _todays5PinnedIds;
+  // Today's 5 task IDs — needed to know if current task is in Today's 5.
+  Set<int>? _todays5TaskIds;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -52,6 +58,7 @@ class TaskListScreenState extends State<TaskListScreen>
     // Calling it here would overwrite navigateToTask() state when PageView
     // lazily builds this screen for the first time.
     loadTodaysFiveIds();
+    _loadTodays5PinnedIds();
   }
 
   Future<void> loadTodaysFiveIds() async {
@@ -62,20 +69,150 @@ class TaskListScreenState extends State<TaskListScreen>
     setState(() => _todaysFiveIds = ids);
   }
 
+  Future<void> _loadTodays5PinnedIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    if (prefs.getString('todays5_date') != today) {
+      if (mounted) setState(() { _todays5PinnedIds = {}; _todays5TaskIds = {}; });
+      return;
+    }
+    final pinnedIds = (prefs.getStringList('todays5_pinned') ?? [])
+        .map(int.tryParse).whereType<int>().toSet();
+    final taskIds = (prefs.getStringList('todays5_ids') ?? [])
+        .map(int.tryParse).whereType<int>().toSet();
+    if (mounted) setState(() { _todays5PinnedIds = pinnedIds; _todays5TaskIds = taskIds; });
+  }
+
+  Future<void> _togglePinInTodays5(int taskId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    if (prefs.getString('todays5_date') != today) return;
+
+    final pinnedIds = (prefs.getStringList('todays5_pinned') ?? [])
+        .map(int.tryParse).whereType<int>().toSet();
+    if (pinnedIds.contains(taskId)) {
+      pinnedIds.remove(taskId);
+    } else {
+      pinnedIds.add(taskId);
+    }
+    await prefs.setStringList(
+      'todays5_pinned',
+      pinnedIds.map((id) => id.toString()).toList(),
+    );
+    if (mounted) setState(() { _todays5PinnedIds = pinnedIds; });
+  }
+
+  /// Returns true if the user confirmed (or task isn't pinned), false to abort.
+  Future<bool> _warnIfPinned() async {
+    final provider = context.read<TaskProvider>();
+    final currentParent = provider.currentParent;
+    if (currentParent == null) return true;
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedDate = prefs.getString('todays5_date');
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    if (savedDate != today) return true;
+
+    final pinnedIds = (prefs.getStringList('todays5_pinned') ?? [])
+        .map(int.tryParse)
+        .whereType<int>()
+        .toSet();
+    if (!pinnedIds.contains(currentParent.id)) return true;
+
+    if (!mounted) return false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('This task is pinned'),
+        content: Text(
+          '"${currentParent.name}" is in your Today\'s 5 and pinned. '
+          'Adding subtasks will replace it with one of its new subtasks.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Add anyway'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
   Future<void> _addTask() async {
+    if (!await _warnIfPinned()) return;
+    if (!mounted) return;
+    final showPin = (_todays5TaskIds?.isNotEmpty ?? false);
     final result = await showDialog<AddTaskResult>(
       context: context,
-      builder: (_) => const AddTaskDialog(),
+      builder: (_) => AddTaskDialog(showPinOption: showPin),
     );
     if (!mounted || result == null) return;
     if (result is SingleTask) {
-      await context.read<TaskProvider>().addTask(result.name);
+      final taskId = await context.read<TaskProvider>().addTask(result.name);
+      if (result.pinInTodays5 && mounted) {
+        await _pinNewTaskInTodays5(taskId);
+      }
     } else if (result is SwitchToBrainDump) {
       await _brainDump();
     }
   }
 
+  /// Adds a newly created task to Today's 5 (replacing an unpinned undone slot)
+  /// and pins it.
+  Future<void> _pinNewTaskInTodays5(int taskId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    if (prefs.getString('todays5_date') != today) return;
+
+    final taskIds = (prefs.getStringList('todays5_ids') ?? [])
+        .map(int.tryParse).whereType<int>().toList();
+    final completedIds = (prefs.getStringList('todays5_completed') ?? [])
+        .map(int.tryParse).whereType<int>().toSet();
+    final pinnedIds = (prefs.getStringList('todays5_pinned') ?? [])
+        .map(int.tryParse).whereType<int>().toSet();
+
+    // Find an unpinned, undone slot to replace
+    int? replaceIndex;
+    for (int i = taskIds.length - 1; i >= 0; i--) {
+      final id = taskIds[i];
+      if (!completedIds.contains(id) && !pinnedIds.contains(id)) {
+        replaceIndex = i;
+        break;
+      }
+    }
+
+    if (replaceIndex != null) {
+      taskIds[replaceIndex] = taskId;
+    } else if (taskIds.length < 5) {
+      taskIds.add(taskId);
+    } else {
+      // All slots are done or pinned — can't add
+      return;
+    }
+
+    pinnedIds.add(taskId);
+    await prefs.setStringList('todays5_ids', taskIds.map((id) => id.toString()).toList());
+    await prefs.setStringList('todays5_pinned', pinnedIds.map((id) => id.toString()).toList());
+    if (mounted) {
+      setState(() {
+        _todays5TaskIds = taskIds.toSet();
+        _todays5PinnedIds = pinnedIds;
+      });
+    }
+  }
+
   Future<void> _brainDump() async {
+    if (!await _warnIfPinned()) return;
+    if (!mounted) return;
     final names = await showDialog<List<String>>(
       context: context,
       builder: (_) => const BrainDumpDialog(),
@@ -105,6 +242,8 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   Future<void> _linkExistingTask() async {
+    if (!await _warnIfPinned()) return;
+    if (!mounted) return;
     final provider = context.read<TaskProvider>();
     final currentParent = provider.currentParent;
     if (currentParent == null) return;
@@ -524,6 +663,10 @@ class TaskListScreenState extends State<TaskListScreen>
             _leafDepsTaskId = null; // invalidate — may have added a dep
           },
           parentNames: parentNames,
+          isPinnedInTodays5: _todays5PinnedIds?.contains(task.id) ?? false,
+          onTogglePin: (_todays5TaskIds?.contains(task.id) ?? false)
+              ? () => _togglePinInTodays5(task.id!)
+              : null,
         );
       },
     );
