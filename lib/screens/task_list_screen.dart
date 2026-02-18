@@ -593,6 +593,11 @@ class TaskListScreenState extends State<TaskListScreen>
         }
       case RandomResultAction.goToTask:
         await provider.navigateInto(task);
+      case RandomResultAction.pickAnother:
+        final picked = provider.pickRandom(excludeId: task.id);
+        if (picked != null) {
+          await _showRandomResult(picked);
+        }
       case null:
         break;
     }

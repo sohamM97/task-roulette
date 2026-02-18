@@ -260,10 +260,11 @@ class TaskProvider extends ChangeNotifier {
     return w;
   }
 
-  Task? pickRandom() {
+  Task? pickRandom({int? excludeId}) {
     final eligible = _tasks.where((t) =>
       !_blockedByNames.containsKey(t.id) &&
-      !t.isWorkedOnToday
+      !t.isWorkedOnToday &&
+      t.id != excludeId
     ).toList();
     if (eligible.isEmpty) return null;
 
