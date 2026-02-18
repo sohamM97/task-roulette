@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
@@ -24,10 +25,10 @@ class TaskListScreen extends StatefulWidget {
   const TaskListScreen({super.key});
 
   @override
-  State<TaskListScreen> createState() => _TaskListScreenState();
+  State<TaskListScreen> createState() => TaskListScreenState();
 }
 
-class _TaskListScreenState extends State<TaskListScreen>
+class TaskListScreenState extends State<TaskListScreen>
     with AutomaticKeepAliveClientMixin {
   // Cached deps Future for the leaf detail view — avoids recreating on every
   // Consumer rebuild. Invalidated when dependency mutations occur.
@@ -38,6 +39,8 @@ class _TaskListScreenState extends State<TaskListScreen>
   // Used by the leaf detail's "Worked on today" undo button.
   final Map<int, int?> _preWorkedOnTimestamps = {};
 
+  /// IDs of tasks currently in Today's 5 (for showing indicator on cards).
+  Set<int> _todaysFiveIds = {};
 
   @override
   bool get wantKeepAlive => true;
@@ -46,6 +49,20 @@ class _TaskListScreenState extends State<TaskListScreen>
   void initState() {
     super.initState();
     context.read<TaskProvider>().loadRootTasks();
+    loadTodaysFiveIds();
+  }
+
+  Future<void> loadTodaysFiveIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    if (prefs.getString('todays5_date') != today) return;
+    final ids = (prefs.getStringList('todays5_ids') ?? [])
+        .map(int.tryParse)
+        .whereType<int>()
+        .toSet();
+    if (!mounted) return;
+    setState(() => _todaysFiveIds = ids);
   }
 
   Future<void> _addTask() async {
@@ -908,6 +925,7 @@ class _TaskListScreenState extends State<TaskListScreen>
                             hasStartedDescendant: provider.startedDescendantIds.contains(task.id),
                             isBlocked: provider.blockedTaskIds.contains(task.id),
                             blockedByName: provider.blockedByNames[task.id],
+                            isInTodaysFive: _todaysFiveIds.contains(task.id),
                           );
                         },
                       ),

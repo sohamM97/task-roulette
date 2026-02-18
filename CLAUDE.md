@@ -21,7 +21,7 @@ sudo apt install -y clang ninja-build lld libsqlite3-dev inotify-tools
 
 flutter pub get
 
-# Run (preferred — auto hot-reloads on save, loads .env for Firebase config)
+# Run (preferred — auto hot-reloads on save, reads Firebase config from google-services.json)
 ./dev.sh
 
 # Run without auto-reload
@@ -102,10 +102,13 @@ The goal of this app is **minimal cognitive load**. The user wants a quick place
 
 - When something doesn't work on the user's phone, **don't jump to fixes**. First ask the user if they want to troubleshoot using ADB, logcat, etc.
 - **NEVER** run `flutter run` on the phone when a release build is installed — the signature mismatch will uninstall the app and wipe user data. Instead, build a debug APK (`flutter build apk --debug`), back up the app data first, then sideload.
-- **Android APK builds require `--dart-define` flags** from `.env` for Firebase/cloud sync to work. Always build with:
+- **Android APK builds require `--dart-define` flags** for Firebase/cloud sync to work. Firebase config comes from `google-services.json`; desktop OAuth secrets come from `.env`. Always build with:
   ```bash
-  # Read .env and pass as --dart-define flags
-  DART_DEFINES=$(while IFS='=' read -r key value; do [ -z "$key" ] || [[ "$key" == \#* ]] && continue; echo -n " --dart-define=$key=$value"; done < .env)
+  # Parse Firebase config from google-services.json
+  DART_DEFINES="--dart-define=FIREBASE_PROJECT_ID=$(jq -r '.project_info.project_id' android/app/google-services.json)"
+  DART_DEFINES="$DART_DEFINES --dart-define=FIREBASE_API_KEY=$(jq -r '.client[0].api_key[0].current_key' android/app/google-services.json)"
+  # Append desktop OAuth secrets from .env
+  while IFS='=' read -r key value; do [ -z "$key" ] || [[ "$key" == \#* ]] && continue; DART_DEFINES="$DART_DEFINES --dart-define=$key=$value"; done < .env
   flutter build apk --debug $DART_DEFINES
   ```
   Without these flags, `isConfigured` returns `false` and the profile/sync icon won't appear.

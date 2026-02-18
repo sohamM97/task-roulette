@@ -86,6 +86,7 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _currentIndex = 0;
   final _todaysFiveKey = GlobalKey<TodaysFiveScreenState>();
+  final _taskListKey = GlobalKey<TaskListScreenState>();
   final _pageController = PageController();
 
   @override
@@ -132,6 +133,8 @@ class _AppShellState extends State<AppShell> {
         onPageChanged: (index) {
           if (index == 0) {
             _todaysFiveKey.currentState?.refreshSnapshots();
+          } else if (index == 1) {
+            _taskListKey.currentState?.loadTodaysFiveIds();
           }
           setState(() {
             _currentIndex = index;
@@ -149,7 +152,7 @@ class _AppShellState extends State<AppShell> {
               );
             },
           ),
-          const TaskListScreen(),
+          TaskListScreen(key: _taskListKey),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -157,6 +160,8 @@ class _AppShellState extends State<AppShell> {
         onDestinationSelected: (index) {
           if (index == 0) {
             _todaysFiveKey.currentState?.refreshSnapshots();
+          } else if (index == 1) {
+            _taskListKey.currentState?.loadTodaysFiveIds();
           }
           _pageController.animateToPage(
             index,

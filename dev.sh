@@ -19,8 +19,16 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
-# Load Firebase/OAuth secrets for cloud sync (optional)
+# Load Firebase config from google-services.json (same paths as release.yml)
 DART_DEFINES=""
+GOOGLE_SERVICES="android/app/google-services.json"
+if [ -f "$GOOGLE_SERVICES" ] && command -v jq &>/dev/null; then
+  FIREBASE_PROJECT_ID=$(jq -r '.project_info.project_id' "$GOOGLE_SERVICES")
+  FIREBASE_API_KEY=$(jq -r '.client[0].api_key[0].current_key' "$GOOGLE_SERVICES")
+  DART_DEFINES="--dart-define=FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID --dart-define=FIREBASE_API_KEY=$FIREBASE_API_KEY"
+fi
+
+# Load desktop OAuth secrets from .env (optional)
 if [ -f ".env" ]; then
   while IFS='=' read -r key value; do
     [ -z "$key" ] || [[ "$key" == \#* ]] && continue

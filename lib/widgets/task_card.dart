@@ -16,6 +16,7 @@ class TaskCard extends StatelessWidget {
   final bool hasStartedDescendant;
   final bool isBlocked;
   final String? blockedByName;
+  final bool isInTodaysFive;
 
   const TaskCard({
     super.key,
@@ -31,6 +32,7 @@ class TaskCard extends StatelessWidget {
     this.hasStartedDescendant = false,
     this.isBlocked = false,
     this.blockedByName,
+    this.isInTodaysFive = false,
   });
 
   void _showDeleteBottomSheet(BuildContext context) {
@@ -208,14 +210,20 @@ class TaskCard extends StatelessWidget {
                   ),
                 ),
               ),
-              // Top-left icons: in-progress, priority flag, quick task bolt, worked-on-today
-              if (task.isHighPriority || task.isQuickTask || showIndicator || task.isWorkedOnToday)
+              // Top-left icons: today's 5, in-progress, priority flag, quick task bolt, worked-on-today
+              if (task.isHighPriority || task.isQuickTask || showIndicator || task.isWorkedOnToday || isInTodaysFive)
                 Positioned(
                   left: 6,
                   top: 6,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      if (isInTodaysFive)
+                        Icon(
+                          Icons.today,
+                          size: 16,
+                          color: Theme.of(context).colorScheme.tertiary,
+                        ),
                       if (task.isWorkedOnToday)
                         Icon(
                           Icons.check_circle,
