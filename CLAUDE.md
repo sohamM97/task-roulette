@@ -1,4 +1,6 @@
-# TaskRoulette — Claude Code Instructions
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -11,14 +13,27 @@ Flutter app — a DAG-based task manager where tasks can have multiple parents/c
 - **Persistence:** sqflite with `sqflite_common_ffi` for desktop SQLite support
 - **DB location:** `~/.local/share/com.taskroulette.task_roulette/task_roulette.db` (via `path_provider`)
 
-## Build & Run
+## Build, Run & Test
 
 ```bash
 # Linux desktop deps (Ubuntu/Debian)
-sudo apt install -y clang ninja-build lld libsqlite3-dev
+sudo apt install -y clang ninja-build lld libsqlite3-dev inotify-tools
 
 flutter pub get
+
+# Run (preferred — auto hot-reloads on save, loads .env for Firebase config)
+./dev.sh
+
+# Run without auto-reload
 flutter run -d linux
+
+# Lint
+flutter analyze
+
+# Test
+flutter test
+flutter test test/path/to/file.dart          # single file
+flutter test --coverage                       # with coverage (writes lcov.info)
 ```
 
 ## Architecture
@@ -28,14 +43,31 @@ flutter run -d linux
 - Multi-parent DAG: a task can appear under multiple parents
 - Cycle prevention via recursive CTE query (`DatabaseHelper.hasPath()`)
 - Navigation uses a parent stack for back navigation + breadcrumb
+- **Database migrations:** Sequential `onUpgrade` in `DatabaseHelper` (currently at v12). New columns added via ALTER TABLE. Foreign keys enabled via `PRAGMA foreign_keys = ON`.
+- **Cloud sync layer:** Optional Google Sign-In + Firestore via REST APIs (no Firebase SDK). `SyncService` orchestrates push/pull; mutations are queued in `sync_queue` table and debounced.
+- **Provider pattern:** `TaskProvider._refreshCurrentList()` reloads children of `_currentParent` from DB, concurrently fetches started-descendant IDs and blocked-task info, sorts, then calls `notifyListeners()`. It does NOT refresh `_currentParent` itself — see gotcha below.
+
+### Known Gotcha: Stale `_currentParent`
+
+When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the provider must update `_currentParent` by constructing a new `Task` object. `_refreshCurrentList()` only refreshes `_tasks` (children), not `_currentParent`. Without this, the leaf detail view shows stale data until the user navigates away and back. Always check `_currentParent?.id == taskId` and rebuild the Task object when mutating task fields.
 
 ## Key Files
 
-- `lib/data/database_helper.dart` — all SQLite operations
+- `lib/data/database_helper.dart` — all SQLite operations, schema, migrations
 - `lib/providers/task_provider.dart` — state management, navigation stack, DAG operations
 - `lib/screens/task_list_screen.dart` — main screen with grid, breadcrumb, FAB
 - `lib/widgets/task_card.dart` — card with long-press menu (unlink, add parent, delete)
 - `lib/widgets/task_picker_dialog.dart` — search/filter dialog for linking tasks
+- `lib/services/sync_service.dart` — cloud sync orchestration (push/pull/migration)
+- `lib/services/auth_service.dart` — Google Sign-In + Firebase Auth REST API
+- `docs/DESIGN_PSYCHOLOGY.md` — ADHD-friendly design rationale and weighted random selection algorithm
+- `docs/PERFORMANCE.md` — database optimizations and performance considerations
+- `docs/CODE_REVIEW.md` — tracked code review findings and fixes
+- `docs/SECURITY_REVIEW.md` — tracked security review findings and fixes
+
+### Test Setup
+
+Tests use `sqflite_common_ffi` with `inMemoryDatabasePath` and reset DB in `setUp()` for isolation. No mocking of the DB layer — tests run real SQL against in-memory SQLite.
 
 ## Design Philosophy
 
