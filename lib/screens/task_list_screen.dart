@@ -42,6 +42,9 @@ class TaskListScreenState extends State<TaskListScreen>
   /// IDs of tasks currently in Today's 5 (for showing indicator on cards).
   Set<int> _todaysFiveIds = {};
 
+  /// Whether the collapsible toolbar row is expanded (root view only).
+  bool _toolbarExpanded = false;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -490,6 +493,28 @@ class TaskListScreenState extends State<TaskListScreen>
     );
   }
 
+  Widget _buildToolbarButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 22),
+            const SizedBox(height: 2),
+            Text(label, style: const TextStyle(fontSize: 11)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildLeafTaskDetail(TaskProvider provider) {
     final task = provider.currentParent!;
     // Reuse cached Future unless the task changed or deps were invalidated.
@@ -750,138 +775,221 @@ class TaskListScreenState extends State<TaskListScreen>
                       onPressed: () => provider.navigateBack(),
                     ),
               actions: [
-                const ProfileIcon(),
-                if (!provider.isRoot && provider.currentParent?.hasUrl == true && provider.tasks.isNotEmpty)
+                if (provider.isRoot) ...[
+                  const ProfileIcon(),
                   IconButton(
-                    icon: const Icon(Icons.link),
-                    onPressed: () {
-                      final url = provider.currentParent!.url!;
-                      if (!isAllowedUrl(url)) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Only web links (http/https) are supported'), persist: false),
-                        );
-                        return;
-                      }
-                      final uri = Uri.parse(url);
-                      launchUrl(uri, mode: LaunchMode.externalApplication);
-                    },
-                    tooltip: 'Open link',
+                    icon: const Icon(Icons.search),
+                    onPressed: _searchTask,
+                    tooltip: 'Search',
                   ),
-                IconButton(
-                  icon: const Icon(Icons.search),
-                  onPressed: _searchTask,
-                  tooltip: 'Search',
-                ),
-                IconButton(
-                  icon: const Icon(archiveIcon),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const CompletedTasksScreen(),
-                      ),
-                    );
-                  },
-                  tooltip: 'Archive',
-                ),
-                IconButton(
-                  icon: const Icon(Icons.account_tree_outlined),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const DagViewScreen(),
-                      ),
-                    );
-                  },
-                  tooltip: 'Task graph',
-                ),
-                Consumer<ThemeProvider>(
-                  builder: (context, themeProvider, _) {
-                    return IconButton(
-                      icon: Icon(themeProvider.icon, size: 28),
-                      onPressed: themeProvider.toggle,
-                      tooltip: 'Toggle theme',
-                    );
-                  },
-                ),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert),
-                  onSelected: (value) {
-                    final task = provider.currentParent;
-                    switch (value) {
-                      case 'rename':
-                        if (task != null) _renameTask(task);
-                      case 'add_parent':
-                        if (task != null) _addParentToTask(task);
-                      case 'edit_link':
-                        if (task != null) {
-                          LeafTaskDetail.showEditUrlDialog(
+                  IconButton(
+                    icon: Icon(_toolbarExpanded ? Icons.expand_less : Icons.expand_more),
+                    onPressed: () => setState(() => _toolbarExpanded = !_toolbarExpanded),
+                    tooltip: 'More actions',
+                  ),
+                ] else ...[
+                  IconButton(
+                    icon: const Icon(Icons.search),
+                    onPressed: _searchTask,
+                    tooltip: 'Search',
+                  ),
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert),
+                    onSelected: (value) {
+                      final task = provider.currentParent;
+                      switch (value) {
+                        case 'open_link':
+                          if (task?.hasUrl == true) {
+                            final url = task!.url!;
+                            if (!isAllowedUrl(url)) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Only web links (http/https) are supported'), persist: false),
+                              );
+                              return;
+                            }
+                            final uri = Uri.parse(url);
+                            launchUrl(uri, mode: LaunchMode.externalApplication);
+                          }
+                        case 'rename':
+                          if (task != null) _renameTask(task);
+                        case 'add_parent':
+                          if (task != null) _addParentToTask(task);
+                        case 'edit_link':
+                          if (task != null) {
+                            LeafTaskDetail.showEditUrlDialog(
+                              context,
+                              task.url,
+                              (url) => _updateUrl(task, url),
+                            );
+                          }
+                        case 'do_after':
+                          if (task != null) _addDependencyToTask(task);
+                        case 'delete':
+                          if (task != null) _deleteTaskWithUndo(task);
+                        case 'archive':
+                          Navigator.push(
                             context,
-                            task.url,
-                            (url) => _updateUrl(task, url),
+                            MaterialPageRoute(
+                              builder: (_) => const CompletedTasksScreen(),
+                            ),
                           );
-                        }
-                      case 'do_after':
-                        if (task != null) _addDependencyToTask(task);
-                      case 'delete':
-                        if (task != null) _deleteTaskWithUndo(task);
-                      case 'export':
-                        BackupService.exportDatabase(context);
-                      case 'import':
-                        BackupService.importDatabase(
-                          context,
-                          context.read<TaskProvider>(),
-                        );
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    if (!provider.isRoot && provider.tasks.isEmpty) ...[
-                      const PopupMenuItem(
-                        value: 'add_parent',
-                        child: Text('Also show under...'),
-                      ),
-                    ],
-                    if (!provider.isRoot && provider.tasks.isNotEmpty) ...[
-                      const PopupMenuItem(
-                        value: 'rename',
-                        child: Text('Rename'),
-                      ),
-                      PopupMenuItem(
-                        value: 'edit_link',
-                        child: Text(
-                          provider.currentParent?.hasUrl == true
-                              ? 'Edit link'
-                              : 'Add link',
+                        case 'dag_view':
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const DagViewScreen(),
+                            ),
+                          );
+                        case 'toggle_theme':
+                          context.read<ThemeProvider>().toggle();
+                        case 'export':
+                          BackupService.exportDatabase(context);
+                        case 'import':
+                          BackupService.importDatabase(
+                            context,
+                            context.read<TaskProvider>(),
+                          );
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      if (provider.currentParent?.hasUrl == true && provider.tasks.isNotEmpty)
+                        PopupMenuItem(
+                          value: 'open_link',
+                          child: Row(
+                            children: [
+                              const Icon(Icons.link, size: 20),
+                              const SizedBox(width: 12),
+                              const Text('Open link'),
+                            ],
+                          ),
                         ),
-                      ),
-                      const PopupMenuItem(
-                        value: 'do_after',
-                        child: Text('Do after...'),
-                      ),
-                    ],
-                    if (!provider.isRoot) ...[
+                      if (provider.tasks.isEmpty) ...[
+                        const PopupMenuItem(
+                          value: 'add_parent',
+                          child: Text('Also show under...'),
+                        ),
+                      ],
+                      if (provider.tasks.isNotEmpty) ...[
+                        const PopupMenuItem(
+                          value: 'rename',
+                          child: Text('Rename'),
+                        ),
+                        PopupMenuItem(
+                          value: 'edit_link',
+                          child: Text(
+                            provider.currentParent?.hasUrl == true
+                                ? 'Edit link'
+                                : 'Add link',
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'do_after',
+                          child: Text('Do after...'),
+                        ),
+                      ],
                       const PopupMenuDivider(),
                       const PopupMenuItem(
                         value: 'delete',
                         child: Text('Delete'),
                       ),
                       const PopupMenuDivider(),
+                      PopupMenuItem(
+                        value: 'archive',
+                        child: Row(
+                          children: [
+                            Icon(archiveIcon, size: 20),
+                            const SizedBox(width: 12),
+                            const Text('Archive'),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'dag_view',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.account_tree_outlined, size: 20),
+                            const SizedBox(width: 12),
+                            const Text('Task graph'),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'toggle_theme',
+                        child: Row(
+                          children: [
+                            Icon(context.read<ThemeProvider>().icon, size: 20),
+                            const SizedBox(width: 12),
+                            Text(
+                              context.read<ThemeProvider>().themeMode == ThemeMode.dark
+                                  ? 'Light mode'
+                                  : 'Dark mode',
+                            ),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'export',
+                        child: Text('Export backup'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'import',
+                        child: Text('Import backup'),
+                      ),
                     ],
-                    const PopupMenuItem(
-                      value: 'export',
-                      child: Text('Export backup'),
-                    ),
-                    const PopupMenuItem(
-                      value: 'import',
-                      child: Text('Import backup'),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ],
             ),
             body: Column(
               children: [
+                if (provider.isRoot)
+                  AnimatedCrossFade(
+                    firstChild: const SizedBox.shrink(),
+                    secondChild: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          _buildToolbarButton(
+                            icon: archiveIcon,
+                            label: 'Archive',
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const CompletedTasksScreen(),
+                              ),
+                            ),
+                          ),
+                          _buildToolbarButton(
+                            icon: Icons.account_tree_outlined,
+                            label: 'Graph',
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const DagViewScreen(),
+                              ),
+                            ),
+                          ),
+                          Consumer<ThemeProvider>(
+                            builder: (context, themeProvider, _) {
+                              final isDark = themeProvider.themeMode == ThemeMode.dark;
+                              return _buildToolbarButton(
+                                icon: themeProvider.icon,
+                                label: isDark ? 'Light' : 'Dark',
+                                onTap: themeProvider.toggle,
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    crossFadeState: _toolbarExpanded
+                        ? CrossFadeState.showSecond
+                        : CrossFadeState.showFirst,
+                    duration: const Duration(milliseconds: 200),
+                  ),
                 if (!provider.isRoot)
                   _buildBreadcrumb(provider),
                 Expanded(
