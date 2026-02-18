@@ -1365,31 +1365,4 @@ class DatabaseHelper {
     return _tasksFromMaps(maps);
   }
 
-  /// Returns the set of task IDs (from the given list) that have at least one
-  /// descendant which is in progress (started_at IS NOT NULL AND completed_at IS NULL).
-  /// Uses a single query with a recursive CTE from all started tasks upward
-  /// to find which ancestors have started descendants.
-  Future<Set<int>> getTaskIdsWithStartedDescendants(List<int> taskIds) async {
-    if (taskIds.isEmpty) return {};
-    final db = await database;
-    // Walk upward from all started tasks to find their ancestors,
-    // then intersect with the requested taskIds.
-    final placeholders = taskIds.map((_) => '?').join(',');
-    final rows = await db.rawQuery('''
-      WITH RECURSIVE ancestors(id) AS (
-        -- Start from parents of all in-progress tasks
-        SELECT tr.parent_id FROM task_relationships tr
-        INNER JOIN tasks t ON tr.child_id = t.id
-        WHERE t.started_at IS NOT NULL AND t.completed_at IS NULL AND t.skipped_at IS NULL
-        UNION
-        -- Walk upward through parent relationships
-        SELECT tr.parent_id
-        FROM task_relationships tr
-        INNER JOIN ancestors a ON tr.child_id = a.id
-      )
-      SELECT DISTINCT id FROM ancestors
-      WHERE id IN ($placeholders)
-    ''', taskIds);
-    return rows.map((r) => r['id'] as int).toSet();
-  }
 }

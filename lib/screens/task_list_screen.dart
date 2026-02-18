@@ -924,7 +924,6 @@ class TaskListScreenState extends State<TaskListScreen>
                             onStopWorking: task.isStarted
                                 ? () => _toggleStarted(task)
                                 : null,
-                            hasStartedDescendant: provider.startedDescendantIds.contains(task.id),
                             isBlocked: provider.blockedTaskIds.contains(task.id),
                             blockedByName: provider.blockedByNames[task.id],
                             isInTodaysFive: _todaysFiveIds.contains(task.id),

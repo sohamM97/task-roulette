@@ -158,68 +158,6 @@ void main() {
       expect(provider.currentParent!.startedAt, isNull);
     });
 
-    test('startedDescendantIds contains parent when child is started', () async {
-      final parentId = await db.insertTask(Task(name: 'Parent'));
-      final childId = await db.insertTask(Task(name: 'Child'));
-      await db.addRelationship(parentId, childId);
-      await db.startTask(childId);
-
-      await provider.loadRootTasks();
-
-      expect(provider.startedDescendantIds, contains(parentId));
-    });
-
-    test('startedDescendantIds clears when child is unstarted', () async {
-      final parentId = await db.insertTask(Task(name: 'Parent'));
-      final childId = await db.insertTask(Task(name: 'Child'));
-      await db.addRelationship(parentId, childId);
-
-      await provider.loadRootTasks();
-      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
-      await provider.navigateInto(parent);
-
-      // Start the child via the provider (simulates leaf toggle)
-      final child = provider.tasks.firstWhere((t) => t.id == childId);
-      await provider.navigateInto(child);
-      await provider.startTask(childId);
-
-      // Navigate back to parent level and check
-      await provider.navigateBack();
-      await provider.navigateBack();
-
-      expect(provider.startedDescendantIds, contains(parentId));
-
-      // Unstart
-      await provider.navigateInto(parent);
-      await provider.navigateInto(provider.tasks.firstWhere((t) => t.id == childId));
-      await provider.unstartTask(childId);
-      await provider.navigateBack();
-      await provider.navigateBack();
-
-      expect(provider.startedDescendantIds, isNot(contains(parentId)));
-    });
-
-    test('completing a started task clears startedDescendantIds on parent', () async {
-      final parentId = await db.insertTask(Task(name: 'Parent'));
-      final childId = await db.insertTask(Task(name: 'Child'));
-      await db.addRelationship(parentId, childId);
-      await db.startTask(childId);
-
-      await provider.loadRootTasks();
-      expect(provider.startedDescendantIds, contains(parentId));
-
-      // Complete the started child
-      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
-      await provider.navigateInto(parent);
-      final child = provider.tasks.firstWhere((t) => t.id == childId);
-      await provider.navigateInto(child);
-      await provider.completeTask(childId);
-
-      // Should navigate back to parent level; go back to root
-      await provider.navigateBack();
-
-      expect(provider.startedDescendantIds, isNot(contains(parentId)));
-    });
   });
 
   group('pickRandom with dependencies', () {

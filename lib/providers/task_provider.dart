@@ -15,10 +15,6 @@ class TaskProvider extends ChangeNotifier {
   List<Task> _tasks = [];
   List<Task> get tasks => _tasks;
 
-  /// Task IDs that have at least one in-progress descendant.
-  Set<int> _startedDescendantIds = {};
-  Set<int> get startedDescendantIds => _startedDescendantIds;
-
   /// Blocked task ID → name of the task it depends on.
   Map<int, String> _blockedByNames = {};
   Set<int> get blockedTaskIds => _blockedByNames.keys.toSet();
@@ -564,25 +560,22 @@ class TaskProvider extends ChangeNotifier {
     await _refreshCurrentList(isMutation: false);
   }
 
-  /// Loads started-descendant and blocked-task info for the current _tasks.
-  /// The three queries are independent, so they run concurrently.
+  /// Loads blocked-task info, dependency pairs, and parent names for the
+  /// current _tasks. The queries are independent, so they run concurrently.
   Future<void> _loadAuxiliaryData() async {
     final taskIds = _tasks.map((t) => t.id!).toList();
     // Include currentParent so leaf detail can also look up its parents.
     final parentNameIds = _currentParent?.id != null
         ? [...taskIds, _currentParent!.id!]
         : taskIds;
-    late Set<int> startedIds;
     late Map<int, ({int blockerId, String blockerName})> blockedInfo;
     late Map<int, int> siblingDeps;
     late Map<int, List<String>> parentNames;
     await Future.wait([
-      _db.getTaskIdsWithStartedDescendants(taskIds).then((v) => startedIds = v),
       _db.getBlockedTaskInfo(taskIds).then((v) => blockedInfo = v),
       _db.getSiblingDependencyPairs(taskIds).then((v) => siblingDeps = v),
       _db.getParentNamesForTaskIds(parentNameIds).then((v) => parentNames = v),
     ]);
-    _startedDescendantIds = startedIds;
     // Derive the simple name map for UI display
     _blockedByNames = {
       for (final e in blockedInfo.entries) e.key: e.value.blockerName,

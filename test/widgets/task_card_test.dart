@@ -6,7 +6,6 @@ import 'package:task_roulette/widgets/task_card.dart';
 void main() {
   Widget buildTestWidget({
     required Task task,
-    bool hasStartedDescendant = false,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -17,7 +16,6 @@ void main() {
             task: task,
             onTap: () {},
             onDelete: () {},
-            hasStartedDescendant: hasStartedDescendant,
           ),
         ),
       ),
@@ -36,15 +34,6 @@ void main() {
     testWidgets('shows play icon when task itself is started', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'WIP', createdAt: 1000, startedAt: 2000),
-      ));
-
-      expect(find.byIcon(Icons.play_circle_filled), findsOneWidget);
-    });
-
-    testWidgets('shows play icon when hasStartedDescendant is true', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Parent', createdAt: 1000),
-        hasStartedDescendant: true,
       ));
 
       expect(find.byIcon(Icons.play_circle_filled), findsOneWidget);

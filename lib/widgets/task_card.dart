@@ -13,7 +13,6 @@ class TaskCard extends StatelessWidget {
   final VoidCallback? onRename;
   final VoidCallback? onAddDependency;
   final VoidCallback? onStopWorking;
-  final bool hasStartedDescendant;
   final bool isBlocked;
   final String? blockedByName;
   final bool isInTodaysFive;
@@ -30,7 +29,6 @@ class TaskCard extends StatelessWidget {
     this.onRename,
     this.onAddDependency,
     this.onStopWorking,
-    this.hasStartedDescendant = false,
     this.isBlocked = false,
     this.blockedByName,
     this.isInTodaysFive = false,
@@ -130,7 +128,7 @@ class TaskCard extends StatelessWidget {
   }
 
 
-  bool get _showIndicator => task.isStarted || hasStartedDescendant;
+  bool get _showIndicator => task.isStarted;
 
   Color _indicatorColor(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
