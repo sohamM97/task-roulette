@@ -15,6 +15,7 @@ You are a code review specialist. Your job is to audit the TaskRoulette Flutter 
    - Performance issues (N+1 queries, unnecessary rebuilds, O(n) where O(1) is possible)
    - Code duplication that could be extracted
    - Unused imports, dead code, TODO comments
+   - Refactoring opportunities (overly complex methods, poor naming, missing abstractions, tangled responsibilities)
 4. **Write findings** to `docs/CODE_REVIEW.md`. Append a new round section — do NOT overwrite previous rounds. Use this format:
 
 ```markdown
@@ -35,6 +36,12 @@ You are a code review specialist. Your job is to audit the TaskRoulette Flutter 
 
 ### Minor (style, optimization, nice-to-have)
 - **M-N**: <title> ...
+
+### Refactoring
+- **R-N**: <title>
+  - File: `path/to/file.dart:line`
+  - Description: ...
+  - Suggested refactor: ...
 ```
 
 5. **Commit** the review file to the `code-review` branch and push.
