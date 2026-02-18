@@ -1331,6 +1331,30 @@ class DatabaseHelper {
     return _tasksFromMaps(maps);
   }
 
+  /// Returns all active leaf descendants of [taskId].
+  /// A leaf descendant is one with no active (non-completed, non-skipped) children.
+  Future<List<Task>> getLeafDescendants(int taskId) async {
+    final db = await database;
+    final maps = await db.rawQuery('''
+      WITH RECURSIVE descendants(id) AS (
+        SELECT child_id FROM task_relationships WHERE parent_id = ?
+        UNION
+        SELECT tr.child_id FROM task_relationships tr
+        INNER JOIN descendants d ON tr.parent_id = d.id
+      )
+      SELECT t.* FROM tasks t
+      INNER JOIN descendants d ON t.id = d.id
+      WHERE t.completed_at IS NULL
+      AND t.skipped_at IS NULL
+      AND t.id NOT IN (
+        SELECT DISTINCT tr2.parent_id FROM task_relationships tr2
+        INNER JOIN tasks c ON tr2.child_id = c.id
+        WHERE c.completed_at IS NULL AND c.skipped_at IS NULL
+      )
+    ''', [taskId]);
+    return _tasksFromMaps(maps);
+  }
+
   /// Returns the set of task IDs (from the given list) that have at least one
   /// descendant which is in progress (started_at IS NOT NULL AND completed_at IS NULL).
   /// Uses a single query with a recursive CTE from all started tasks upward

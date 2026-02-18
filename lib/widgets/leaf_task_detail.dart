@@ -17,6 +17,8 @@ class LeafTaskDetail extends StatelessWidget {
   final List<Task> dependencies;
   final void Function(int)? onRemoveDependency;
   final VoidCallback? onAddDependency;
+  final bool isPinnedInTodays5;
+  final VoidCallback? onTogglePin;
 
   const LeafTaskDetail({
     super.key,
@@ -33,6 +35,8 @@ class LeafTaskDetail extends StatelessWidget {
     this.dependencies = const [],
     this.onRemoveDependency,
     this.onAddDependency,
+    this.isPinnedInTodays5 = false,
+    this.onTogglePin,
   });
 
   String _formatTimeAgo(int millis) {
@@ -204,6 +208,20 @@ class LeafTaskDetail extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
+                // Pin icon — shown when onTogglePin is available
+                if (onTogglePin != null)
+                  IconButton(
+                    onPressed: onTogglePin,
+                    tooltip: isPinnedInTodays5 ? 'Pinned in Today\'s 5' : 'Pin in Today\'s 5',
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(
+                      isPinnedInTodays5 ? Icons.push_pin : Icons.push_pin_outlined,
+                      size: 20,
+                      color: isPinnedInTodays5
+                          ? colorScheme.tertiary
+                          : colorScheme.onSurfaceVariant.withAlpha(120),
+                    ),
+                  ),
                 IconButton(
                   onPressed: () => onUpdatePriority(isHighPriority ? 0 : 1),
                   tooltip: isHighPriority ? 'High priority' : 'Set high priority',
