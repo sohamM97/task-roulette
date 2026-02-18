@@ -248,6 +248,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     _taskPaths = paths;
   }
 
+  /// Truncates a hierarchy path to keep the last 2 segments when there
+  /// are more than 3, so the immediate parent is always visible.
+  /// e.g. "Coding › App › Enhancements › Random" → "… › Enhancements › Random"
+  String _shortenPath(String path) {
+    final segments = path.split(' › ');
+    if (segments.length <= 3) return path;
+    return '… › ${segments.sublist(segments.length - 2).join(' › ')}';
+  }
+
   /// Re-fetches a single task from DB and updates it in [_todaysTasks].
   /// Does NOT call setState — callers handle that.
   /// Returns the fresh task, or null if not found.
@@ -745,7 +754,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      _taskPaths[task.id]!,
+                      _shortenPath(_taskPaths[task.id]!),
                       style: textTheme.labelSmall?.copyWith(
                         color: colorScheme.onSurfaceVariant,
                         letterSpacing: 0.3,
