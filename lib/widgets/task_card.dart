@@ -220,7 +220,7 @@ class TaskCard extends StatelessWidget {
                     children: [
                       if (isInTodaysFive)
                         Icon(
-                          Icons.today,
+                          Icons.local_fire_department,
                           size: 16,
                           color: Theme.of(context).colorScheme.tertiary,
                         ),
