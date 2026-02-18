@@ -2335,7 +2335,7 @@ void main() {
 
     test('high priority tasks get selected with higher probability', () async {
       // Statistical test: with enough runs, high priority should appear more often
-      final normalId = await db.insertTask(Task(name: 'Normal'));
+      await db.insertTask(Task(name: 'Normal'));
       final highId = await db.insertTask(Task(name: 'High', priority: 1));
 
       final leaves = await provider.getAllLeafTasks();
