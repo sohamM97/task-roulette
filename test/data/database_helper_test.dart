@@ -432,6 +432,45 @@ void main() {
       expect(blocked, isEmpty);
     });
 
+    test('getBlockedTaskIds excludes tasks whose deps are worked on today', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a);
+      await db.markWorkedOn(a);
+
+      final blocked = await db.getBlockedTaskIds([b]);
+      expect(blocked, isEmpty);
+    });
+
+    test('getBlockedTaskIds still blocks when dep was worked on yesterday', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a);
+
+      // Simulate worked-on yesterday by setting last_worked_at to yesterday
+      final yesterday = DateTime.now().subtract(const Duration(days: 1));
+      final dbInstance = await db.database;
+      await dbInstance.update(
+        'tasks',
+        {'last_worked_at': yesterday.millisecondsSinceEpoch},
+        where: 'id = ?',
+        whereArgs: [a],
+      );
+
+      final blocked = await db.getBlockedTaskIds([b]);
+      expect(blocked, contains(b));
+    });
+
+    test('getBlockedTaskInfo excludes deps worked on today', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a);
+      await db.markWorkedOn(a);
+
+      final info = await db.getBlockedTaskInfo([b]);
+      expect(info, isEmpty);
+    });
+
     test('getBlockedTaskIds returns empty for empty input', () async {
       final blocked = await db.getBlockedTaskIds([]);
       expect(blocked, isEmpty);

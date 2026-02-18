@@ -940,10 +940,13 @@ class DatabaseHelper {
   }
 
   /// Returns the subset of [taskIds] that have at least one unresolved
-  /// (non-completed, non-skipped) dependency.
+  /// (non-completed, non-skipped, not worked-on-today) dependency.
   Future<Set<int>> getBlockedTaskIds(List<int> taskIds) async {
     if (taskIds.isEmpty) return {};
     final db = await database;
+    final now = DateTime.now();
+    final startOfTodayMs =
+        DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
     final placeholders = taskIds.map((_) => '?').join(',');
     final rows = await db.rawQuery('''
       SELECT DISTINCT td.task_id
@@ -952,15 +955,21 @@ class DatabaseHelper {
       WHERE td.task_id IN ($placeholders)
         AND t.completed_at IS NULL
         AND t.skipped_at IS NULL
-    ''', taskIds);
+        AND NOT (t.last_worked_at IS NOT NULL
+                 AND t.last_worked_at >= ?)
+    ''', [...taskIds, startOfTodayMs]);
     return rows.map((r) => r['task_id'] as int).toSet();
   }
 
   /// Returns a map of blocked task ID → dependency task name for display.
-  /// Only includes tasks with unresolved (non-completed, non-skipped) dependencies.
+  /// Only includes tasks with unresolved (non-completed, non-skipped,
+  /// not worked-on-today) dependencies.
   Future<Map<int, String>> getBlockedTaskInfo(List<int> taskIds) async {
     if (taskIds.isEmpty) return {};
     final db = await database;
+    final now = DateTime.now();
+    final startOfTodayMs =
+        DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
     final placeholders = taskIds.map((_) => '?').join(',');
     final rows = await db.rawQuery('''
       SELECT td.task_id, t.name
@@ -969,7 +978,9 @@ class DatabaseHelper {
       WHERE td.task_id IN ($placeholders)
         AND t.completed_at IS NULL
         AND t.skipped_at IS NULL
-    ''', taskIds);
+        AND NOT (t.last_worked_at IS NOT NULL
+                 AND t.last_worked_at >= ?)
+    ''', [...taskIds, startOfTodayMs]);
     final result = <int, String>{};
     for (final row in rows) {
       result[row['task_id'] as int] = row['name'] as String;
