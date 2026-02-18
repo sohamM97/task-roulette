@@ -204,11 +204,12 @@ class LeafTaskDetail extends StatelessWidget {
             // Parent tags — shown when task has parents
             if (parentNames.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.only(top: 4, bottom: 2),
+                padding: const EdgeInsets.only(top: 10, bottom: 2),
                 child: Wrap(
                   spacing: 6,
                   runSpacing: 4,
                   alignment: WrapAlignment.center,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
                       'Under:',

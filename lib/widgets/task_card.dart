@@ -210,11 +210,12 @@ class TaskCard extends StatelessWidget {
                         ),
                       if (parentNames.isNotEmpty)
                         Padding(
-                          padding: const EdgeInsets.only(top: 4),
+                          padding: const EdgeInsets.only(top: 10),
                           child: Wrap(
                             spacing: 4,
                             runSpacing: 2,
                             alignment: WrapAlignment.center,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               Text(
                                 'Also under:',
