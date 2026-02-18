@@ -471,6 +471,65 @@ void main() {
       expect(info, isEmpty);
     });
 
+    test('getBlockedTaskInfo returns blockerId and blockerName', () async {
+      final a = await db.insertTask(Task(name: 'Blocker'));
+      final b = await db.insertTask(Task(name: 'Dependent'));
+      await db.addDependency(b, a); // B depends on A
+
+      final info = await db.getBlockedTaskInfo([a, b]);
+      expect(info.containsKey(b), isTrue);
+      expect(info[b]!.blockerId, a);
+      expect(info[b]!.blockerName, 'Blocker');
+      expect(info.containsKey(a), isFalse);
+    });
+
+    test('getBlockedTaskInfo returns empty for empty input', () async {
+      final info = await db.getBlockedTaskInfo([]);
+      expect(info, isEmpty);
+    });
+
+    test('getSiblingDependencyPairs returns pairs where both sides are in input', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      final c = await db.insertTask(Task(name: 'Task C'));
+      await db.addDependency(b, a); // B depends on A
+      await db.addDependency(c, a); // C depends on A
+
+      final pairs = await db.getSiblingDependencyPairs([a, b, c]);
+      expect(pairs[b], a);
+      expect(pairs[c], a);
+      expect(pairs.containsKey(a), isFalse);
+    });
+
+    test('getSiblingDependencyPairs excludes non-sibling deps', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      final ext = await db.insertTask(Task(name: 'External'));
+      await db.addDependency(b, a); // B depends on A (both siblings)
+      await db.addDependency(a, ext); // A depends on External (ext not a sibling)
+
+      // Only query with [a, b], not ext
+      final pairs = await db.getSiblingDependencyPairs([a, b]);
+      expect(pairs[b], a);
+      expect(pairs.containsKey(a), isFalse); // ext not in input
+    });
+
+    test('getSiblingDependencyPairs returns empty for empty input', () async {
+      final pairs = await db.getSiblingDependencyPairs([]);
+      expect(pairs, isEmpty);
+    });
+
+    test('getSiblingDependencyPairs includes resolved deps', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addDependency(b, a);
+      await db.completeTask(a); // A is completed
+
+      // Should still return the pair (unlike getBlockedTaskInfo)
+      final pairs = await db.getSiblingDependencyPairs([a, b]);
+      expect(pairs[b], a);
+    });
+
     test('getBlockedTaskIds returns empty for empty input', () async {
       final blocked = await db.getBlockedTaskIds([]);
       expect(blocked, isEmpty);

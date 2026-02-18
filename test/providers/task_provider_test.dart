@@ -366,6 +366,154 @@ void main() {
       expect(provider.blockedByNames[b], 'First Task');
       expect(provider.blockedByNames.containsKey(a), isFalse);
     });
+  });
+
+  group('Dependency chain reordering', () {
+    test('dependent sibling is placed right after its blocker', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      final c = await db.insertTask(Task(name: 'Task C'));
+      await db.addRelationship(parent, a);
+      await db.addRelationship(parent, b);
+      await db.addRelationship(parent, c);
+      await db.addDependency(c, a); // C depends on A
+
+      await provider.loadRootTasks();
+      final parentTask = provider.tasks.firstWhere((t) => t.id == parent);
+      await provider.navigateInto(parentTask);
+
+      final ids = provider.tasks.map((t) => t.id).toList();
+      final aIdx = ids.indexOf(a);
+      final cIdx = ids.indexOf(c);
+      expect(cIdx, aIdx + 1);
+    });
+
+    test('chain of 3 tasks keeps order A → B → C', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      final c = await db.insertTask(Task(name: 'Task C'));
+      await db.addRelationship(parent, a);
+      await db.addRelationship(parent, b);
+      await db.addRelationship(parent, c);
+      await db.addDependency(b, a); // B depends on A
+      await db.addDependency(c, b); // C depends on B
+
+      await provider.loadRootTasks();
+      final parentTask = provider.tasks.firstWhere((t) => t.id == parent);
+      await provider.navigateInto(parentTask);
+
+      final ids = provider.tasks.map((t) => t.id).toList();
+      final aIdx = ids.indexOf(a);
+      final bIdx = ids.indexOf(b);
+      final cIdx = ids.indexOf(c);
+      expect(bIdx, aIdx + 1);
+      expect(cIdx, bIdx + 1);
+    });
+
+    test('non-sibling dependency does not reorder', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final external = await db.insertTask(Task(name: 'External'));
+      await db.addRelationship(parent, a);
+      await db.addDependency(a, external); // A depends on External (not a sibling)
+
+      await provider.loadRootTasks();
+      final parentTask = provider.tasks.firstWhere((t) => t.id == parent);
+      await provider.navigateInto(parentTask);
+
+      expect(provider.blockedTaskIds, contains(a));
+      expect(provider.tasks, hasLength(1));
+    });
+
+    test('chain dissolves when dependency is removed', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      final c = await db.insertTask(Task(name: 'Task C'));
+      await db.addRelationship(parent, a);
+      await db.addRelationship(parent, b);
+      await db.addRelationship(parent, c);
+      await db.addDependency(b, a); // B depends on A
+
+      await provider.loadRootTasks();
+      final parentTask = provider.tasks.firstWhere((t) => t.id == parent);
+      await provider.navigateInto(parentTask);
+
+      // B should be right after A
+      var ids = provider.tasks.map((t) => t.id).toList();
+      expect(ids.indexOf(b), ids.indexOf(a) + 1);
+
+      // Remove dependency — B goes back to natural position
+      await provider.removeDependency(b, a);
+
+      ids = provider.tasks.map((t) => t.id).toList();
+      // A, B, C all present, B no longer forced after A
+      expect(ids.toSet(), {a, b, c});
+    });
+
+    test('grouping persists when blocker is worked on today', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      await db.addRelationship(parent, a);
+      await db.addRelationship(parent, b);
+      await db.addDependency(b, a); // B depends on A
+
+      await provider.loadRootTasks();
+      final parentTask = provider.tasks.firstWhere((t) => t.id == parent);
+      await provider.navigateInto(parentTask);
+
+      expect(provider.blockedTaskIds, contains(b));
+
+      // Work on A — unblocks B but grouping should persist
+      await provider.markWorkedOn(a);
+
+      expect(provider.blockedTaskIds, isNot(contains(b)));
+      final ids = provider.tasks.map((t) => t.id).toList();
+      expect(ids.indexOf(b), ids.indexOf(a) + 1);
+    });
+
+    test('fan-out: multiple dependents of same blocker all follow it', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      final c = await db.insertTask(Task(name: 'Task C'));
+      final d = await db.insertTask(Task(name: 'Task D'));
+      await db.addRelationship(parent, a);
+      await db.addRelationship(parent, b);
+      await db.addRelationship(parent, c);
+      await db.addRelationship(parent, d);
+      await db.addDependency(b, a); // B depends on A
+      await db.addDependency(c, a); // C depends on A
+
+      await provider.loadRootTasks();
+      final parentTask = provider.tasks.firstWhere((t) => t.id == parent);
+      await provider.navigateInto(parentTask);
+
+      final ids = provider.tasks.map((t) => t.id).toList();
+      final aIdx = ids.indexOf(a);
+      final bIdx = ids.indexOf(b);
+      final cIdx = ids.indexOf(c);
+      // Both B and C should appear right after A (consecutive)
+      expect({bIdx, cIdx}, {aIdx + 1, aIdx + 2});
+      // D should not be between A and its dependents
+      final dIdx = ids.indexOf(d);
+      expect(dIdx == 0 || dIdx > aIdx + 2, isTrue);
+    });
+
+    test('root-level dependencies also group', () async {
+      final a = await db.insertTask(Task(name: 'Task A'));
+      final b = await db.insertTask(Task(name: 'Task B'));
+      final c = await db.insertTask(Task(name: 'Task C'));
+      await db.addDependency(b, a); // B depends on A
+
+      await provider.loadRootTasks();
+
+      final ids = provider.tasks.map((t) => t.id).toList();
+      expect(ids.indexOf(b), ids.indexOf(a) + 1);
+    });
 
     test('siblings available for leaf task via getParentIds + getChildren', () async {
       final parentId = await db.insertTask(Task(name: 'Parent'));

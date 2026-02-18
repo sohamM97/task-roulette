@@ -964,7 +964,7 @@ class DatabaseHelper {
   /// Returns a map of blocked task ID → dependency task name for display.
   /// Only includes tasks with unresolved (non-completed, non-skipped,
   /// not worked-on-today) dependencies.
-  Future<Map<int, String>> getBlockedTaskInfo(List<int> taskIds) async {
+  Future<Map<int, ({int blockerId, String blockerName})>> getBlockedTaskInfo(List<int> taskIds) async {
     if (taskIds.isEmpty) return {};
     final db = await database;
     final now = DateTime.now();
@@ -972,7 +972,7 @@ class DatabaseHelper {
         DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
     final placeholders = taskIds.map((_) => '?').join(',');
     final rows = await db.rawQuery('''
-      SELECT td.task_id, t.name
+      SELECT td.task_id, td.depends_on_id, t.name
       FROM task_dependencies td
       INNER JOIN tasks t ON td.depends_on_id = t.id
       WHERE td.task_id IN ($placeholders)
@@ -981,11 +981,34 @@ class DatabaseHelper {
         AND NOT (t.last_worked_at IS NOT NULL
                  AND t.last_worked_at >= ?)
     ''', [...taskIds, startOfTodayMs]);
-    final result = <int, String>{};
+    final result = <int, ({int blockerId, String blockerName})>{};
     for (final row in rows) {
-      result[row['task_id'] as int] = row['name'] as String;
+      result[row['task_id'] as int] = (
+        blockerId: row['depends_on_id'] as int,
+        blockerName: row['name'] as String,
+      );
     }
     return result;
+  }
+
+  /// Returns all dependency pairs where both task_id and depends_on_id are in
+  /// [taskIds]. Unlike [getBlockedTaskInfo], this ignores blocker status
+  /// (completed, skipped, worked-on-today) so it can be used for stable
+  /// positional ordering.
+  Future<Map<int, int>> getSiblingDependencyPairs(List<int> taskIds) async {
+    if (taskIds.isEmpty) return {};
+    final db = await database;
+    final placeholders = taskIds.map((_) => '?').join(',');
+    final rows = await db.rawQuery('''
+      SELECT task_id, depends_on_id
+      FROM task_dependencies
+      WHERE task_id IN ($placeholders)
+        AND depends_on_id IN ($placeholders)
+    ''', [...taskIds, ...taskIds]);
+    return {
+      for (final row in rows)
+        row['task_id'] as int: row['depends_on_id'] as int,
+    };
   }
 
   /// Removes all dependencies for a task (used before setting a new single dependency).

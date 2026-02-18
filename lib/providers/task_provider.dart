@@ -24,6 +24,10 @@ class TaskProvider extends ChangeNotifier {
   Set<int> get blockedTaskIds => _blockedByNames.keys.toSet();
   Map<int, String> get blockedByNames => _blockedByNames;
 
+  /// Dependent task ID → blocker task ID (only for blockers present as siblings).
+  /// Used by [_reorderByDependencyChains] to group dependents after their blocker.
+  Map<int, int> _blockedByTaskId = {};
+
   /// null means we're at the root level
   Task? _currentParent;
   Task? get currentParent => _currentParent;
@@ -557,17 +561,67 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Loads started-descendant and blocked-task info for the current _tasks.
-  /// The two queries are independent, so they run concurrently.
+  /// The three queries are independent, so they run concurrently.
   Future<void> _loadAuxiliaryData() async {
     final taskIds = _tasks.map((t) => t.id!).toList();
     late Set<int> startedIds;
-    late Map<int, String> blockedNames;
+    late Map<int, ({int blockerId, String blockerName})> blockedInfo;
+    late Map<int, int> siblingDeps;
     await Future.wait([
       _db.getTaskIdsWithStartedDescendants(taskIds).then((v) => startedIds = v),
-      _db.getBlockedTaskInfo(taskIds).then((v) => blockedNames = v),
+      _db.getBlockedTaskInfo(taskIds).then((v) => blockedInfo = v),
+      _db.getSiblingDependencyPairs(taskIds).then((v) => siblingDeps = v),
     ]);
     _startedDescendantIds = startedIds;
-    _blockedByNames = blockedNames;
+    // Derive the simple name map for UI display
+    _blockedByNames = {
+      for (final e in blockedInfo.entries) e.key: e.value.blockerName,
+    };
+    // Use ALL sibling dependency pairs for positional ordering (not just active ones)
+    _blockedByTaskId = siblingDeps;
+  }
+
+  /// Reorders _tasks so that dependent tasks appear immediately after their
+  /// blocker, forming visual chains. Only affects tasks whose blocker is a
+  /// sibling in the current view.
+  void _reorderByDependencyChains() {
+    if (_blockedByTaskId.isEmpty) return;
+
+    // Build blocker → [dependents] map
+    final dependents = <int, List<int>>{};
+    for (final e in _blockedByTaskId.entries) {
+      dependents.putIfAbsent(e.value, () => []).add(e.key);
+    }
+
+    // Set of task IDs that are dependents (will be placed after their blocker)
+    final dependentIds = _blockedByTaskId.keys.toSet();
+
+    // Index tasks by ID for fast lookup
+    final taskById = <int, Task>{};
+    for (final t in _tasks) {
+      taskById[t.id!] = t;
+    }
+
+    // Walk chain from a head, depth-first
+    void walkChain(int id, List<Task> out) {
+      final task = taskById[id];
+      if (task == null) return;
+      out.add(task);
+      final deps = dependents[id];
+      if (deps != null) {
+        for (final depId in deps) {
+          walkChain(depId, out);
+        }
+      }
+    }
+
+    final reordered = <Task>[];
+    for (final task in _tasks) {
+      // Skip dependents — they'll be emitted as part of their chain
+      if (dependentIds.contains(task.id)) continue;
+      walkChain(task.id!, reordered);
+    }
+    _tasks = reordered;
   }
 
   Future<void> _refreshCurrentList({bool isMutation = true}) async {
@@ -583,6 +637,7 @@ class TaskProvider extends ChangeNotifier {
       return aWorked.compareTo(bWorked);
     });
     await _loadAuxiliaryData();
+    _reorderByDependencyChains();
     notifyListeners();
     if (isMutation) onMutation?.call();
   }
