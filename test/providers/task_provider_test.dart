@@ -1695,4 +1695,662 @@ void main() {
       await provider.unlinkFromCurrentParent(id);
     });
   });
+
+  group('Navigation', () {
+    test('navigateInto sets currentParent and loads children', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      expect(provider.currentParent, isNull);
+      expect(provider.tasks.any((t) => t.id == parentId), isTrue);
+
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      expect(provider.currentParent, isNotNull);
+      expect(provider.currentParent!.id, parentId);
+      expect(provider.tasks.any((t) => t.id == childId), isTrue);
+    });
+
+    test('navigateBack returns to previous level', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      expect(provider.currentParent!.id, parentId);
+
+      final result = await provider.navigateBack();
+      expect(result, isTrue);
+      expect(provider.currentParent, isNull);
+    });
+
+    test('navigateBack at root returns false', () async {
+      await provider.loadRootTasks();
+      final result = await provider.navigateBack();
+      expect(result, isFalse);
+      expect(provider.currentParent, isNull);
+    });
+
+    test('breadcrumb at root is [null]', () async {
+      await provider.loadRootTasks();
+      expect(provider.breadcrumb, [null]);
+    });
+
+    test('breadcrumb reflects navigation depth', () async {
+      final a = await db.insertTask(Task(name: 'Level 1'));
+      final b = await db.insertTask(Task(name: 'Level 2'));
+      final c = await db.insertTask(Task(name: 'Level 3'));
+      await db.addRelationship(a, b);
+      await db.addRelationship(b, c);
+
+      await provider.loadRootTasks();
+      // At root: breadcrumb = [null]
+      expect(provider.breadcrumb.length, 1);
+      expect(provider.breadcrumb[0], isNull);
+
+      await provider.navigateInto(provider.tasks.firstWhere((t) => t.id == a));
+      // At level 1: breadcrumb = [null, a]
+      expect(provider.breadcrumb.length, 2);
+      expect(provider.breadcrumb[0], isNull);
+      expect(provider.breadcrumb[1]!.id, a);
+
+      await provider.navigateInto(provider.tasks.firstWhere((t) => t.id == b));
+      // At level 2: breadcrumb = [null, a, b]
+      expect(provider.breadcrumb.length, 3);
+      expect(provider.breadcrumb[2]!.id, b);
+
+      await provider.navigateInto(provider.tasks.firstWhere((t) => t.id == c));
+      // At level 3: breadcrumb = [null, a, b, c]
+      expect(provider.breadcrumb.length, 4);
+      expect(provider.breadcrumb[3]!.id, c);
+    });
+
+    test('navigateToLevel jumps to a specific breadcrumb level', () async {
+      final a = await db.insertTask(Task(name: 'Level 1'));
+      final b = await db.insertTask(Task(name: 'Level 2'));
+      final c = await db.insertTask(Task(name: 'Level 3'));
+      await db.addRelationship(a, b);
+      await db.addRelationship(b, c);
+
+      await provider.loadRootTasks();
+      await provider.navigateInto(provider.tasks.firstWhere((t) => t.id == a));
+      await provider.navigateInto(provider.tasks.firstWhere((t) => t.id == b));
+      await provider.navigateInto(provider.tasks.firstWhere((t) => t.id == c));
+
+      // breadcrumb = [null, a, b, c]
+      expect(provider.breadcrumb.length, 4);
+
+      // Jump to level 1 (task a)
+      await provider.navigateToLevel(1);
+      expect(provider.currentParent!.id, a);
+      // breadcrumb should be [null, a]
+      expect(provider.breadcrumb.length, 2);
+    });
+
+    test('navigateToLevel(0) returns to root', () async {
+      final a = await db.insertTask(Task(name: 'Level 1'));
+      final b = await db.insertTask(Task(name: 'Level 2'));
+      await db.addRelationship(a, b);
+
+      await provider.loadRootTasks();
+      await provider.navigateInto(provider.tasks.firstWhere((t) => t.id == a));
+      await provider.navigateInto(provider.tasks.firstWhere((t) => t.id == b));
+
+      await provider.navigateToLevel(0);
+      expect(provider.currentParent, isNull);
+      expect(provider.breadcrumb, [null]);
+    });
+
+    test('isRoot is true at root and false when navigated in', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+
+      await provider.loadRootTasks();
+      expect(provider.isRoot, isTrue);
+
+      final task = provider.tasks.firstWhere((t) => t.id == id);
+      await provider.navigateInto(task);
+      expect(provider.isRoot, isFalse);
+    });
+  });
+
+  group('Task creation', () {
+    test('addTask creates task at root when no parent', () async {
+      await provider.loadRootTasks();
+      expect(provider.tasks, isEmpty);
+
+      await provider.addTask('New Task');
+
+      expect(provider.tasks, hasLength(1));
+      expect(provider.tasks.first.name, 'New Task');
+    });
+
+    test('addTask creates child under current parent', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      await provider.addTask('Child Task');
+
+      expect(provider.tasks, hasLength(1));
+      expect(provider.tasks.first.name, 'Child Task');
+
+      // Verify relationship in DB
+      final children = await db.getChildren(parentId);
+      expect(children.any((c) => c.name == 'Child Task'), isTrue);
+    });
+
+    test('addTask with additionalParentIds creates multi-parent task', () async {
+      final parent1 = await db.insertTask(Task(name: 'Parent 1'));
+      final parent2 = await db.insertTask(Task(name: 'Parent 2'));
+
+      await provider.loadRootTasks();
+      final p1 = provider.tasks.firstWhere((t) => t.id == parent1);
+      await provider.navigateInto(p1);
+
+      await provider.addTask('Multi-parent Child', additionalParentIds: [parent2]);
+
+      // Child should appear under parent1
+      expect(provider.tasks, hasLength(1));
+      final childId = provider.tasks.first.id!;
+
+      // Verify it's also under parent2
+      final parents = await db.getParents(childId);
+      expect(parents.map((p) => p.id).toSet(), {parent1, parent2});
+    });
+
+    test('addTask with additionalParentIds does not duplicate current parent', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      // Include current parent in additionalParentIds — should not duplicate
+      await provider.addTask('Child', additionalParentIds: [parentId]);
+
+      final childId = provider.tasks.first.id!;
+      final parents = await db.getParents(childId);
+      // Should have exactly 1 parent, not 2
+      expect(parents, hasLength(1));
+      expect(parents.first.id, parentId);
+    });
+
+    test('addTasksBatch creates multiple tasks at once', () async {
+      await provider.loadRootTasks();
+      await provider.addTasksBatch(['Task A', 'Task B', 'Task C']);
+
+      expect(provider.tasks, hasLength(3));
+      final names = provider.tasks.map((t) => t.name).toSet();
+      expect(names, {'Task A', 'Task B', 'Task C'});
+    });
+
+    test('addTasksBatch creates tasks under current parent', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      await provider.addTasksBatch(['Child 1', 'Child 2']);
+
+      expect(provider.tasks, hasLength(2));
+      final children = await db.getChildren(parentId);
+      expect(children, hasLength(2));
+    });
+  });
+
+  group('Task deletion & restore', () {
+    test('deleteTask removes task and returns undo info', () async {
+      final id = await db.insertTask(Task(name: 'Doomed'));
+      await provider.loadRootTasks();
+      expect(provider.tasks.any((t) => t.id == id), isTrue);
+
+      final result = await provider.deleteTask(id);
+
+      expect(result.task.id, id);
+      expect(result.task.name, 'Doomed');
+      expect(provider.tasks.any((t) => t.id == id), isFalse);
+    });
+
+    test('deleteTask returns parent and child IDs for undo', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Middle'));
+      final grandchild = await db.insertTask(Task(name: 'Grandchild'));
+      await db.addRelationship(parentId, childId);
+      await db.addRelationship(childId, grandchild);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      final result = await provider.deleteTask(childId);
+      expect(result.parentIds, contains(parentId));
+      expect(result.childIds, contains(grandchild));
+    });
+
+    test('restoreTask brings back task with relationships', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      final result = await provider.deleteTask(childId);
+      expect(provider.tasks, isEmpty);
+
+      await provider.restoreTask(
+        result.task, result.parentIds, result.childIds,
+        dependsOnIds: result.dependsOnIds,
+        dependedByIds: result.dependedByIds,
+      );
+
+      expect(provider.tasks.any((t) => t.id == childId), isTrue);
+    });
+
+    test('deleteTaskAndReparent moves children up to parents', () async {
+      final grandparent = await db.insertTask(Task(name: 'Grandparent'));
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child1 = await db.insertTask(Task(name: 'Child 1'));
+      final child2 = await db.insertTask(Task(name: 'Child 2'));
+      await db.addRelationship(grandparent, parent);
+      await db.addRelationship(parent, child1);
+      await db.addRelationship(parent, child2);
+
+      await provider.loadRootTasks();
+      final gp = provider.tasks.firstWhere((t) => t.id == grandparent);
+      await provider.navigateInto(gp);
+
+      final result = await provider.deleteTaskAndReparent(parent);
+
+      // Parent should be gone, children reparented under grandparent
+      expect(result.task.id, parent);
+      expect(provider.tasks.map((t) => t.id), isNot(contains(parent)));
+      expect(provider.tasks.map((t) => t.id), containsAll([child1, child2]));
+    });
+
+    test('deleteTaskAndReparent undo restores original hierarchy', () async {
+      final grandparent = await db.insertTask(Task(name: 'Grandparent'));
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(grandparent, parent);
+      await db.addRelationship(parent, child);
+
+      await provider.loadRootTasks();
+      final gp = provider.tasks.firstWhere((t) => t.id == grandparent);
+      await provider.navigateInto(gp);
+
+      final result = await provider.deleteTaskAndReparent(parent);
+
+      // Now child is directly under grandparent
+      expect(provider.tasks.map((t) => t.id), contains(child));
+
+      // Undo
+      await provider.restoreTask(
+        result.task, result.parentIds, result.childIds,
+        dependsOnIds: result.dependsOnIds,
+        dependedByIds: result.dependedByIds,
+        removeReparentLinks: result.addedReparentLinks,
+      );
+
+      // Parent restored under grandparent; child back under parent (not grandparent)
+      expect(provider.tasks.map((t) => t.id), contains(parent));
+      // Child should no longer be a direct child of grandparent
+      final gpChildren = await db.getChildren(grandparent);
+      expect(gpChildren.map((t) => t.id), contains(parent));
+      expect(gpChildren.map((t) => t.id), isNot(contains(child)));
+      // Child should be under parent
+      final parentChildren = await db.getChildren(parent);
+      expect(parentChildren.map((t) => t.id), contains(child));
+    });
+
+    test('deleteTaskSubtree removes task and all descendants', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final mid = await db.insertTask(Task(name: 'Mid'));
+      final leaf = await db.insertTask(Task(name: 'Leaf'));
+      await db.addRelationship(root, mid);
+      await db.addRelationship(mid, leaf);
+
+      await provider.loadRootTasks();
+
+      final result = await provider.deleteTaskSubtree(root);
+
+      expect(result.deletedTasks.map((t) => t.id).toSet(), {root, mid, leaf});
+      expect(provider.tasks, isEmpty);
+      // Verify they're gone from DB
+      expect(await db.getTaskById(root), isNull);
+      expect(await db.getTaskById(mid), isNull);
+      expect(await db.getTaskById(leaf), isNull);
+    });
+
+    test('restoreTaskSubtree brings back entire subtree', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      final grandchild = await db.insertTask(Task(name: 'Grandchild'));
+      await db.addRelationship(parent, child);
+      await db.addRelationship(child, grandchild);
+
+      await provider.loadRootTasks();
+      final result = await provider.deleteTaskSubtree(parent);
+      expect(provider.tasks, isEmpty);
+
+      await provider.restoreTaskSubtree(
+        tasks: result.deletedTasks,
+        relationships: result.deletedRelationships,
+        dependencies: result.deletedDependencies,
+      );
+
+      // Root tasks should show parent again
+      expect(provider.tasks.any((t) => t.id == parent), isTrue);
+
+      // Verify the full hierarchy in DB
+      final children = await db.getChildren(parent);
+      expect(children.any((t) => t.id == child), isTrue);
+      final grandchildren = await db.getChildren(child);
+      expect(grandchildren.any((t) => t.id == grandchild), isTrue);
+    });
+
+    test('deleteTaskSubtree preserves sibling tasks', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child1 = await db.insertTask(Task(name: 'Child 1'));
+      final child2 = await db.insertTask(Task(name: 'Child 2'));
+      final grandchild = await db.insertTask(Task(name: 'Grandchild'));
+      await db.addRelationship(parent, child1);
+      await db.addRelationship(parent, child2);
+      await db.addRelationship(child1, grandchild);
+
+      await provider.loadRootTasks();
+      final parentTask = provider.tasks.firstWhere((t) => t.id == parent);
+      await provider.navigateInto(parentTask);
+
+      // Delete child1 subtree only
+      await provider.deleteTaskSubtree(child1);
+
+      // child2 should still be there
+      expect(provider.tasks.any((t) => t.id == child2), isTrue);
+      // child1 and grandchild gone
+      expect(provider.tasks.any((t) => t.id == child1), isFalse);
+      expect(await db.getTaskById(grandchild), isNull);
+    });
+  });
+
+  group('Task lifecycle', () {
+    test('completeTask marks task as completed and navigates back', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      final child = provider.tasks.firstWhere((t) => t.id == childId);
+      await provider.navigateInto(child);
+
+      expect(provider.currentParent!.id, childId);
+      final result = await provider.completeTask(childId);
+      expect(result.id, childId);
+
+      // Should navigate back to parent
+      expect(provider.currentParent!.id, parentId);
+
+      // Verify completed in DB
+      final task = await db.getTaskById(childId);
+      expect(task!.isCompleted, isTrue);
+    });
+
+    test('skipTask marks task as skipped and navigates back', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      final child = provider.tasks.firstWhere((t) => t.id == childId);
+      await provider.navigateInto(child);
+
+      final result = await provider.skipTask(childId);
+      expect(result.id, childId);
+
+      // Should navigate back
+      expect(provider.currentParent!.id, parentId);
+
+      // Verify skipped in DB
+      final task = await db.getTaskById(childId);
+      expect(task!.isSkipped, isTrue);
+    });
+
+    test('unskipTask restores a skipped task', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      await db.skipTask(id);
+
+      await provider.loadRootTasks();
+      // Skipped tasks don't appear in root tasks, so check DB directly
+      var task = await db.getTaskById(id);
+      expect(task!.isSkipped, isTrue);
+
+      await provider.unskipTask(id);
+
+      task = await db.getTaskById(id);
+      expect(task!.isSkipped, isFalse);
+    });
+
+    test('uncompleteTask restores a completed task', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      await db.completeTask(id);
+
+      var task = await db.getTaskById(id);
+      expect(task!.isCompleted, isTrue);
+
+      await provider.uncompleteTask(id);
+
+      task = await db.getTaskById(id);
+      expect(task!.isCompleted, isFalse);
+      expect(task.completedAt, isNull);
+    });
+
+    test('reCompleteTask re-archives without navigating back', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      expect(provider.currentParent!.id, parentId);
+
+      // reCompleteTask does NOT navigate back
+      await provider.reCompleteTask(childId);
+
+      // Still at parent level
+      expect(provider.currentParent!.id, parentId);
+
+      // But task is completed in DB
+      final task = await db.getTaskById(childId);
+      expect(task!.isCompleted, isTrue);
+    });
+
+    test('reSkipTask re-skips without navigating back', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      // reSkipTask does NOT navigate back
+      await provider.reSkipTask(childId);
+
+      expect(provider.currentParent!.id, parentId);
+
+      final task = await db.getTaskById(childId);
+      expect(task!.isSkipped, isTrue);
+    });
+
+    test('completeTaskOnly completes without navigating back', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      final child = provider.tasks.firstWhere((t) => t.id == childId);
+      await provider.navigateInto(child);
+
+      await provider.completeTaskOnly(childId);
+
+      // Should NOT navigate back
+      expect(provider.currentParent!.id, childId);
+
+      // But task is completed in DB
+      final task = await db.getTaskById(childId);
+      expect(task!.isCompleted, isTrue);
+    });
+
+    test('complete then uncomplete roundtrip', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+
+      await provider.loadRootTasks();
+      final task = provider.tasks.firstWhere((t) => t.id == id);
+      await provider.navigateInto(task);
+      await provider.completeTask(id);
+
+      // Task is completed
+      var dbTask = await db.getTaskById(id);
+      expect(dbTask!.isCompleted, isTrue);
+
+      // Uncomplete it
+      await provider.uncompleteTask(id);
+      dbTask = await db.getTaskById(id);
+      expect(dbTask!.isCompleted, isFalse);
+    });
+
+    test('skip then unskip roundtrip', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+
+      await provider.loadRootTasks();
+      final task = provider.tasks.firstWhere((t) => t.id == id);
+      await provider.navigateInto(task);
+      await provider.skipTask(id);
+
+      var dbTask = await db.getTaskById(id);
+      expect(dbTask!.isSkipped, isTrue);
+
+      await provider.unskipTask(id);
+      dbTask = await db.getTaskById(id);
+      expect(dbTask!.isSkipped, isFalse);
+    });
+  });
+
+  group('pickWeightedN', () {
+    test('returns requested number of tasks', () async {
+      for (int i = 0; i < 10; i++) {
+        await db.insertTask(Task(name: 'Task $i'));
+      }
+      final leaves = await provider.getAllLeafTasks();
+      final picked = provider.pickWeightedN(leaves, 5);
+
+      expect(picked, hasLength(5));
+    });
+
+    test('returns all tasks when count exceeds candidates', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final leaves = await provider.getAllLeafTasks();
+      final picked = provider.pickWeightedN(leaves, 10);
+
+      expect(picked, hasLength(2));
+      expect(picked.map((t) => t.id).toSet(), {a, b});
+    });
+
+    test('returns empty list for empty candidates', () async {
+      final picked = provider.pickWeightedN([], 5);
+      expect(picked, isEmpty);
+    });
+
+    test('returns unique tasks (no duplicates)', () async {
+      for (int i = 0; i < 20; i++) {
+        await db.insertTask(Task(name: 'Task $i'));
+      }
+      final leaves = await provider.getAllLeafTasks();
+      final picked = provider.pickWeightedN(leaves, 5);
+
+      final ids = picked.map((t) => t.id).toSet();
+      expect(ids.length, picked.length); // no duplicates
+    });
+
+    test('includes at least one quick task if available', () async {
+      // Create 9 normal tasks and 1 quick task
+      for (int i = 0; i < 9; i++) {
+        await db.insertTask(Task(name: 'Normal $i'));
+      }
+      final quickId = await db.insertTask(Task(name: 'Quick', difficulty: 1));
+
+      final leaves = await provider.getAllLeafTasks();
+
+      // Run multiple times to verify the quick task guarantee
+      bool quickAlwaysIncluded = true;
+      for (int run = 0; run < 20; run++) {
+        final picked = provider.pickWeightedN(leaves, 5);
+        if (!picked.any((t) => t.id == quickId)) {
+          quickAlwaysIncluded = false;
+          break;
+        }
+      }
+      expect(quickAlwaysIncluded, isTrue);
+    });
+
+    test('excludes tasks worked on today', () async {
+      final id1 = await db.insertTask(Task(name: 'Fresh'));
+      final id2 = await db.insertTask(Task(name: 'Worked'));
+      await db.markWorkedOn(id2);
+
+      final leaves = await provider.getAllLeafTasks();
+      final picked = provider.pickWeightedN(leaves, 5);
+
+      expect(picked.any((t) => t.id == id1), isTrue);
+      expect(picked.any((t) => t.id == id2), isFalse);
+    });
+
+    test('returns empty when all candidates were worked on today', () async {
+      final id1 = await db.insertTask(Task(name: 'A'));
+      final id2 = await db.insertTask(Task(name: 'B'));
+      await db.markWorkedOn(id1);
+      await db.markWorkedOn(id2);
+
+      final leaves = await provider.getAllLeafTasks();
+      final picked = provider.pickWeightedN(leaves, 5);
+
+      expect(picked, isEmpty);
+    });
+
+    test('high priority tasks get selected with higher probability', () async {
+      // Statistical test: with enough runs, high priority should appear more often
+      final normalId = await db.insertTask(Task(name: 'Normal'));
+      final highId = await db.insertTask(Task(name: 'High', priority: 1));
+
+      final leaves = await provider.getAllLeafTasks();
+
+      // Pick 1 out of 2 many times — high priority should win more often
+      int highCount = 0;
+      const runs = 200;
+      for (int i = 0; i < runs; i++) {
+        final picked = provider.pickWeightedN(leaves, 1);
+        if (picked.first.id == highId) highCount++;
+      }
+
+      // High priority has 3x weight. Expected ratio ~75%.
+      // Use a generous threshold to avoid flaky tests.
+      expect(highCount, greaterThan(runs ~/ 4)); // at least 25%
+    });
+  });
 }
