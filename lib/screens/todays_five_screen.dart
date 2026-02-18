@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
+import '../providers/theme_provider.dart';
 import '../utils/display_utils.dart';
 import '../widgets/completion_animation.dart';
 import '../widgets/profile_icon.dart';
@@ -27,6 +28,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   /// Tracks tasks that were auto-started by "Done today" (weren't started
   /// before). _handleUncomplete uses this to also call unstartTask.
   final Set<int> _autoStartedIds = {};
+  /// Cached ancestor-path strings keyed by task ID (e.g. "Work > Project X").
+  Map<int, String> _taskPaths = {};
   bool _loading = true;
 
   @override
@@ -103,8 +106,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             .where((id) => taskIdSet.contains(id))
             .toSet();
         if (!mounted) return;
+        _todaysTasks = tasks;
+        await _loadTaskPaths();
+        if (!mounted) return;
         setState(() {
-          _todaysTasks = tasks;
           _completedIds.addAll(validCompletedIds);
           _workedOnIds.addAll(validWorkedOnIds);
           _loading = false;
@@ -179,9 +184,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     // Keep workedOnIds in sync — remove if no longer in completed set
     _workedOnIds.removeWhere((id) => !_completedIds.contains(id));
     if (!mounted) return;
-    setState(() {
-      _todaysTasks = refreshed;
-    });
+    _todaysTasks = refreshed;
+    await _loadTaskPaths();
+    if (!mounted) return;
+    setState(() {});
     await _persist();
   }
 
@@ -203,8 +209,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     final slotsToFill = 5 - kept.length;
     final picked = provider.pickWeightedN(eligible, slotsToFill);
     if (!mounted) return;
+    _todaysTasks = [...kept, ...picked];
+    await _loadTaskPaths();
+    if (!mounted) return;
     setState(() {
-      _todaysTasks = [...kept, ...picked];
       _loading = false;
     });
     await _persist();
@@ -225,6 +233,19 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       'todays5_worked_on',
       _workedOnIds.map((id) => id.toString()).toList(),
     );
+  }
+
+  /// Fetches ancestor paths for all tasks in [_todaysTasks] and caches them.
+  Future<void> _loadTaskPaths() async {
+    final db = DatabaseHelper();
+    final paths = <int, String>{};
+    for (final task in _todaysTasks) {
+      final ancestors = await db.getAncestorPath(task.id!);
+      if (ancestors.isNotEmpty) {
+        paths[task.id!] = ancestors.map((t) => t.name).join(' › ');
+      }
+    }
+    _taskPaths = paths;
   }
 
   /// Re-fetches a single task from DB and updates it in [_todaysTasks].
@@ -552,9 +573,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
 
     final picked = provider.pickWeightedN(eligible, 1);
     if (picked.isNotEmpty) {
-      setState(() {
-        _todaysTasks[index] = picked.first;
-      });
+      _todaysTasks[index] = picked.first;
+      final ancestors = await DatabaseHelper().getAncestorPath(picked.first.id!);
+      if (ancestors.isNotEmpty) {
+        _taskPaths[picked.first.id!] = ancestors.map((t) => t.name).join(' › ');
+      } else {
+        _taskPaths.remove(picked.first.id!);
+      }
+      if (!mounted) return;
+      setState(() {});
       await _persist();
     }
   }
@@ -622,6 +649,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         ),
         toolbarHeight: 72,
         actions: [
+          Consumer<ThemeProvider>(
+            builder: (context, themeProvider, _) {
+              return IconButton(
+                icon: Icon(themeProvider.icon, size: 28),
+                onPressed: themeProvider.toggle,
+                tooltip: 'Toggle theme',
+              );
+            },
+          ),
           const ProfileIcon(),
           if (completedCount < totalCount)
             IconButton(
@@ -696,25 +732,50 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
               decoration: isDone ? TextDecoration.lineThrough : null,
             ),
           ),
-          subtitle: Row(
-            mainAxisSize: MainAxisSize.min,
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (task.isHighPriority)
+              if (_taskPaths.containsKey(task.id))
                 Padding(
-                  padding: const EdgeInsets.only(right: 4),
-                  child: Icon(Icons.flag, size: 14, color: colorScheme.error),
+                  padding: const EdgeInsets.only(top: 2, bottom: 2),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      _taskPaths[task.id]!,
+                      style: textTheme.labelSmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        letterSpacing: 0.3,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                 ),
-              if (task.isQuickTask)
-                const Padding(
-                  padding: EdgeInsets.only(right: 4),
-                  child: Icon(Icons.bolt, size: 14, color: Colors.amber),
-                ),
-              if (task.isStarted && !isDone)
-                Padding(
-                  padding: const EdgeInsets.only(right: 4),
-                  child: Icon(Icons.play_circle_filled, size: 14,
-                      color: colorScheme.tertiary),
-                ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (task.isHighPriority)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Icon(Icons.flag, size: 14, color: colorScheme.error),
+                    ),
+                  if (task.isQuickTask)
+                    const Padding(
+                      padding: EdgeInsets.only(right: 4),
+                      child: Icon(Icons.bolt, size: 14, color: Colors.amber),
+                    ),
+                  if (task.isStarted && !isDone)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Icon(Icons.play_circle_filled, size: 14,
+                          color: colorScheme.tertiary),
+                    ),
+                ],
+              ),
             ],
           ),
           trailing: Row(
