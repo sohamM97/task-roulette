@@ -497,6 +497,7 @@ class TaskListScreenState extends State<TaskListScreen>
       _leafDepsTaskId = task.id;
       _leafDepsFuture = provider.getDependencies(task.id!);
     }
+    final parentNames = provider.parentNamesMap[task.id] ?? [];
     return FutureBuilder<List<Task>>(
       future: _leafDepsFuture,
       builder: (context, snapshot) {
@@ -525,6 +526,7 @@ class TaskListScreenState extends State<TaskListScreen>
             await _addDependencyToTask(task);
             _leafDepsTaskId = null; // invalidate — may have added a dep
           },
+          parentNames: parentNames,
         );
       },
     );
@@ -926,6 +928,9 @@ class TaskListScreenState extends State<TaskListScreen>
                             isBlocked: provider.blockedTaskIds.contains(task.id),
                             blockedByName: provider.blockedByNames[task.id],
                             isInTodaysFive: _todaysFiveIds.contains(task.id),
+                            parentNames: (provider.parentNamesMap[task.id] ?? [])
+                                .where((name) => name != provider.currentParent?.name)
+                                .toList(),
                           );
                         },
                       ),

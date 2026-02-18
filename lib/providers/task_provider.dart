@@ -28,6 +28,10 @@ class TaskProvider extends ChangeNotifier {
   /// Used by [_reorderByDependencyChains] to group dependents after their blocker.
   Map<int, int> _blockedByTaskId = {};
 
+  /// Task ID → list of parent names for each task in the current view.
+  Map<int, List<String>> _parentNamesMap = {};
+  Map<int, List<String>> get parentNamesMap => _parentNamesMap;
+
   /// null means we're at the root level
   Task? _currentParent;
   Task? get currentParent => _currentParent;
@@ -564,13 +568,19 @@ class TaskProvider extends ChangeNotifier {
   /// The three queries are independent, so they run concurrently.
   Future<void> _loadAuxiliaryData() async {
     final taskIds = _tasks.map((t) => t.id!).toList();
+    // Include currentParent so leaf detail can also look up its parents.
+    final parentNameIds = _currentParent?.id != null
+        ? [...taskIds, _currentParent!.id!]
+        : taskIds;
     late Set<int> startedIds;
     late Map<int, ({int blockerId, String blockerName})> blockedInfo;
     late Map<int, int> siblingDeps;
+    late Map<int, List<String>> parentNames;
     await Future.wait([
       _db.getTaskIdsWithStartedDescendants(taskIds).then((v) => startedIds = v),
       _db.getBlockedTaskInfo(taskIds).then((v) => blockedInfo = v),
       _db.getSiblingDependencyPairs(taskIds).then((v) => siblingDeps = v),
+      _db.getParentNamesForTaskIds(parentNameIds).then((v) => parentNames = v),
     ]);
     _startedDescendantIds = startedIds;
     // Derive the simple name map for UI display
@@ -579,6 +589,7 @@ class TaskProvider extends ChangeNotifier {
     };
     // Use ALL sibling dependency pairs for positional ordering (not just active ones)
     _blockedByTaskId = siblingDeps;
+    _parentNamesMap = parentNames;
   }
 
   /// Reorders _tasks so that dependent tasks appear immediately after their

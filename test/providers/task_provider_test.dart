@@ -2353,4 +2353,64 @@ void main() {
       expect(highCount, greaterThan(runs ~/ 4)); // at least 25%
     });
   });
+
+  group('parentNamesMap', () {
+    test('contains parent names for children in current view', () async {
+      final parentA = await db.insertTask(Task(name: 'Parent A'));
+      final parentB = await db.insertTask(Task(name: 'Parent B'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentA, childId);
+      await db.addRelationship(parentB, childId);
+
+      // Navigate into Parent A — Child should show both parents
+      await provider.loadRootTasks();
+      final pA = provider.tasks.firstWhere((t) => t.id == parentA);
+      await provider.navigateInto(pA);
+
+      expect(provider.parentNamesMap[childId], isNotNull);
+      expect(provider.parentNamesMap[childId], containsAll(['Parent A', 'Parent B']));
+    });
+
+    test('single-parent child has one entry in parentNamesMap', () async {
+      final parentId = await db.insertTask(Task(name: 'Solo Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      expect(provider.parentNamesMap[childId], ['Solo Parent']);
+    });
+
+    test('root tasks with no parents have no entry in parentNamesMap', () async {
+      final rootId = await db.insertTask(Task(name: 'Root task'));
+
+      await provider.loadRootTasks();
+      expect(provider.parentNamesMap[rootId], isNull);
+    });
+
+    test('includes currentParent (leaf task) in parentNamesMap', () async {
+      final parentA = await db.insertTask(Task(name: 'Parent A'));
+      final parentB = await db.insertTask(Task(name: 'Parent B'));
+      final leafId = await db.insertTask(Task(name: 'Leaf'));
+      await db.addRelationship(parentA, leafId);
+      await db.addRelationship(parentB, leafId);
+
+      // Navigate to the leaf task (has no children)
+      await provider.loadRootTasks();
+      final pA = provider.tasks.firstWhere((t) => t.id == parentA);
+      await provider.navigateInto(pA);
+      final leaf = provider.tasks.firstWhere((t) => t.id == leafId);
+      await provider.navigateInto(leaf);
+
+      // Leaf is now currentParent, tasks list is empty
+      expect(provider.currentParent!.id, leafId);
+      expect(provider.tasks, isEmpty);
+
+      // parentNamesMap should still contain the leaf's parents
+      expect(provider.parentNamesMap[leafId], isNotNull);
+      expect(provider.parentNamesMap[leafId], containsAll(['Parent A', 'Parent B']));
+    });
+  });
 }

@@ -17,6 +17,7 @@ class TaskCard extends StatelessWidget {
   final bool isBlocked;
   final String? blockedByName;
   final bool isInTodaysFive;
+  final List<String> parentNames;
 
   const TaskCard({
     super.key,
@@ -33,6 +34,7 @@ class TaskCard extends StatelessWidget {
     this.isBlocked = false,
     this.blockedByName,
     this.isInTodaysFive = false,
+    this.parentNames = const [],
   });
 
   void _showDeleteBottomSheet(BuildContext context) {
@@ -203,6 +205,39 @@ class TaskCard extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
+                            ],
+                          ),
+                        ),
+                      if (parentNames.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Wrap(
+                            spacing: 4,
+                            runSpacing: 2,
+                            alignment: WrapAlignment.center,
+                            children: [
+                              Text(
+                                'Also under:',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  fontSize: 10,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant.withAlpha(160),
+                                ),
+                              ),
+                              ...parentNames.map((name) => Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(6),
+                                color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(160),
+                              ),
+                              child: Text(
+                                name,
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  fontSize: 10,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            )),
                             ],
                           ),
                         ),

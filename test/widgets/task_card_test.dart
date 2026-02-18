@@ -112,4 +112,55 @@ void main() {
       expect(find.text('Stop working'), findsNothing);
     });
   });
+
+  group('TaskCard parent tags', () {
+    testWidgets('shows "Also under:" and parent names when parentNames provided', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 200,
+            height: 200,
+            child: TaskCard(
+              task: Task(id: 1, name: 'Multi-parent task', createdAt: 1000),
+              onTap: () {},
+              onDelete: () {},
+              parentNames: const ['Work', 'Urgent'],
+            ),
+          ),
+        ),
+      ));
+
+      expect(find.text('Also under:'), findsOneWidget);
+      expect(find.text('Work'), findsOneWidget);
+      expect(find.text('Urgent'), findsOneWidget);
+    });
+
+    testWidgets('hides parent tags when parentNames is empty', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Single parent task', createdAt: 1000),
+      ));
+
+      expect(find.text('Also under:'), findsNothing);
+    });
+
+    testWidgets('shows single parent name with "Also under:" prefix', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 200,
+            height: 200,
+            child: TaskCard(
+              task: Task(id: 1, name: 'Task', createdAt: 1000),
+              onTap: () {},
+              onDelete: () {},
+              parentNames: const ['Shopping'],
+            ),
+          ),
+        ),
+      ));
+
+      expect(find.text('Also under:'), findsOneWidget);
+      expect(find.text('Shopping'), findsOneWidget);
+    });
+  });
 }

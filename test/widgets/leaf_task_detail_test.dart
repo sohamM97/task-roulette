@@ -391,4 +391,61 @@ void main() {
       expect(find.text('Hard'), findsNothing);
     });
   });
+
+  group('LeafTaskDetail parent tags', () {
+    testWidgets('shows "Under:" and parent names as chips when parentNames provided', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LeafTaskDetail(
+            task: Task(id: 1, name: 'Leaf', createdAt: DateTime.now().millisecondsSinceEpoch),
+            onDone: () {},
+            onSkip: () {},
+            onToggleStarted: () {},
+            onRename: () {},
+            onUpdateUrl: (_) {},
+            onUpdatePriority: (_) {},
+            onUpdateQuickTask: (_) {},
+            parentNames: const ['Work', 'Personal'],
+          ),
+        ),
+      ));
+
+      expect(find.text('Under:'), findsOneWidget);
+      expect(find.text('Work'), findsOneWidget);
+      expect(find.text('Personal'), findsOneWidget);
+    });
+
+    testWidgets('hides parent tags when parentNames is empty', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Leaf', createdAt: DateTime.now().millisecondsSinceEpoch),
+      ));
+
+      // No parent chip containers should appear — just the task name and buttons
+      // Verify none of the common parent-related text exists
+      expect(find.text('Work'), findsNothing);
+      expect(find.text('Personal'), findsNothing);
+    });
+
+    testWidgets('shows all parents including the one navigated from', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LeafTaskDetail(
+            task: Task(id: 1, name: 'Leaf', createdAt: DateTime.now().millisecondsSinceEpoch),
+            onDone: () {},
+            onSkip: () {},
+            onToggleStarted: () {},
+            onRename: () {},
+            onUpdateUrl: (_) {},
+            onUpdatePriority: (_) {},
+            onUpdateQuickTask: (_) {},
+            parentNames: const ['Current Parent', 'Other Parent', 'Third Parent'],
+          ),
+        ),
+      ));
+
+      expect(find.text('Current Parent'), findsOneWidget);
+      expect(find.text('Other Parent'), findsOneWidget);
+      expect(find.text('Third Parent'), findsOneWidget);
+    });
+  });
 }

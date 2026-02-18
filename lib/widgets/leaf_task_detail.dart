@@ -17,6 +17,7 @@ class LeafTaskDetail extends StatelessWidget {
   final List<Task> dependencies;
   final void Function(int)? onRemoveDependency;
   final VoidCallback? onAddDependency;
+  final List<String> parentNames;
 
   const LeafTaskDetail({
     super.key,
@@ -33,6 +34,7 @@ class LeafTaskDetail extends StatelessWidget {
     this.dependencies = const [],
     this.onRemoveDependency,
     this.onAddDependency,
+    this.parentNames = const [],
   });
 
   String _formatTimeAgo(int millis) {
@@ -199,6 +201,39 @@ class LeafTaskDetail extends StatelessWidget {
                 ),
               ),
             ),
+            // Parent tags — shown when task has parents
+            if (parentNames.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4, bottom: 2),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    Text(
+                      'Under:',
+                      style: textTheme.bodySmall?.copyWith(
+                        fontSize: 11,
+                        color: colorScheme.onSurfaceVariant.withAlpha(160),
+                      ),
+                    ),
+                    ...parentNames.map((name) => Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      color: colorScheme.surfaceContainerHighest.withAlpha(160),
+                    ),
+                    child: Text(
+                      name,
+                      style: textTheme.bodySmall?.copyWith(
+                        fontSize: 11,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  )),
+                  ],
+                ),
+              ),
             // Task settings icons — right below title
             Row(
               mainAxisSize: MainAxisSize.min,
