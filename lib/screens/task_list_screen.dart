@@ -360,11 +360,13 @@ class _TaskListScreenState extends State<TaskListScreen>
 
   Future<void> _deleteTaskWithUndo(Task task) async {
     final provider = context.read<TaskProvider>();
+    final isDeletingCurrentParent = task.id == provider.currentParent?.id;
     final hasKids = await provider.hasChildren(task.id!);
 
     if (!hasKids) {
       // Leaf task — delete directly, no dialog
       final deleted = await provider.deleteTask(task.id!);
+      if (isDeletingCurrentParent) await provider.navigateBack();
       if (!mounted) return;
       _showDeleteUndoSnackbar('Deleted "${task.name}"', () {
         provider.restoreTask(
@@ -387,6 +389,7 @@ class _TaskListScreenState extends State<TaskListScreen>
     switch (choice) {
       case DeleteChoice.reparent:
         final result = await provider.deleteTaskAndReparent(task.id!);
+        if (isDeletingCurrentParent) await provider.navigateBack();
         if (!mounted) return;
         _showDeleteUndoSnackbar('Deleted "${task.name}"', () {
           provider.restoreTask(
@@ -398,6 +401,7 @@ class _TaskListScreenState extends State<TaskListScreen>
         });
       case DeleteChoice.deleteAll:
         final result = await provider.deleteTaskSubtree(task.id!);
+        if (isDeletingCurrentParent) await provider.navigateBack();
         if (!mounted) return;
         final count = result.deletedTasks.length - 1;
         final desc = count > 0
@@ -803,6 +807,8 @@ class _TaskListScreenState extends State<TaskListScreen>
                         }
                       case 'do_after':
                         if (task != null) _addDependencyToTask(task);
+                      case 'delete':
+                        if (task != null) _deleteTaskWithUndo(task);
                       case 'export':
                         BackupService.exportDatabase(context);
                       case 'import':
@@ -837,8 +843,14 @@ class _TaskListScreenState extends State<TaskListScreen>
                         child: Text('Do after...'),
                       ),
                     ],
-                    if (!provider.isRoot)
+                    if (!provider.isRoot) ...[
                       const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Delete'),
+                      ),
+                      const PopupMenuDivider(),
+                    ],
                     const PopupMenuItem(
                       value: 'export',
                       child: Text('Export backup'),

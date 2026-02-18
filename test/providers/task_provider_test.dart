@@ -463,6 +463,81 @@ void main() {
       final deps = await provider.getDependencies(b);
       expect(deps.map((t) => t.id), contains(a));
     });
+
+    test('deleting currentParent (leaf) then navigateBack returns to parent', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Leaf Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      expect(provider.currentParent!.id, parentId);
+
+      // Navigate into the leaf child — it becomes currentParent
+      final child = provider.tasks.firstWhere((t) => t.id == childId);
+      await provider.navigateInto(child);
+      expect(provider.currentParent!.id, childId);
+      expect(provider.tasks, isEmpty); // leaf has no children
+
+      // Delete the leaf (which IS currentParent)
+      await provider.deleteTask(childId);
+      // Simulate what the screen does: navigateBack after deleting currentParent
+      await provider.navigateBack();
+
+      // Should be back at parent level
+      expect(provider.currentParent!.id, parentId);
+      // The deleted child should not appear
+      expect(provider.tasks.map((t) => t.id), isNot(contains(childId)));
+    });
+
+    test('deleting currentParent (non-leaf, subtree) then navigateBack returns to parent', () async {
+      final grandparentId = await db.insertTask(Task(name: 'Grandparent'));
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(grandparentId, parentId);
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final gp = provider.tasks.firstWhere((t) => t.id == grandparentId);
+      await provider.navigateInto(gp);
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      expect(provider.currentParent!.id, parentId);
+      expect(provider.tasks.length, 1); // has one child
+
+      // Delete subtree (parent + child)
+      await provider.deleteTaskSubtree(parentId);
+      await provider.navigateBack();
+
+      // Should be back at grandparent level
+      expect(provider.currentParent!.id, grandparentId);
+      expect(provider.tasks.map((t) => t.id), isNot(contains(parentId)));
+    });
+
+    test('deleting currentParent (non-leaf, reparent) then navigateBack returns to parent', () async {
+      final grandparentId = await db.insertTask(Task(name: 'Grandparent'));
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(grandparentId, parentId);
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final gp = provider.tasks.firstWhere((t) => t.id == grandparentId);
+      await provider.navigateInto(gp);
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      expect(provider.currentParent!.id, parentId);
+
+      // Delete parent with reparent — child should move up to grandparent
+      await provider.deleteTaskAndReparent(parentId);
+      await provider.navigateBack();
+
+      // Should be back at grandparent level with child reparented
+      expect(provider.currentParent!.id, grandparentId);
+      expect(provider.tasks.map((t) => t.id), contains(childId));
+      expect(provider.tasks.map((t) => t.id), isNot(contains(parentId)));
+    });
   });
 
   group('navigateToTask', () {
