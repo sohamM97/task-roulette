@@ -506,11 +506,12 @@ void main() {
     test('root-level dependencies also group', () async {
       final a = await db.insertTask(Task(name: 'Task A'));
       final b = await db.insertTask(Task(name: 'Task B'));
-      final c = await db.insertTask(Task(name: 'Task C'));
+      await db.insertTask(Task(name: 'Task C')); // unrelated task
       await db.addDependency(b, a); // B depends on A
 
       await provider.loadRootTasks();
 
+      expect(provider.tasks, hasLength(3));
       final ids = provider.tasks.map((t) => t.id).toList();
       expect(ids.indexOf(b), ids.indexOf(a) + 1);
     });
