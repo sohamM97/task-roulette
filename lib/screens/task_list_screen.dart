@@ -548,6 +548,45 @@ class TaskListScreenState extends State<TaskListScreen>
     await provider.navigateToTask(selected);
   }
 
+  void _showSortOptions() {
+    final provider = context.read<TaskProvider>();
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(
+                  'Sort by',
+                  style: Theme.of(sheetContext).textTheme.titleMedium,
+                ),
+              ),
+              for (final option in SortOrder.values)
+                ListTile(
+                  title: Text(switch (option) {
+                    SortOrder.defaultOrder => 'Default',
+                    SortOrder.nameAZ => 'Name (A\u2013Z)',
+                    SortOrder.newestFirst => 'Newest first',
+                  }),
+                  trailing: provider.sortOrder == option
+                      ? Icon(Icons.check, color: Theme.of(sheetContext).colorScheme.primary)
+                      : null,
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    provider.setSortOrder(option);
+                  },
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _pickRandom() async {
     final provider = context.read<TaskProvider>();
     final picked = provider.pickRandom();
@@ -835,6 +874,8 @@ class TaskListScreenState extends State<TaskListScreen>
                         if (task != null) _addDependencyToTask(task);
                       case 'delete':
                         if (task != null) _deleteTaskWithUndo(task);
+                      case 'sort':
+                        _showSortOptions();
                       case 'export':
                         BackupService.exportDatabase(context);
                       case 'import':
@@ -877,6 +918,11 @@ class TaskListScreenState extends State<TaskListScreen>
                       ),
                       const PopupMenuDivider(),
                     ],
+                    if (provider.tasks.isNotEmpty)
+                      const PopupMenuItem(
+                        value: 'sort',
+                        child: Text('Sort by'),
+                      ),
                     const PopupMenuItem(
                       value: 'export',
                       child: Text('Export backup'),

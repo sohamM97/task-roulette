@@ -4,6 +4,8 @@ import '../data/database_helper.dart';
 import '../models/task.dart';
 import '../models/task_relationship.dart';
 
+enum SortOrder { defaultOrder, nameAZ, newestFirst }
+
 class TaskProvider extends ChangeNotifier {
   final DatabaseHelper _db = DatabaseHelper();
   final Random _random = Random();
@@ -27,6 +29,15 @@ class TaskProvider extends ChangeNotifier {
   /// Task ID → list of parent names for each task in the current view.
   Map<int, List<String>> _parentNamesMap = {};
   Map<int, List<String>> get parentNamesMap => _parentNamesMap;
+
+  SortOrder _sortOrder = SortOrder.defaultOrder;
+  SortOrder get sortOrder => _sortOrder;
+
+  void setSortOrder(SortOrder order) {
+    if (_sortOrder == order) return;
+    _sortOrder = order;
+    _refreshCurrentList(isMutation: false);
+  }
 
   /// null means we're at the root level
   Task? _currentParent;
@@ -634,7 +645,16 @@ class TaskProvider extends ChangeNotifier {
     } else {
       _tasks = await _db.getChildren(_currentParent!.id!);
     }
-    // Sort worked-on-today tasks to the end, preserving DB order otherwise
+    // Apply user-selected sort before the worked-on-today push
+    switch (_sortOrder) {
+      case SortOrder.defaultOrder:
+        break; // DB order (priority DESC, created_at ASC)
+      case SortOrder.nameAZ:
+        _tasks.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      case SortOrder.newestFirst:
+        _tasks.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    }
+    // Sort worked-on-today tasks to the end, preserving sort order otherwise
     _tasks.sort((a, b) {
       final aWorked = a.isWorkedOnToday ? 1 : 0;
       final bWorked = b.isWorkedOnToday ? 1 : 0;
