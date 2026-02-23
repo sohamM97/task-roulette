@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../data/database_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
@@ -55,14 +55,9 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   Future<void> loadTodaysFiveIds() async {
-    final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now();
     final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    if (prefs.getString('todays5_date') != today) return;
-    final ids = (prefs.getStringList('todays5_ids') ?? [])
-        .map(int.tryParse)
-        .whereType<int>()
-        .toSet();
+    final ids = await DatabaseHelper().getTodaysFiveTaskIds(today);
     if (!mounted) return;
     setState(() => _todaysFiveIds = ids);
   }

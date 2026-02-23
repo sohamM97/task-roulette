@@ -1,11 +1,27 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:uuid/uuid.dart';
 import '../models/task.dart';
 import '../models/task_relationship.dart';
+
+/// Data holder for Today's 5 state loaded from / saved to the DB.
+class TodaysFiveData {
+  final String date;
+  final List<int> taskIds;
+  final Set<int> completedIds;
+  final Set<int> workedOnIds;
+
+  const TodaysFiveData({
+    required this.date,
+    required this.taskIds,
+    required this.completedIds,
+    required this.workedOnIds,
+  });
+}
 
 const _uuid = Uuid();
 
@@ -48,7 +64,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 12,
+      version: 13,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -106,6 +122,17 @@ class DatabaseHelper {
             created_at INTEGER NOT NULL
           )
         ''');
+        await db.execute('''
+          CREATE TABLE todays_five_state (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            task_id INTEGER NOT NULL,
+            is_completed INTEGER NOT NULL DEFAULT 0,
+            is_worked_on INTEGER NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+        await db.execute('CREATE INDEX idx_todays_five_state_date ON todays_five_state(date)');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -196,6 +223,19 @@ class DatabaseHelper {
             );
           }
         }
+        if (oldVersion < 13) {
+          await db.execute('''
+            CREATE TABLE todays_five_state (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              date TEXT NOT NULL,
+              task_id INTEGER NOT NULL,
+              is_completed INTEGER NOT NULL DEFAULT 0,
+              is_worked_on INTEGER NOT NULL DEFAULT 0,
+              sort_order INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
+          await db.execute('CREATE INDEX idx_todays_five_state_date ON todays_five_state(date)');
+        }
       },
     );
   }
@@ -238,9 +278,9 @@ class DatabaseHelper {
       // Check schema version is compatible
       final versionResult = await testDb.rawQuery('PRAGMA user_version');
       final version = versionResult.first.values.first as int;
-      if (version < 1 || version > 12) {
+      if (version < 1 || version > 13) {
         throw FormatException(
-          'Incompatible backup version ($version). This app supports versions 1-12.',
+          'Incompatible backup version ($version). This app supports versions 1-13.',
         );
       }
 
@@ -1363,6 +1403,127 @@ class DatabaseHelper {
     final db = await database;
     final maps = await db.query('tasks', where: 'sync_id IS NOT NULL');
     return _tasksFromMaps(maps);
+  }
+
+  // --- Today's 5 state methods ---
+
+  /// Saves Today's 5 state to the DB, replacing any existing data for [date].
+  Future<void> saveTodaysFiveState({
+    required String date,
+    required List<int> taskIds,
+    required Set<int> completedIds,
+    required Set<int> workedOnIds,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('todays_five_state', where: 'date = ?', whereArgs: [date]);
+      for (var i = 0; i < taskIds.length; i++) {
+        final id = taskIds[i];
+        await txn.insert('todays_five_state', {
+          'date': date,
+          'task_id': id,
+          'is_completed': completedIds.contains(id) ? 1 : 0,
+          'is_worked_on': workedOnIds.contains(id) ? 1 : 0,
+          'sort_order': i,
+        });
+      }
+    });
+  }
+
+  /// Loads Today's 5 state from the DB for [date]. Returns null if no data.
+  Future<TodaysFiveData?> loadTodaysFiveState(String date) async {
+    final db = await database;
+    final rows = await db.query(
+      'todays_five_state',
+      where: 'date = ?',
+      whereArgs: [date],
+      orderBy: 'sort_order ASC',
+    );
+    if (rows.isEmpty) return null;
+    final taskIds = <int>[];
+    final completedIds = <int>{};
+    final workedOnIds = <int>{};
+    for (final row in rows) {
+      final taskId = row['task_id'] as int;
+      taskIds.add(taskId);
+      if (row['is_completed'] == 1) completedIds.add(taskId);
+      if (row['is_worked_on'] == 1) workedOnIds.add(taskId);
+    }
+    return TodaysFiveData(
+      date: date,
+      taskIds: taskIds,
+      completedIds: completedIds,
+      workedOnIds: workedOnIds,
+    );
+  }
+
+  /// Returns just the task IDs for today's five (for indicator on task cards).
+  Future<Set<int>> getTodaysFiveTaskIds(String date) async {
+    final db = await database;
+    final rows = await db.query(
+      'todays_five_state',
+      columns: ['task_id'],
+      where: 'date = ?',
+      whereArgs: [date],
+    );
+    return rows.map((r) => r['task_id'] as int).toSet();
+  }
+
+  /// Migrates Today's 5 state from SharedPreferences to the DB (idempotent).
+  /// Only migrates if SharedPreferences has data AND the DB doesn't for that date.
+  /// Clears SharedPreferences keys after a verified DB write.
+  Future<void> migrateTodaysFiveFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedDate = prefs.getString('todays5_date');
+    if (savedDate == null) return; // nothing to migrate
+
+    // Check if DB already has data for this date (idempotent)
+    final existing = await loadTodaysFiveState(savedDate);
+    if (existing != null) {
+      // Already migrated — just clean up prefs
+      await prefs.remove('todays5_date');
+      await prefs.remove('todays5_ids');
+      await prefs.remove('todays5_completed');
+      await prefs.remove('todays5_worked_on');
+      return;
+    }
+
+    final savedIds = prefs.getStringList('todays5_ids') ?? [];
+    if (savedIds.isEmpty) {
+      // No task IDs to migrate — clean up
+      await prefs.remove('todays5_date');
+      await prefs.remove('todays5_ids');
+      await prefs.remove('todays5_completed');
+      await prefs.remove('todays5_worked_on');
+      return;
+    }
+
+    final completedIds = (prefs.getStringList('todays5_completed') ?? [])
+        .map(int.tryParse)
+        .whereType<int>()
+        .toSet();
+    final workedOnIds = (prefs.getStringList('todays5_worked_on') ?? [])
+        .map(int.tryParse)
+        .whereType<int>()
+        .toSet();
+    final taskIds = savedIds.map(int.tryParse).whereType<int>().toList();
+
+    // Write to DB
+    await saveTodaysFiveState(
+      date: savedDate,
+      taskIds: taskIds,
+      completedIds: completedIds,
+      workedOnIds: workedOnIds,
+    );
+
+    // Verify DB write succeeded before clearing prefs
+    final verify = await loadTodaysFiveState(savedDate);
+    if (verify != null && verify.taskIds.isNotEmpty) {
+      await prefs.remove('todays5_date');
+      await prefs.remove('todays5_ids');
+      await prefs.remove('todays5_completed');
+      await prefs.remove('todays5_worked_on');
+    }
   }
 
   /// Returns tasks completed or worked-on today, excluding the given IDs.

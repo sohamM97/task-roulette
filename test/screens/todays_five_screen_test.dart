@@ -10,6 +10,11 @@ import 'package:task_roulette/providers/task_provider.dart';
 import 'package:task_roulette/providers/theme_provider.dart';
 import 'package:task_roulette/screens/todays_five_screen.dart';
 
+String _todayKey() {
+  final now = DateTime.now();
+  return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+}
+
 void main() {
   late DatabaseHelper db;
   late TaskProvider provider;
@@ -234,6 +239,72 @@ void main() {
       expect(find.text('New set?'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Replace'), findsOneWidget);
+    });
+
+    testWidgets('restores state from DB on reload', (tester) async {
+      late int id1, id2;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Persisted 1'));
+        id2 = await db.insertTask(Task(name: 'Persisted 2'));
+        // Pre-save state to DB as if a previous session saved it
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2],
+          completedIds: {id1},
+          workedOnIds: {id1},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Both tasks should be visible
+      expect(find.text('Persisted 1'), findsOneWidget);
+      expect(find.text('Persisted 2'), findsOneWidget);
+      // Persisted 1 should show as done (check icon present)
+      expect(find.byIcon(Icons.check_circle), findsOneWidget);
+    });
+  });
+
+  group('SharedPreferences → DB migration', () {
+    testWidgets('migrates prefs data to DB and clears prefs', (tester) async {
+      late int id1, id2, id3;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Task A'));
+        id2 = await db.insertTask(Task(name: 'Task B'));
+        id3 = await db.insertTask(Task(name: 'Task C'));
+      });
+
+      final today = _todayKey();
+      // Simulate old SharedPreferences state
+      SharedPreferences.setMockInitialValues({
+        'todays5_date': today,
+        'todays5_ids': [id1.toString(), id2.toString(), id3.toString()],
+        'todays5_completed': [id1.toString()],
+        'todays5_worked_on': [id1.toString()],
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Tasks should be restored from migrated data
+      expect(find.text('Task A'), findsOneWidget);
+      expect(find.text('Task B'), findsOneWidget);
+      expect(find.text('Task C'), findsOneWidget);
+
+      // Verify DB has the data
+      await tester.runAsync(() async {
+        final dbState = await db.loadTodaysFiveState(today);
+        expect(dbState, isNotNull);
+        expect(dbState!.taskIds, containsAll([id1, id2, id3]));
+        expect(dbState.completedIds, contains(id1));
+        expect(dbState.workedOnIds, contains(id1));
+      });
+
+      // Verify SharedPreferences were cleared
+      await tester.runAsync(() async {
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString('todays5_date'), isNull);
+        expect(prefs.getStringList('todays5_ids'), isNull);
+      });
     });
   });
 }

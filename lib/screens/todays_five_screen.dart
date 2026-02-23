@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
@@ -48,79 +47,75 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
 
   Future<void> _loadTodaysTasks() async {
     final provider = context.read<TaskProvider>();
-    final prefs = await SharedPreferences.getInstance();
-    final savedDate = prefs.getString('todays5_date');
+    final db = DatabaseHelper();
     final today = _todayKey();
 
-    if (savedDate == today) {
-      // Restore saved IDs
-      final savedIds = prefs.getStringList('todays5_ids') ?? [];
-      final completedIds = prefs.getStringList('todays5_completed') ?? [];
-      final workedOnIds = prefs.getStringList('todays5_worked_on') ?? [];
-      if (savedIds.isNotEmpty) {
-        final allLeaves = await provider.getAllLeafTasks();
-        final leafIdSet = allLeaves.map((t) => t.id!).toSet();
-        final savedCompletedIds = completedIds.map(int.tryParse).whereType<int>().toSet();
-        final savedWorkedOnIds = workedOnIds.map(int.tryParse).whereType<int>().toSet();
-        final db = DatabaseHelper();
-        final idSet = savedIds.map(int.tryParse).whereType<int>().toSet();
-        final tasks = <Task>[];
-        for (final id in idSet) {
-          if (leafIdSet.contains(id)) {
-            // Still a leaf — restore from fresh data
-            final match = allLeaves.where((t) => t.id == id);
-            if (match.isNotEmpty) {
-              tasks.add(match.first);
-              // Detect external completion (e.g. worked-on from All Tasks)
-              if (match.first.isWorkedOnToday && !savedCompletedIds.contains(id)) {
-                savedCompletedIds.add(id);
-              }
+    // Migrate SharedPreferences → DB (idempotent, safe to call every time)
+    await db.migrateTodaysFiveFromPrefs();
+
+    // Try to restore from DB
+    final saved = await db.loadTodaysFiveState(today);
+    if (saved != null && saved.taskIds.isNotEmpty) {
+      final allLeaves = await provider.getAllLeafTasks();
+      final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+      final savedCompletedIds = Set<int>.from(saved.completedIds);
+      final savedWorkedOnIds = Set<int>.from(saved.workedOnIds);
+      final tasks = <Task>[];
+      for (final id in saved.taskIds) {
+        if (leafIdSet.contains(id)) {
+          // Still a leaf — restore from fresh data
+          final match = allLeaves.where((t) => t.id == id);
+          if (match.isNotEmpty) {
+            tasks.add(match.first);
+            // Detect external completion (e.g. worked-on from All Tasks)
+            if (match.first.isWorkedOnToday && !savedCompletedIds.contains(id)) {
+              savedCompletedIds.add(id);
             }
-          } else {
-            // No longer a leaf — check if completed/done externally
-            final fresh = await db.getTaskById(id);
-            if (fresh != null) {
-              if (savedCompletedIds.contains(id) || fresh.isCompleted || fresh.isWorkedOnToday) {
-                savedCompletedIds.add(id);
-                tasks.add(fresh);
-              }
+          }
+        } else {
+          // No longer a leaf — check if completed/done externally
+          final fresh = await db.getTaskById(id);
+          if (fresh != null) {
+            if (savedCompletedIds.contains(id) || fresh.isCompleted || fresh.isWorkedOnToday) {
+              savedCompletedIds.add(id);
+              tasks.add(fresh);
             }
           }
         }
-        // Backfill if some non-done tasks are no longer leaves
-        if (tasks.length < 5) {
-          final currentIds = tasks.map((t) => t.id).toSet();
-          final leafIds = allLeaves.map((t) => t.id!).toList();
-          final blockedIds = await provider.getBlockedChildIds(leafIds);
-          final eligible = allLeaves.where(
-            (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
-          ).toList();
-          final replacements = provider.pickWeightedN(
-            eligible, 5 - tasks.length,
-          );
-          tasks.addAll(replacements);
-        }
-        // Only keep completed/worked-on IDs for tasks still in the list
-        final taskIdSet = tasks.map((t) => t.id).toSet();
-        final validCompletedIds = savedCompletedIds
-            .where((id) => taskIdSet.contains(id))
-            .toSet();
-        final validWorkedOnIds = savedWorkedOnIds
-            .where((id) => taskIdSet.contains(id))
-            .toSet();
-        if (!mounted) return;
-        _todaysTasks = tasks;
-        await _loadOtherDoneToday();
-        await _loadTaskPaths();
-        if (!mounted) return;
-        setState(() {
-          _completedIds.addAll(validCompletedIds);
-          _workedOnIds.addAll(validWorkedOnIds);
-          _loading = false;
-        });
-        await _persist();
-        return;
       }
+      // Backfill if some non-done tasks are no longer leaves
+      if (tasks.length < 5) {
+        final currentIds = tasks.map((t) => t.id).toSet();
+        final leafIds = allLeaves.map((t) => t.id!).toList();
+        final blockedIds = await provider.getBlockedChildIds(leafIds);
+        final eligible = allLeaves.where(
+          (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
+        ).toList();
+        final replacements = provider.pickWeightedN(
+          eligible, 5 - tasks.length,
+        );
+        tasks.addAll(replacements);
+      }
+      // Only keep completed/worked-on IDs for tasks still in the list
+      final taskIdSet = tasks.map((t) => t.id).toSet();
+      final validCompletedIds = savedCompletedIds
+          .where((id) => taskIdSet.contains(id))
+          .toSet();
+      final validWorkedOnIds = savedWorkedOnIds
+          .where((id) => taskIdSet.contains(id))
+          .toSet();
+      if (!mounted) return;
+      _todaysTasks = tasks;
+      await _loadOtherDoneToday();
+      await _loadTaskPaths();
+      if (!mounted) return;
+      setState(() {
+        _completedIds.addAll(validCompletedIds);
+        _workedOnIds.addAll(validWorkedOnIds);
+        _loading = false;
+      });
+      await _persist();
+      return;
     }
 
     await _generateNewSet();
@@ -225,19 +220,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   Future<void> _persist() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('todays5_date', _todayKey());
-    await prefs.setStringList(
-      'todays5_ids',
-      _todaysTasks.map((t) => t.id!.toString()).toList(),
-    );
-    await prefs.setStringList(
-      'todays5_completed',
-      _completedIds.map((id) => id.toString()).toList(),
-    );
-    await prefs.setStringList(
-      'todays5_worked_on',
-      _workedOnIds.map((id) => id.toString()).toList(),
+    await DatabaseHelper().saveTodaysFiveState(
+      date: _todayKey(),
+      taskIds: _todaysTasks.map((t) => t.id!).toList(),
+      completedIds: _completedIds,
+      workedOnIds: _workedOnIds,
     );
   }
 

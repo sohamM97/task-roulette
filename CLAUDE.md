@@ -43,7 +43,7 @@ flutter test --coverage                       # with coverage (writes lcov.info)
 - Multi-parent DAG: a task can appear under multiple parents
 - Cycle prevention via recursive CTE query (`DatabaseHelper.hasPath()`)
 - Navigation uses a parent stack for back navigation + breadcrumb
-- **Database migrations:** Sequential `onUpgrade` in `DatabaseHelper` (currently at v12). New columns added via ALTER TABLE. Foreign keys enabled via `PRAGMA foreign_keys = ON`.
+- **Database migrations:** Sequential `onUpgrade` in `DatabaseHelper` (currently at v13). New columns added via ALTER TABLE. Foreign keys enabled via `PRAGMA foreign_keys = ON`.
 - **Cloud sync layer:** Optional Google Sign-In + Firestore via REST APIs (no Firebase SDK). `SyncService` orchestrates push/pull; mutations are queued in `sync_queue` table and debounced.
 - **Provider pattern:** `TaskProvider._refreshCurrentList()` reloads children of `_currentParent` from DB, concurrently fetches blocked-task info, sorts, then calls `notifyListeners()`. It does NOT refresh `_currentParent` itself — see gotcha below.
 
