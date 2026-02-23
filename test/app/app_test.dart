@@ -17,9 +17,10 @@ void main() {
     await tester.runAsync(() => DatabaseHelper().database);
     await tester.pumpWidget(const TaskRouletteApp());
     // Run async loading operations (SharedPreferences + DB queries)
-    await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 200)));
-    await tester.pump();
-    await tester.pump();
+    for (var i = 0; i < 5; i++) {
+      await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 50)));
+      await tester.pump();
+    }
     // Bottom nav should show "Today" and "All Tasks" tabs
     expect(find.text('Today'), findsOneWidget);
     expect(find.text('All Tasks'), findsOneWidget);

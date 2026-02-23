@@ -751,8 +751,57 @@ class TaskListScreenState extends State<TaskListScreen>
                       icon: const Icon(Icons.arrow_back),
                       onPressed: () => provider.navigateBack(),
                     ),
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(40),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      const ProfileIcon(),
+                      IconButton(
+                        icon: const Icon(Icons.search),
+                        onPressed: _searchTask,
+                        tooltip: 'Search',
+                      ),
+                      IconButton(
+                        icon: const Icon(archiveIcon),
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const CompletedTasksScreen(),
+                            ),
+                          );
+                        },
+                        tooltip: 'Archive',
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.account_tree_outlined),
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const DagViewScreen(),
+                            ),
+                          );
+                        },
+                        tooltip: 'Task graph',
+                      ),
+                      Consumer<ThemeProvider>(
+                        builder: (context, themeProvider, _) {
+                          return IconButton(
+                            icon: Icon(themeProvider.icon, size: 28),
+                            onPressed: themeProvider.toggle,
+                            tooltip: 'Toggle theme',
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
               actions: [
-                const ProfileIcon(),
                 if (!provider.isRoot && provider.currentParent?.hasUrl == true && provider.tasks.isNotEmpty)
                   IconButton(
                     icon: const Icon(Icons.link),
@@ -769,44 +818,6 @@ class TaskListScreenState extends State<TaskListScreen>
                     },
                     tooltip: 'Open link',
                   ),
-                IconButton(
-                  icon: const Icon(Icons.search),
-                  onPressed: _searchTask,
-                  tooltip: 'Search',
-                ),
-                IconButton(
-                  icon: const Icon(archiveIcon),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const CompletedTasksScreen(),
-                      ),
-                    );
-                  },
-                  tooltip: 'Archive',
-                ),
-                IconButton(
-                  icon: const Icon(Icons.account_tree_outlined),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const DagViewScreen(),
-                      ),
-                    );
-                  },
-                  tooltip: 'Task graph',
-                ),
-                Consumer<ThemeProvider>(
-                  builder: (context, themeProvider, _) {
-                    return IconButton(
-                      icon: Icon(themeProvider.icon, size: 28),
-                      onPressed: themeProvider.toggle,
-                      tooltip: 'Toggle theme',
-                    );
-                  },
-                ),
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert),
                   onSelected: (value) {
