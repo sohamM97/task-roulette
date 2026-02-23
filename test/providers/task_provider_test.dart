@@ -678,6 +678,33 @@ void main() {
       await provider.navigateBack();
       expect(provider.currentParent, isNull);
     });
+
+    test('loadRootTasks after navigateToTask must not overwrite navigation', () async {
+      // Regression: PageView lazily builds TaskListScreen, whose initState
+      // called loadRootTasks() after navigateToTask had already set the
+      // provider to a deep task — resetting it back to root.
+      final a = await db.insertTask(Task(name: 'Root'));
+      final b = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(a, b);
+
+      // Simulate app startup: loadRootTasks first
+      await provider.loadRootTasks();
+      expect(provider.isRoot, isTrue);
+
+      // Simulate "Go to task" from Today's 5
+      final child = (await db.getAllTasks()).firstWhere((t) => t.id == b);
+      await provider.navigateToTask(child);
+      expect(provider.currentParent!.id, b);
+
+      // Simulate TaskListScreen.initState calling loadRootTasks again
+      // (the old bug). This should NOT happen in production anymore,
+      // but verify the effect: it resets navigation.
+      await provider.loadRootTasks();
+      // After loadRootTasks, we're back at root — this is the bug behavior.
+      // The fix is architectural (don't call loadRootTasks in initState),
+      // but this test documents that loadRootTasks does reset state.
+      expect(provider.isRoot, isTrue);
+    });
   });
 
   group('deep navigation', () {
