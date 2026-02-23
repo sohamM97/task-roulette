@@ -1,0 +1,21 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/apk-dart-defines.sh",
+            "statusMessage": "Checking APK build for dart-define flags..."
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/block-flutter-run-android.sh",
+            "statusMessage": "Checking flutter run target device..."
+          }
+        ]
+      }
+    ]
+  }
+}

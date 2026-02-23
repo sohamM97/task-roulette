@@ -45,7 +45,7 @@ flutter test --coverage                       # with coverage (writes lcov.info)
 - Navigation uses a parent stack for back navigation + breadcrumb
 - **Database migrations:** Sequential `onUpgrade` in `DatabaseHelper` (currently at v12). New columns added via ALTER TABLE. Foreign keys enabled via `PRAGMA foreign_keys = ON`.
 - **Cloud sync layer:** Optional Google Sign-In + Firestore via REST APIs (no Firebase SDK). `SyncService` orchestrates push/pull; mutations are queued in `sync_queue` table and debounced.
-- **Provider pattern:** `TaskProvider._refreshCurrentList()` reloads children of `_currentParent` from DB, concurrently fetches started-descendant IDs and blocked-task info, sorts, then calls `notifyListeners()`. It does NOT refresh `_currentParent` itself — see gotcha below.
+- **Provider pattern:** `TaskProvider._refreshCurrentList()` reloads children of `_currentParent` from DB, concurrently fetches blocked-task info, sorts, then calls `notifyListeners()`. It does NOT refresh `_currentParent` itself — see gotcha below.
 
 ### Known Gotcha: Stale `_currentParent`
 
@@ -101,17 +101,8 @@ The goal of this app is **minimal cognitive load**. The user wants a quick place
 ## Mobile Debugging & Testing
 
 - When something doesn't work on the user's phone, **don't jump to fixes**. First ask the user if they want to troubleshoot using ADB, logcat, etc.
-- **NEVER** run `flutter run` on the phone when a release build is installed — the signature mismatch will uninstall the app and wipe user data. Instead, build a debug APK (`flutter build apk --debug`), back up the app data first, then sideload.
-- **Android APK builds require `--dart-define` flags** for Firebase/cloud sync to work. Firebase config comes from `google-services.json`; desktop OAuth secrets come from `.env`. Always build with:
-  ```bash
-  # Parse Firebase config from google-services.json
-  DART_DEFINES="--dart-define=FIREBASE_PROJECT_ID=$(jq -r '.project_info.project_id' android/app/google-services.json)"
-  DART_DEFINES="$DART_DEFINES --dart-define=FIREBASE_API_KEY=$(jq -r '.client[0].api_key[0].current_key' android/app/google-services.json)"
-  # Append desktop OAuth secrets from .env
-  while IFS='=' read -r key value; do [ -z "$key" ] || [[ "$key" == \#* ]] && continue; DART_DEFINES="$DART_DEFINES --dart-define=$key=$value"; done < .env
-  flutter build apk --debug $DART_DEFINES
-  ```
-  Without these flags, `isConfigured` returns `false` and the profile/sync icon won't appear.
+- **`flutter run` on Android is blocked by a hook** (`.claude/hooks/block-flutter-run-android.sh`) — signature mismatch with a release build will uninstall the app and wipe user data. Use `flutter build apk --debug` + sideload instead.
+- **`--dart-define` flags are auto-injected by a hook** (`.claude/hooks/apk-dart-defines.sh`) when running `flutter build apk`. The hook reads Firebase config from `google-services.json` and OAuth secrets from `.env`. No manual flag construction needed.
 - Before pushing a new version/tag, ask the user if they want to test with a debug build on their phone first.
 - When pushing a new version, remind the user to **export their data** from the phone app before installing the new version.
 
