@@ -734,77 +734,75 @@ class TaskListScreenState extends State<TaskListScreen>
         builder: (context, provider, _) {
           return Scaffold(
             appBar: AppBar(
+              titleSpacing: provider.isRoot ? 16 : 0,
               title: provider.isRoot
                   ? Text(
                       'Task Roulette',
                       style: const TextStyle(
                         fontFamily: 'Outfit',
-                        fontSize: 30,
-                        fontWeight: FontWeight.w400,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w500,
                         letterSpacing: -0.3,
                       ),
                     )
-                  : Text(provider.currentParent!.name),
+                  : Text(
+                      provider.currentParent!.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 18),
+                    ),
               leading: provider.isRoot
                   ? null
                   : IconButton(
                       icon: const Icon(Icons.arrow_back),
                       onPressed: () => provider.navigateBack(),
                     ),
-              bottom: PreferredSize(
-                preferredSize: const Size.fromHeight(40),
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      const ProfileIcon(),
-                      IconButton(
-                        icon: const Icon(Icons.search),
-                        onPressed: _searchTask,
-                        tooltip: 'Search',
-                      ),
-                      IconButton(
-                        icon: const Icon(archiveIcon),
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const CompletedTasksScreen(),
-                            ),
-                          );
-                        },
-                        tooltip: 'Archive',
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.account_tree_outlined),
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const DagViewScreen(),
-                            ),
-                          );
-                        },
-                        tooltip: 'Task graph',
-                      ),
-                      Consumer<ThemeProvider>(
-                        builder: (context, themeProvider, _) {
-                          return IconButton(
-                            icon: Icon(themeProvider.icon, size: 28),
-                            onPressed: themeProvider.toggle,
-                            tooltip: 'Toggle theme',
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
               actions: [
+                const ProfileIcon(),
+                IconButton(
+                  icon: const Icon(Icons.search, size: 22),
+                  onPressed: _searchTask,
+                  tooltip: 'Search',
+                  visualDensity: VisualDensity.compact,
+                ),
+                IconButton(
+                  icon: const Icon(archiveIcon, size: 22),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const CompletedTasksScreen(),
+                      ),
+                    );
+                  },
+                  tooltip: 'Archive',
+                  visualDensity: VisualDensity.compact,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.account_tree_outlined, size: 22),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const DagViewScreen(),
+                      ),
+                    );
+                  },
+                  tooltip: 'Task graph',
+                  visualDensity: VisualDensity.compact,
+                ),
+                Consumer<ThemeProvider>(
+                  builder: (context, themeProvider, _) {
+                    return IconButton(
+                      icon: Icon(themeProvider.icon, size: 22),
+                      onPressed: themeProvider.toggle,
+                      tooltip: 'Toggle theme',
+                      visualDensity: VisualDensity.compact,
+                    );
+                  },
+                ),
                 if (!provider.isRoot && provider.currentParent?.hasUrl == true && provider.tasks.isNotEmpty)
                   IconButton(
-                    icon: const Icon(Icons.link),
+                    icon: const Icon(Icons.link, size: 22),
                     onPressed: () {
                       final url = provider.currentParent!.url!;
                       if (!isAllowedUrl(url)) {
@@ -817,6 +815,7 @@ class TaskListScreenState extends State<TaskListScreen>
                       launchUrl(uri, mode: LaunchMode.externalApplication);
                     },
                     tooltip: 'Open link',
+                    visualDensity: VisualDensity.compact,
                   ),
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert),

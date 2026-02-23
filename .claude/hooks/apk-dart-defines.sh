@@ -42,8 +42,8 @@ if [ -z "$DART_DEFINES" ]; then
   exit 0
 fi
 
-# Inject dart-defines into the command
-new_command="$command $DART_DEFINES"
+# Inject dart-defines right after "flutter build apk", before other flags/pipes
+new_command=$(echo "$command" | sed "s|flutter build apk|flutter build apk $DART_DEFINES|")
 
 jq -n --arg cmd "$new_command" '{
   hookSpecificOutput: {
