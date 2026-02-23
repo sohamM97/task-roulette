@@ -100,6 +100,10 @@ class _AppShellState extends State<AppShell> {
     final syncService = context.read<SyncService>();
     final taskProvider = context.read<TaskProvider>();
 
+    // Load root tasks early so TaskListScreen doesn't need to call it
+    // in initState (which would race with navigateToTask from Today's 5).
+    taskProvider.loadRootTasks();
+
     // Wire up mutation callback so sync triggers on local changes
     taskProvider.onMutation = () => syncService.schedulePush();
 

@@ -48,7 +48,9 @@ class TaskListScreenState extends State<TaskListScreen>
   @override
   void initState() {
     super.initState();
-    context.read<TaskProvider>().loadRootTasks();
+    // Don't call loadRootTasks() here — it's called from AppShell.initState.
+    // Calling it here would overwrite navigateToTask() state when PageView
+    // lazily builds this screen for the first time.
     loadTodaysFiveIds();
   }
 
