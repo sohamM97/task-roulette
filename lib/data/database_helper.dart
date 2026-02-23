@@ -1365,4 +1365,26 @@ class DatabaseHelper {
     return _tasksFromMaps(maps);
   }
 
+  /// Returns tasks completed or worked-on today, excluding the given IDs.
+  Future<List<Task>> getTasksDoneToday({Set<int> excludeIds = const {}}) async {
+    final db = await database;
+    final now = DateTime.now();
+    final startOfDay = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
+    final endOfDay = startOfDay + 86400000; // +24h in ms
+
+    // Tasks where completed_at OR last_worked_at falls within today
+    final maps = await db.rawQuery('''
+      SELECT * FROM tasks
+      WHERE (
+        (completed_at >= ? AND completed_at < ?)
+        OR (last_worked_at >= ? AND last_worked_at < ?)
+      )
+      ORDER BY COALESCE(completed_at, last_worked_at) DESC
+    ''', [startOfDay, endOfDay, startOfDay, endOfDay]);
+
+    final tasks = _tasksFromMaps(maps);
+    if (excludeIds.isEmpty) return tasks;
+    return tasks.where((t) => !excludeIds.contains(t.id)).toList();
+  }
+
 }

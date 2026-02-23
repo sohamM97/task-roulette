@@ -30,6 +30,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   final Set<int> _autoStartedIds = {};
   /// Cached ancestor-path strings keyed by task ID (e.g. "Work > Project X").
   Map<int, String> _taskPaths = {};
+  /// Other tasks completed/worked-on today, outside the Today's 5 set.
+  List<Task> _otherDoneToday = [];
   bool _loading = true;
 
   @override
@@ -107,6 +109,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             .toSet();
         if (!mounted) return;
         _todaysTasks = tasks;
+        await _loadOtherDoneToday();
         await _loadTaskPaths();
         if (!mounted) return;
         setState(() {
@@ -185,6 +188,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     _workedOnIds.removeWhere((id) => !_completedIds.contains(id));
     if (!mounted) return;
     _todaysTasks = refreshed;
+    await _loadOtherDoneToday();
     await _loadTaskPaths();
     if (!mounted) return;
     setState(() {});
@@ -210,6 +214,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     final picked = provider.pickWeightedN(eligible, slotsToFill);
     if (!mounted) return;
     _todaysTasks = [...kept, ...picked];
+    await _loadOtherDoneToday();
     await _loadTaskPaths();
     if (!mounted) return;
     setState(() {
@@ -235,17 +240,27 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     );
   }
 
-  /// Fetches ancestor paths for all tasks in [_todaysTasks] and caches them.
+  /// Fetches ancestor paths for all tasks in [_todaysTasks] + [_otherDoneToday]
+  /// and caches them.
   Future<void> _loadTaskPaths() async {
     final db = DatabaseHelper();
     final paths = <int, String>{};
-    for (final task in _todaysTasks) {
+    final allTasks = [..._todaysTasks, ..._otherDoneToday];
+    for (final task in allTasks) {
       final ancestors = await db.getAncestorPath(task.id!);
       if (ancestors.isNotEmpty) {
         paths[task.id!] = ancestors.map((t) => t.name).join(' › ');
       }
     }
     _taskPaths = paths;
+  }
+
+  /// Loads tasks completed/worked-on today that aren't in Today's 5.
+  Future<void> _loadOtherDoneToday() async {
+    final todaysFiveIds = _todaysTasks.map((t) => t.id!).toSet();
+    _otherDoneToday = await DatabaseHelper().getTasksDoneToday(
+      excludeIds: todaysFiveIds,
+    );
   }
 
   /// Truncates a hierarchy path to keep the last 2 segments when there
@@ -277,6 +292,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     if (workedOn) _workedOnIds.add(taskId);
     if (autoStarted) _autoStartedIds.add(taskId);
     await _refreshTaskSnapshot(taskId);
+    await _loadOtherDoneToday();
     if (!mounted) return;
     setState(() {});
     await _persist();
@@ -288,6 +304,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     if (workedOn) _workedOnIds.remove(taskId);
     if (autoStarted) _autoStartedIds.remove(taskId);
     await _refreshTaskSnapshot(taskId);
+    await _loadOtherDoneToday();
     if (!mounted) return;
     setState(() {});
     await _persist();
@@ -700,15 +717,34 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            // Task list
+            // Task list + other done today
             Expanded(
-              child: ListView.builder(
-                itemCount: _todaysTasks.length,
-                itemBuilder: (context, index) {
-                  final task = _todaysTasks[index];
-                  final isDone = _completedIds.contains(task.id);
-                  return _buildTaskCard(context, task, index, isDone);
-                },
+              child: ListView(
+                children: [
+                  ..._todaysTasks.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final task = entry.value;
+                    final isDone = _completedIds.contains(task.id);
+                    return _buildTaskCard(context, task, index, isDone);
+                  }),
+                  if (_otherDoneToday.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      'Also done today',
+                      style: textTheme.titleSmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: _otherDoneToday.map((task) =>
+                        _buildOtherDoneChip(context, task),
+                      ).toList(),
+                    ),
+                  ],
+                ],
               ),
             ),
           ],
@@ -822,6 +858,34 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
               ? () => _handleUncomplete(task)
               : () => _handleTaskDone(task),
         ),
+      ),
+    );
+  }
+
+  Widget _buildOtherDoneChip(BuildContext context, Task task) {
+    final doneForGood = task.isCompleted;
+    final chipColor = doneForGood ? Colors.green : Colors.lightGreen;
+    final icon = doneForGood ? Icons.done_all : Icons.check;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: chipColor.withAlpha(40),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: chipColor.withAlpha(80)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: chipColor),
+          const SizedBox(width: 4),
+          Text(
+            task.name,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: chipColor,
+            ),
+          ),
+        ],
       ),
     );
   }
