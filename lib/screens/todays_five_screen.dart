@@ -32,6 +32,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   Map<int, String> _taskPaths = {};
   /// Other tasks completed/worked-on today, outside the Today's 5 set.
   List<Task> _otherDoneToday = [];
+  bool _otherDoneExpanded = false;
   bool _loading = true;
 
   @override
@@ -675,6 +676,20 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         ),
         toolbarHeight: 72,
         actions: [
+          const ProfileIcon(),
+          IconButton(
+            icon: const Icon(archiveIcon),
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const CompletedTasksScreen(),
+                ),
+              );
+              if (mounted) await refreshSnapshots();
+            },
+            tooltip: 'Archive',
+          ),
           Consumer<ThemeProvider>(
             builder: (context, themeProvider, _) {
               return IconButton(
@@ -684,7 +699,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
               );
             },
           ),
-          const ProfileIcon(),
           if (completedCount < totalCount)
             IconButton(
               icon: const Icon(Icons.refresh),
@@ -708,12 +722,26 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
               ),
             ),
             const SizedBox(height: 4),
-            Text(
-              completedCount == 0
-                  ? 'Completing even 1 is a win!'
-                  : '$completedCount of $totalCount done',
-              style: textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
+            Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: completedCount == 0
+                        ? 'Completing even 1 is a win!'
+                        : '$completedCount of $totalCount done',
+                  ),
+                  if (_otherDoneToday.isNotEmpty)
+                    TextSpan(
+                      text: '  +${_otherDoneToday.length} ${_otherDoneToday.length == 1 ? 'other' : 'others'}',
+                      style: TextStyle(
+                        color: colorScheme.primary.withAlpha(180),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                ],
+                style: textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -736,13 +764,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: _otherDoneToday.map((task) =>
-                        _buildOtherDoneChip(context, task),
-                      ).toList(),
-                    ),
+                    _buildOtherDoneSection(context),
                   ],
                 ],
               ),
@@ -859,6 +881,120 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
               : () => _handleTaskDone(task),
         ),
       ),
+    );
+  }
+
+  Widget _buildOtherDoneSection(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    if (_otherDoneExpanded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: _otherDoneToday.map((task) =>
+              _buildOtherDoneChip(context, task),
+            ).toList(),
+          ),
+          const SizedBox(height: 4),
+          GestureDetector(
+            onTap: () => setState(() => _otherDoneExpanded = false),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.expand_less, size: 16, color: colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 2),
+                  Text(
+                    'Show less',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Collapsed: show chips that fit in one row, plus a "+N more" chip
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth;
+        const spacing = 6.0;
+        var usedWidth = 0.0;
+        var visibleCount = 0;
+
+        // Measure chips to find how many fit in one row
+        for (final task in _otherDoneToday) {
+          // Estimate chip width: icon(14) + gap(4) + text + padding(20) + border
+          final textPainter = TextPainter(
+            text: TextSpan(
+              text: task.name,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            maxLines: 1,
+            textDirection: TextDirection.ltr,
+          )..layout();
+          final chipWidth = 14 + 4 + textPainter.width + 20 + 2; // icon + gap + text + padding + border
+          final neededWidth = usedWidth > 0 ? chipWidth + spacing : chipWidth;
+
+          // Reserve space for "+N more" chip if not all will fit
+          const moreChipWidth = 80.0;
+          final isLast = visibleCount == _otherDoneToday.length - 1;
+          final reserveForMore = isLast ? 0.0 : moreChipWidth + spacing;
+
+          if (usedWidth + neededWidth + reserveForMore <= maxWidth) {
+            usedWidth += neededWidth;
+            visibleCount++;
+          } else {
+            break;
+          }
+        }
+
+        // Show at least 1 chip
+        if (visibleCount == 0) visibleCount = 1;
+        final remaining = _otherDoneToday.length - visibleCount;
+
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            ..._otherDoneToday.take(visibleCount).map((task) =>
+              _buildOtherDoneChip(context, task),
+            ),
+            if (remaining > 0)
+              GestureDetector(
+                onTap: () => setState(() => _otherDoneExpanded = true),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerHighest.withAlpha(80),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: colorScheme.outlineVariant.withAlpha(80)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.expand_more, size: 14, color: colorScheme.onSurfaceVariant),
+                      const SizedBox(width: 2),
+                      Text(
+                        '+$remaining more',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
