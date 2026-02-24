@@ -62,9 +62,6 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 - `lib/services/auth_service.dart` — Google Sign-In + Firebase Auth REST API
 - `docs/DESIGN_PSYCHOLOGY.md` — ADHD-friendly design rationale and weighted random selection algorithm
 - `docs/PERFORMANCE.md` — database optimizations and performance considerations
-- `docs/CODE_REVIEW.md` — tracked code review findings and fixes
-- `docs/SECURITY_REVIEW.md` — tracked security review findings and fixes
-
 ### Test Setup
 
 Tests use `sqflite_common_ffi` with `inMemoryDatabasePath` and reset DB in `setUp()` for isolation. No mocking of the DB layer — tests run real SQL against in-memory SQLite.
