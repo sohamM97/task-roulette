@@ -1784,6 +1784,16 @@ void main() {
   });
 
   group('Task creation', () {
+    test('addTask returns the new task ID', () async {
+      await provider.loadRootTasks();
+
+      final id = await provider.addTask('Test');
+
+      expect(id, isPositive);
+      expect(provider.tasks, hasLength(1));
+      expect(provider.tasks.first.id, id);
+    });
+
     test('addTask creates task at root when no parent', () async {
       await provider.loadRootTasks();
       expect(provider.tasks, isEmpty);

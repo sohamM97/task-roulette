@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../data/database_helper.dart';
+import '../data/todays_five_pin_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
@@ -77,20 +78,33 @@ class TaskListScreenState extends State<TaskListScreen>
     final db = DatabaseHelper();
     final saved = await db.loadTodaysFiveState(today);
     if (saved == null) return;
-    final pinnedIds = Set<int>.from(saved.pinnedIds);
-    if (pinnedIds.contains(taskId)) {
-      pinnedIds.remove(taskId);
-    } else {
-      pinnedIds.add(taskId);
+
+    final result = TodaysFivePinHelper.togglePin(saved, taskId);
+    if (result == null) {
+      // Blocked — max pins reached
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
+        );
+      }
+      return;
     }
+
     await db.saveTodaysFiveState(
       date: today,
-      taskIds: saved.taskIds,
+      taskIds: result.taskIds,
       completedIds: saved.completedIds,
       workedOnIds: saved.workedOnIds,
-      pinnedIds: pinnedIds,
+      pinnedIds: result.pinnedIds,
     );
-    if (mounted) setState(() { _todays5PinnedIds = pinnedIds; });
+    if (mounted) {
+      setState(() {
+        _todays5TaskIds = result.taskIds.toSet();
+        _todays5PinnedIds = result.pinnedIds;
+        _todaysFiveIds = result.taskIds.toSet();
+      });
+    }
   }
 
   /// Returns true if the user confirmed (or task isn't pinned), false to abort.
@@ -129,7 +143,8 @@ class TaskListScreenState extends State<TaskListScreen>
   Future<void> _addTask() async {
     if (!await _warnIfPinned()) return;
     if (!mounted) return;
-    final showPin = (_todays5TaskIds?.isNotEmpty ?? false);
+    final showPin = (_todays5TaskIds?.isNotEmpty ?? false) &&
+        (_todays5PinnedIds?.length ?? 0) < maxPins;
     final result = await showDialog<AddTaskResult>(
       context: context,
       builder: (_) => AddTaskDialog(showPinOption: showPin),
@@ -154,41 +169,20 @@ class TaskListScreenState extends State<TaskListScreen>
     final saved = await db.loadTodaysFiveState(today);
     if (saved == null) return;
 
-    final taskIds = List<int>.from(saved.taskIds);
-    final completedIds = saved.completedIds;
-    final pinnedIds = Set<int>.from(saved.pinnedIds);
+    final result = TodaysFivePinHelper.pinNewTask(saved, taskId);
+    if (result == null) return;
 
-    // Find an unpinned, undone slot to replace
-    int? replaceIndex;
-    for (int i = taskIds.length - 1; i >= 0; i--) {
-      final id = taskIds[i];
-      if (!completedIds.contains(id) && !pinnedIds.contains(id)) {
-        replaceIndex = i;
-        break;
-      }
-    }
-
-    if (replaceIndex != null) {
-      taskIds[replaceIndex] = taskId;
-    } else if (taskIds.length < 5) {
-      taskIds.add(taskId);
-    } else {
-      // All slots are done or pinned — can't add
-      return;
-    }
-
-    pinnedIds.add(taskId);
     await db.saveTodaysFiveState(
       date: today,
-      taskIds: taskIds,
-      completedIds: completedIds,
+      taskIds: result.taskIds,
+      completedIds: saved.completedIds,
       workedOnIds: saved.workedOnIds,
-      pinnedIds: pinnedIds,
+      pinnedIds: result.pinnedIds,
     );
     if (mounted) {
       setState(() {
-        _todays5TaskIds = taskIds.toSet();
-        _todays5PinnedIds = pinnedIds;
+        _todays5TaskIds = result.taskIds.toSet();
+        _todays5PinnedIds = result.pinnedIds;
       });
     }
   }
@@ -647,7 +641,7 @@ class TaskListScreenState extends State<TaskListScreen>
           },
           parentNames: parentNames,
           isPinnedInTodays5: _todays5PinnedIds?.contains(task.id) ?? false,
-          onTogglePin: (_todays5TaskIds?.contains(task.id) ?? false)
+          onTogglePin: (_todays5TaskIds?.isNotEmpty ?? false)
               ? () => _togglePinInTodays5(task.id!)
               : null,
         );

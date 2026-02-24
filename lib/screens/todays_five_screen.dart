@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/database_helper.dart';
+import '../data/todays_five_pin_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
@@ -736,8 +737,22 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     if (picked == null || !mounted) return;
 
     final oldTask = _todaysTasks[index];
-    _pinnedIds.remove(oldTask.id);
-    _pinnedIds.add(picked.id!);
+    final wasPinned = _pinnedIds.remove(oldTask.id);
+    // Always pin the picked task (we just freed a slot if old was pinned)
+    final newPins = TodaysFivePinHelper.togglePinInPlace(_pinnedIds, picked.id!);
+    if (newPins == null) {
+      // Restore old pin if we can't fit the new one
+      if (wasPinned) _pinnedIds.add(oldTask.id!);
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
+        );
+      }
+      return;
+    }
+    _pinnedIds.clear();
+    _pinnedIds.addAll(newPins);
     setState(() {
       _todaysTasks[index] = picked;
     });
@@ -1087,14 +1102,21 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                 PinButton(
                   isPinned: _pinnedIds.contains(task.id),
                   onToggle: () {
-                    setState(() {
-                      if (_pinnedIds.contains(task.id)) {
-                        _pinnedIds.remove(task.id);
-                      } else {
-                        _pinnedIds.add(task.id!);
-                      }
-                    });
-                    _persist();
+                    final result = TodaysFivePinHelper.togglePinInPlace(
+                      _pinnedIds, task.id!,
+                    );
+                    if (result == null) {
+                      ScaffoldMessenger.of(context).clearSnackBars();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
+                      );
+                    } else {
+                      setState(() {
+                        _pinnedIds.clear();
+                        _pinnedIds.addAll(result);
+                      });
+                      _persist();
+                    }
                   },
                 ),
               if (!isDone)
