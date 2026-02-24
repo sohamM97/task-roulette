@@ -35,6 +35,8 @@ class PinButton extends StatelessWidget {
   final double size;
   /// When true, unpinned state uses a muted color to blend with surrounding icons.
   final bool mutedWhenUnpinned;
+  /// When true and not already pinned, show greyed-out disabled state.
+  final bool atMaxPins;
 
   const PinButton({
     super.key,
@@ -42,16 +44,20 @@ class PinButton extends StatelessWidget {
     required this.onToggle,
     this.size = 18,
     this.mutedWhenUnpinned = false,
+    this.atMaxPins = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final color = isPinned
-        ? colorScheme.tertiary
-        : mutedWhenUnpinned
-            ? colorScheme.tertiary.withAlpha(170)
-            : colorScheme.tertiary;
+    final disabled = atMaxPins && !isPinned;
+    final color = disabled
+        ? colorScheme.onSurfaceVariant.withAlpha(100)
+        : isPinned
+            ? colorScheme.tertiary
+            : mutedWhenUnpinned
+                ? colorScheme.tertiary.withAlpha(170)
+                : colorScheme.tertiary;
     return IconButton(
       icon: Icon(
         isPinned ? Icons.push_pin : Icons.push_pin_outlined,
@@ -59,7 +65,7 @@ class PinButton extends StatelessWidget {
         color: color,
       ),
       onPressed: onToggle,
-      tooltip: isPinned ? 'Unpin' : 'Pin',
+      tooltip: disabled ? 'Max pins reached' : isPinned ? 'Unpin' : 'Pin',
       visualDensity: VisualDensity.compact,
     );
   }

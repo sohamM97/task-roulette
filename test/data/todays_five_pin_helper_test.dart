@@ -412,6 +412,44 @@ void main() {
     });
   });
 
+  group('bottom sheet pin/unpin gate', () {
+    // The Today's 5 bottom sheet shows "Pin" when pinnedIds.length < maxPins
+    // and "Unpin" when the task is already pinned (regardless of count).
+    // These tests validate the gate logic.
+
+    test('pin option available when under maxPins', () {
+      final pinnedIds = {1, 2};
+      final taskId = 3;
+      // Gate: !pinnedIds.contains(taskId) && pinnedIds.length < maxPins
+      expect(pinnedIds.contains(taskId), isFalse);
+      expect(pinnedIds.length < maxPins, isTrue);
+      // togglePinInPlace should succeed
+      final result = TodaysFivePinHelper.togglePinInPlace(pinnedIds, taskId);
+      expect(result, isNotNull);
+      expect(result, contains(taskId));
+    });
+
+    test('pin option hidden when at maxPins', () {
+      final pinnedIds = {1, 2, 3, 4, 5};
+      final taskId = 6;
+      // Gate: pinnedIds.length < maxPins → false, so "Pin" is not shown
+      expect(pinnedIds.length < maxPins, isFalse);
+      // togglePinInPlace would also block
+      expect(TodaysFivePinHelper.togglePinInPlace(pinnedIds, taskId), isNull);
+    });
+
+    test('unpin option always shown for pinned task even at maxPins', () {
+      final pinnedIds = {1, 2, 3, 4, 5};
+      final taskId = 3;
+      // Gate: pinnedIds.contains(taskId) → true, so "Unpin" is shown
+      expect(pinnedIds.contains(taskId), isTrue);
+      // togglePinInPlace should succeed (unpin)
+      final result = TodaysFivePinHelper.togglePinInPlace(pinnedIds, taskId);
+      expect(result, isNotNull);
+      expect(result, isNot(contains(taskId)));
+    });
+  });
+
   group('constants', () {
     test('maxPins is 5', () {
       expect(maxPins, 5);

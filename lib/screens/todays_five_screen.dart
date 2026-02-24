@@ -393,9 +393,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await _persistAndTrim();
   }
 
-  /// Shows a bottom sheet: "In progress" / "Done today" / "Done for good!"
+  /// Shows a bottom sheet: "In progress" / "Done today" / "Done for good!" / Pin/Unpin
   void _showTaskOptions(Task task) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isPinned = _pinnedIds.contains(task.id);
     showModalBottomSheet(
       context: context,
       builder: (ctx) => SafeArea(
@@ -442,11 +443,49 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                     _stopWorking(task);
                   },
                 ),
+              if (isPinned)
+                ListTile(
+                  leading: Icon(Icons.push_pin_outlined, color: colorScheme.onSurfaceVariant),
+                  title: const Text('Unpin'),
+                  subtitle: const Text('Remove from must do'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _togglePinFromSheet(task);
+                  },
+                )
+              else if (_pinnedIds.length < maxPins)
+                ListTile(
+                  leading: Icon(Icons.push_pin, color: colorScheme.tertiary),
+                  title: const Text('Pin'),
+                  subtitle: const Text('Mark as must do'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _togglePinFromSheet(task);
+                  },
+                ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  void _togglePinFromSheet(Task task) {
+    final result = TodaysFivePinHelper.togglePinInPlace(
+      _pinnedIds, task.id!,
+    );
+    if (result == null) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
+      );
+    } else {
+      setState(() {
+        _pinnedIds.clear();
+        _pinnedIds.addAll(result);
+      });
+      _persistAndTrim();
+    }
   }
 
   Future<void> _stopWorking(Task task) async {

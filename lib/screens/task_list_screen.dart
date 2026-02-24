@@ -641,6 +641,7 @@ class TaskListScreenState extends State<TaskListScreen>
           },
           parentNames: parentNames,
           isPinnedInTodays5: _todays5PinnedIds?.contains(task.id) ?? false,
+          atMaxPins: (_todays5PinnedIds?.length ?? 0) >= maxPins,
           onTogglePin: (_todays5TaskIds?.isNotEmpty ?? false)
               ? () => _togglePinInTodays5(task.id!)
               : null,

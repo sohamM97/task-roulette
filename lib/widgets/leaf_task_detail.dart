@@ -19,6 +19,7 @@ class LeafTaskDetail extends StatelessWidget {
   final VoidCallback? onAddDependency;
   final List<String> parentNames;
   final bool isPinnedInTodays5;
+  final bool atMaxPins;
   final VoidCallback? onTogglePin;
 
   const LeafTaskDetail({
@@ -38,6 +39,7 @@ class LeafTaskDetail extends StatelessWidget {
     this.onAddDependency,
     this.parentNames = const [],
     this.isPinnedInTodays5 = false,
+    this.atMaxPins = false,
     this.onTogglePin,
   });
 
@@ -251,6 +253,7 @@ class LeafTaskDetail extends StatelessWidget {
                     onToggle: onTogglePin!,
                     size: 20,
                     mutedWhenUnpinned: true,
+                    atMaxPins: atMaxPins,
                   ),
                 IconButton(
                   onPressed: () => onUpdatePriority(isHighPriority ? 0 : 1),
