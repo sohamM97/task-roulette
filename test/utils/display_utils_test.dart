@@ -206,7 +206,7 @@ void main() {
 
       final icon = tester.widget<Icon>(find.byType(Icon));
       // The color should have alpha 170 (muted)
-      expect(icon.color!.alpha, 170);
+      expect((icon.color!.a * 255.0).round(), 170);
     });
   });
 }

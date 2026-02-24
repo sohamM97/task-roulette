@@ -77,7 +77,7 @@ void main() {
       final icon = tester.widget<Icon>(find.byIcon(Icons.push_pin_outlined));
       // The disabled color uses onSurfaceVariant.withAlpha(100), which will
       // have a low alpha value compared to the normal tertiary color.
-      expect(icon.color!.alpha, 100);
+      expect((icon.color!.a * 255.0).round(), 100);
     });
 
     testWidgets('non-disabled unpinned state uses full tertiary color '
@@ -89,7 +89,7 @@ void main() {
 
       final icon = tester.widget<Icon>(find.byIcon(Icons.push_pin_outlined));
       // When not disabled and not muted, color should be tertiary with full alpha (255)
-      expect(icon.color!.alpha, 255);
+      expect((icon.color!.a * 255.0).round(), 255);
     });
 
     testWidgets('mutedWhenUnpinned uses reduced alpha for unpinned state',
@@ -102,7 +102,7 @@ void main() {
 
       final icon = tester.widget<Icon>(find.byIcon(Icons.push_pin_outlined));
       // mutedWhenUnpinned should use tertiary.withAlpha(170)
-      expect(icon.color!.alpha, 170);
+      expect((icon.color!.a * 255.0).round(), 170);
     });
 
     testWidgets('onToggle callback is invoked when tapped', (tester) async {
