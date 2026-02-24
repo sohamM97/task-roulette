@@ -37,11 +37,29 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   /// Tracks manually pinned tasks — protected from refresh until explicitly swapped.
   final Set<int> _pinnedIds = {};
   bool _loading = true;
+  TaskProvider? _provider;
 
   @override
   void initState() {
     super.initState();
     _loadTodaysTasks();
+    // Listen for external changes (e.g. undo "Done for good" from All Tasks)
+    // so _otherDoneToday stays in sync without requiring a tab switch.
+    _provider = context.read<TaskProvider>();
+    _provider!.addListener(_onProviderChanged);
+  }
+
+  @override
+  void dispose() {
+    _provider?.removeListener(_onProviderChanged);
+    super.dispose();
+  }
+
+  void _onProviderChanged() {
+    if (!mounted || _loading) return;
+    _loadOtherDoneToday().then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   String _todayKey() {
@@ -278,6 +296,21 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await _persist();
   }
 
+  /// Trims excess unpinned undone tasks and persists. Calls setState if
+  /// the list actually shrank so the UI updates immediately.
+  Future<void> _persistAndTrim() async {
+    final currentIds = _todaysTasks.map((t) => t.id!).toList();
+    final trimmedIds = TodaysFivePinHelper.trimExcess(
+      currentIds, _completedIds, _pinnedIds,
+    );
+    if (trimmedIds.length < currentIds.length) {
+      final trimmedSet = trimmedIds.toSet();
+      _todaysTasks.removeWhere((t) => !trimmedSet.contains(t.id));
+      if (mounted) setState(() {});
+    }
+    await _persist();
+  }
+
   Future<void> _persist() async {
     await DatabaseHelper().saveTodaysFiveState(
       date: _todayKey(),
@@ -347,6 +380,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   /// Unmarks a task as done: updates sets, refreshes snapshot, setState, persist.
+  /// Also trims excess tasks — uncompleting may leave unpinned undone tasks
+  /// beyond slot 5 that should be removed.
   Future<void> _unmarkDone(int taskId, {required bool workedOn, required bool autoStarted}) async {
     _completedIds.remove(taskId);
     if (workedOn) _workedOnIds.remove(taskId);
@@ -355,7 +390,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await _loadOtherDoneToday();
     if (!mounted) return;
     setState(() {});
-    await _persist();
+    await _persistAndTrim();
   }
 
   /// Shows a bottom sheet: "In progress" / "Done today" / "Done for good!"
@@ -563,13 +598,16 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await _replaceIfNoLongerLeaf(task);
     if (!mounted) return;
 
+    final wasRemoved = !_todaysTasks.any((t) => t.id == task.id);
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('"${task.name}" restored.'),
+        content: Text(wasRemoved
+            ? '"${task.name}" restored and removed from Today\'s 5 (all slots are pinned).'
+            : '"${task.name}" restored.'),
         showCloseIcon: true,
         persist: false,
-        duration: const Duration(seconds: 3),
+        duration: Duration(seconds: wasRemoved ? 5 : 3),
       ),
     );
   }
@@ -1111,16 +1149,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                         const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
                       );
                     } else {
-                      final wasUnpin = _pinnedIds.contains(task.id) && !result.contains(task.id);
                       setState(() {
                         _pinnedIds.clear();
                         _pinnedIds.addAll(result);
-                        // Shrink list back toward 5 if unpinning an undone task
-                        if (wasUnpin && _todaysTasks.length > 5 && !isDone) {
-                          _todaysTasks.removeWhere((t) => t.id == task.id);
-                        }
                       });
-                      _persist();
+                      _persistAndTrim();
                     }
                   },
                 ),

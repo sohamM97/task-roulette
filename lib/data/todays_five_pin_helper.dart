@@ -37,12 +37,10 @@ class TodaysFivePinHelper {
     final pinnedIds = Set<int>.from(saved.pinnedIds);
 
     if (pinnedIds.contains(taskId)) {
-      // Unpin — and shrink list back toward 5 if this task was appended
+      // Unpin — then trim excess unpinned undone tasks
       pinnedIds.remove(taskId);
-      if (taskIds.length > 5 && !saved.completedIds.contains(taskId)) {
-        taskIds.remove(taskId);
-      }
-      return PinResult(taskIds: taskIds, pinnedIds: pinnedIds);
+      final trimmed = trimExcess(taskIds, saved.completedIds, pinnedIds);
+      return PinResult(taskIds: trimmed, pinnedIds: pinnedIds);
     }
 
     // Pin — enforce max pins
@@ -109,6 +107,30 @@ class TodaysFivePinHelper {
     if (pinnedIds.length >= maxPins) return null;
     pinnedIds.add(taskId);
     return pinnedIds;
+  }
+
+  /// Removes unpinned undone tasks from the end of the list until the list
+  /// has at most 5 items (or only pinned/completed tasks remain).
+  ///
+  /// Call this after any mutation that might leave excess tasks (e.g.
+  /// uncompleting a task, refreshing snapshots).
+  ///
+  /// Returns the trimmed list, or the original if no trimming was needed.
+  static List<int> trimExcess(
+    List<int> taskIds,
+    Set<int> completedIds,
+    Set<int> pinnedIds,
+  ) {
+    if (taskIds.length <= 5) return taskIds;
+    final result = List<int>.from(taskIds);
+    // Remove from the end first — those are the most recently appended
+    for (int i = result.length - 1; i >= 0 && result.length > 5; i--) {
+      final id = result[i];
+      if (!completedIds.contains(id) && !pinnedIds.contains(id)) {
+        result.removeAt(i);
+      }
+    }
+    return result;
   }
 
   /// Find the last unpinned, undone slot index (searching from end).

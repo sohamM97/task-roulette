@@ -166,16 +166,17 @@ void main() {
     });
 
     test('unpin does not remove completed task even when over 5', () {
+      // 6 tasks: 5 pinned, task 6 is both pinned and completed
       final state = _state(
         taskIds: [1, 2, 3, 4, 5, 6],
-        pinnedIds: {6},
+        pinnedIds: {1, 2, 3, 4, 6},
         completedIds: {6},
       );
       final result = TodaysFivePinHelper.togglePin(state, 6);
       expect(result, isNotNull);
-      // 6 is completed → kept despite unpin
+      // 6 is completed → kept despite unpin; 5 is unpinned undone → trimmed
       expect(result!.taskIds, contains(6));
-      expect(result.taskIds.length, 6);
+      expect(result.taskIds.length, 5);
     });
 
     test('unpinning all shrinks list back to 5', () {
@@ -207,6 +208,71 @@ void main() {
       result = TodaysFivePinHelper.togglePin(next, 6)!;
       expect(result.taskIds.length, 5);
       expect(result.pinnedIds, isEmpty);
+    });
+  });
+
+  group('trimExcess', () {
+    test('no-op when list has 5 or fewer items', () {
+      final result = TodaysFivePinHelper.trimExcess(
+        [1, 2, 3, 4, 5], {}, {},
+      );
+      expect(result, [1, 2, 3, 4, 5]);
+    });
+
+    test('removes unpinned undone tasks from end when over 5', () {
+      final result = TodaysFivePinHelper.trimExcess(
+        [1, 2, 3, 4, 5, 6, 7], {}, {1, 2, 3, 4, 5},
+      );
+      // 6 and 7 are unpinned and undone → removed
+      expect(result, [1, 2, 3, 4, 5]);
+    });
+
+    test('keeps completed tasks even when over 5', () {
+      final result = TodaysFivePinHelper.trimExcess(
+        [1, 2, 3, 4, 5, 6, 7], {6, 7}, {1, 2, 3, 4, 5},
+      );
+      // 6 and 7 are completed → kept
+      expect(result.length, 7);
+    });
+
+    test('keeps pinned tasks even when over 5', () {
+      final result = TodaysFivePinHelper.trimExcess(
+        [1, 2, 3, 4, 5, 6, 7], {}, {1, 2, 3, 4, 5, 6, 7},
+      );
+      expect(result.length, 7);
+    });
+
+    test('trims only enough to reach 5', () {
+      // 8 tasks, 5 pinned, 3 unpinned undone → trim 3
+      final result = TodaysFivePinHelper.trimExcess(
+        [1, 2, 3, 4, 5, 6, 7, 8], {}, {1, 2, 3, 4, 5},
+      );
+      expect(result, [1, 2, 3, 4, 5]);
+    });
+
+    test('mixed: keeps pinned+completed, trims unpinned undone', () {
+      // 7 tasks: 3 pinned, 1 completed, 3 unpinned undone
+      final result = TodaysFivePinHelper.trimExcess(
+        [1, 2, 3, 4, 5, 6, 7], {4}, {1, 2, 3},
+      );
+      // Should keep 1,2,3 (pinned) + 4 (completed) = 4 protected
+      // Trim 5,6,7 from end → but only until length is 5
+      // So remove 7, then 6 → length 5
+      expect(result.length, 5);
+      expect(result, contains(1));
+      expect(result, contains(2));
+      expect(result, contains(3));
+      expect(result, contains(4));
+    });
+
+    test('after uncompleting pinned tasks, excess unpinned are trimmed', () {
+      // Simulates the user's bug: 5 pinned, 2 done, list has 7
+      // After uncompleting 2, those 2 unpinned non-done extras should go
+      // The 5 pinned remain, the 2 extras (unpinned, now undone) get trimmed
+      final result = TodaysFivePinHelper.trimExcess(
+        [1, 2, 3, 4, 5, 6, 7], {}, {1, 2, 3, 4, 5},
+      );
+      expect(result, [1, 2, 3, 4, 5]);
     });
   });
 

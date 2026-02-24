@@ -1054,6 +1054,7 @@ class TaskListScreenState extends State<TaskListScreen>
                             isBlocked: provider.blockedTaskIds.contains(task.id),
                             blockedByName: provider.blockedByNames[task.id],
                             isInTodaysFive: _todaysFiveIds.contains(task.id),
+                            isPinnedInTodaysFive: _todays5PinnedIds?.contains(task.id) ?? false,
                             parentNames: (provider.parentNamesMap[task.id] ?? [])
                                 .where((name) => name != provider.currentParent?.name)
                                 .toList(),
