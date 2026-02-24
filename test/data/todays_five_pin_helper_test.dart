@@ -289,6 +289,24 @@ void main() {
       expect(result.pinnedIds, {1, 99});
     });
 
+    test('result taskIds can be used to update all caches consistently', () {
+      // Verifies that the result contains everything needed to update
+      // both _todays5TaskIds and _todaysFiveIds (Codex bug: missing cache update)
+      final state = _state(
+        taskIds: [1, 2, 3, 4, 5],
+        pinnedIds: {1},
+      );
+      final result = TodaysFivePinHelper.pinNewTask(state, 99);
+      expect(result, isNotNull);
+      final resultTaskIdSet = result!.taskIds.toSet();
+      // The new task must be in the set
+      expect(resultTaskIdSet, contains(99));
+      // The replaced task must NOT be in the set
+      expect(resultTaskIdSet, isNot(contains(5)));
+      // pinnedIds is a subset of taskIds
+      expect(resultTaskIdSet.containsAll(result.pinnedIds), isTrue);
+    });
+
     test('appends when no replaceable slot', () {
       final state = _state(
         taskIds: [1, 2, 3],

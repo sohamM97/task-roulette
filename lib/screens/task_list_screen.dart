@@ -40,13 +40,11 @@ class TaskListScreenState extends State<TaskListScreen>
   // Used by the leaf detail's "Worked on today" undo button.
   final Map<int, int?> _preWorkedOnTimestamps = {};
 
-  /// IDs of tasks currently in Today's 5 (for showing indicator on cards).
+  /// IDs of tasks currently in Today's 5 (for card indicators, pin gating, sort).
   Set<int> _todaysFiveIds = {};
 
   // Cached Today's 5 pinned IDs — loaded lazily for the leaf detail pin icon.
   Set<int>? _todays5PinnedIds;
-  // Today's 5 task IDs — needed to know if current task is in Today's 5.
-  Set<int>? _todays5TaskIds;
 
   @override
   bool get wantKeepAlive => true;
@@ -67,7 +65,6 @@ class TaskListScreenState extends State<TaskListScreen>
     if (!mounted) return;
     setState(() {
       _todaysFiveIds = result.taskIds;
-      _todays5TaskIds = result.taskIds;
       _todays5PinnedIds = result.pinnedIds;
     });
   }
@@ -100,9 +97,8 @@ class TaskListScreenState extends State<TaskListScreen>
     );
     if (mounted) {
       setState(() {
-        _todays5TaskIds = result.taskIds.toSet();
-        _todays5PinnedIds = result.pinnedIds;
         _todaysFiveIds = result.taskIds.toSet();
+        _todays5PinnedIds = result.pinnedIds;
       });
     }
   }
@@ -143,7 +139,7 @@ class TaskListScreenState extends State<TaskListScreen>
   Future<void> _addTask() async {
     if (!await _warnIfPinned()) return;
     if (!mounted) return;
-    final showPin = (_todays5TaskIds?.isNotEmpty ?? false) &&
+    final showPin = _todaysFiveIds.isNotEmpty &&
         (_todays5PinnedIds?.length ?? 0) < maxPins;
     final result = await showDialog<AddTaskResult>(
       context: context,
@@ -170,7 +166,15 @@ class TaskListScreenState extends State<TaskListScreen>
     if (saved == null) return;
 
     final result = TodaysFivePinHelper.pinNewTask(saved, taskId);
-    if (result == null) return;
+    if (result == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Couldn\'t pin — all Today\'s 5 slots are full'), showCloseIcon: true, persist: false),
+        );
+      }
+      return;
+    }
 
     await db.saveTodaysFiveState(
       date: today,
@@ -181,7 +185,7 @@ class TaskListScreenState extends State<TaskListScreen>
     );
     if (mounted) {
       setState(() {
-        _todays5TaskIds = result.taskIds.toSet();
+        _todaysFiveIds = result.taskIds.toSet();
         _todays5PinnedIds = result.pinnedIds;
       });
     }
@@ -642,7 +646,7 @@ class TaskListScreenState extends State<TaskListScreen>
           parentNames: parentNames,
           isPinnedInTodays5: _todays5PinnedIds?.contains(task.id) ?? false,
           atMaxPins: (_todays5PinnedIds?.length ?? 0) >= maxPins,
-          onTogglePin: (_todays5TaskIds?.isNotEmpty ?? false)
+          onTogglePin: _todaysFiveIds.isNotEmpty
               ? () => _togglePinInTodays5(task.id!)
               : null,
         );
