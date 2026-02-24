@@ -246,17 +246,11 @@ class LeafTaskDetail extends StatelessWidget {
               children: [
                 // Pin icon — shown when onTogglePin is available
                 if (onTogglePin != null)
-                  IconButton(
-                    onPressed: onTogglePin,
-                    tooltip: isPinnedInTodays5 ? 'Pinned in Today\'s 5' : 'Pin in Today\'s 5',
-                    visualDensity: VisualDensity.compact,
-                    icon: Icon(
-                      isPinnedInTodays5 ? Icons.push_pin : Icons.push_pin_outlined,
-                      size: 20,
-                      color: isPinnedInTodays5
-                          ? colorScheme.tertiary
-                          : colorScheme.onSurfaceVariant.withAlpha(120),
-                    ),
+                  PinButton(
+                    isPinned: isPinnedInTodays5,
+                    onToggle: onTogglePin!,
+                    size: 20,
+                    mutedWhenUnpinned: true,
                   ),
                 IconButton(
                   onPressed: () => onUpdatePriority(isHighPriority ? 0 : 1),

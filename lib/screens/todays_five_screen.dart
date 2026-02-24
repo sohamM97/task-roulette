@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
@@ -57,11 +56,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     // Migrate SharedPreferences → DB (idempotent, safe to call every time)
     await db.migrateTodaysFiveFromPrefs();
 
-    // Load pinned IDs from SharedPreferences (not yet in DB schema)
-    final prefs = await SharedPreferences.getInstance();
-    final savedPinnedIds = (prefs.getStringList('todays5_pinned') ?? [])
-        .map(int.tryParse).whereType<int>().toSet();
-
     // Try to restore from DB
     final saved = await db.loadTodaysFiveState(today);
     if (saved != null && saved.taskIds.isNotEmpty) {
@@ -69,6 +63,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       final leafIdSet = allLeaves.map((t) => t.id!).toSet();
       final savedCompletedIds = Set<int>.from(saved.completedIds);
       final savedWorkedOnIds = Set<int>.from(saved.workedOnIds);
+      final savedPinnedIds = Set<int>.from(saved.pinnedIds);
       final tasks = <Task>[];
       for (final id in saved.taskIds) {
         if (leafIdSet.contains(id)) {
@@ -288,12 +283,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       taskIds: _todaysTasks.map((t) => t.id!).toList(),
       completedIds: _completedIds,
       workedOnIds: _workedOnIds,
-    );
-    // Persist pinned IDs to SharedPreferences (not yet in DB schema)
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(
-      'todays5_pinned',
-      _pinnedIds.map((id) => id.toString()).toList(),
+      pinnedIds: _pinnedIds,
     );
   }
 
@@ -414,33 +404,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                   onTap: () {
                     Navigator.pop(ctx);
                     _stopWorking(task);
-                  },
-                ),
-              const Divider(height: 1),
-              if (_pinnedIds.contains(task.id))
-                ListTile(
-                  leading: Icon(Icons.push_pin_outlined, color: colorScheme.onSurfaceVariant),
-                  title: const Text('Unpin this task'),
-                  subtitle: const Text('Allow refresh to replace it'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    setState(() {
-                      _pinnedIds.remove(task.id);
-                    });
-                    _persist();
-                  },
-                )
-              else
-                ListTile(
-                  leading: Icon(Icons.push_pin, color: colorScheme.tertiary),
-                  title: const Text('Pin this task'),
-                  subtitle: const Text('Keep it across refreshes'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    setState(() {
-                      _pinnedIds.add(task.id!);
-                    });
-                    _persist();
                   },
                 ),
             ],
@@ -1121,20 +1084,38 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (!isDone)
+                PinButton(
+                  isPinned: _pinnedIds.contains(task.id),
+                  onToggle: () {
+                    setState(() {
+                      if (_pinnedIds.contains(task.id)) {
+                        _pinnedIds.remove(task.id);
+                      } else {
+                        _pinnedIds.add(task.id!);
+                      }
+                    });
+                    _persist();
+                  },
+                ),
+              if (!isDone)
                 IconButton(
-                  icon: const Icon(Icons.shuffle, size: 20),
+                  icon: const Icon(Icons.shuffle, size: 18),
                   onPressed: () => _confirmSwapTask(index),
                   tooltip: 'Swap task',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 ),
               if (widget.onNavigateToTask != null && !task.isCompleted)
                 IconButton(
-                  icon: const Icon(Icons.open_in_new, size: 20),
+                  icon: const Icon(Icons.open_in_new, size: 18),
                   onPressed: () => widget.onNavigateToTask!(task),
                   tooltip: 'Go to task',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 ),
               if (task.isCompleted)
                 IconButton(
-                  icon: const Icon(archiveIcon, size: 20),
+                  icon: const Icon(archiveIcon, size: 18),
                   onPressed: () async {
                     await Navigator.push(
                       context,
@@ -1145,6 +1126,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                     if (mounted) await refreshSnapshots();
                   },
                   tooltip: 'View in archive',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 ),
             ],
           ),

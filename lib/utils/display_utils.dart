@@ -27,3 +27,40 @@ bool isAllowedUrl(String url) {
   final scheme = uri.scheme.toLowerCase();
   return scheme == 'http' || scheme == 'https';
 }
+
+/// Pin/unpin toggle button for Today's 5 tasks.
+class PinButton extends StatelessWidget {
+  final bool isPinned;
+  final VoidCallback onToggle;
+  final double size;
+  /// When true, unpinned state uses a muted color to blend with surrounding icons.
+  final bool mutedWhenUnpinned;
+
+  const PinButton({
+    super.key,
+    required this.isPinned,
+    required this.onToggle,
+    this.size = 18,
+    this.mutedWhenUnpinned = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final color = isPinned
+        ? colorScheme.tertiary
+        : mutedWhenUnpinned
+            ? colorScheme.tertiary.withAlpha(170)
+            : colorScheme.tertiary;
+    return IconButton(
+      icon: Icon(
+        isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+        size: size,
+        color: color,
+      ),
+      onPressed: onToggle,
+      tooltip: isPinned ? 'Unpin' : 'Pin',
+      visualDensity: VisualDensity.compact,
+    );
+  }
+}

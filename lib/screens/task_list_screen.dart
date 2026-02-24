@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../data/database_helper.dart';
 import '../models/task.dart';
@@ -58,48 +57,38 @@ class TaskListScreenState extends State<TaskListScreen>
     // Calling it here would overwrite navigateToTask() state when PageView
     // lazily builds this screen for the first time.
     loadTodaysFiveIds();
-    _loadTodays5PinnedIds();
   }
 
   Future<void> loadTodaysFiveIds() async {
     final now = DateTime.now();
     final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    final ids = await DatabaseHelper().getTodaysFiveTaskIds(today);
+    final result = await DatabaseHelper().getTodaysFiveTaskAndPinIds(today);
     if (!mounted) return;
-    setState(() => _todaysFiveIds = ids);
-  }
-
-  Future<void> _loadTodays5PinnedIds() async {
-    final prefs = await SharedPreferences.getInstance();
-    final now = DateTime.now();
-    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    if (prefs.getString('todays5_date') != today) {
-      if (mounted) setState(() { _todays5PinnedIds = {}; _todays5TaskIds = {}; });
-      return;
-    }
-    final pinnedIds = (prefs.getStringList('todays5_pinned') ?? [])
-        .map(int.tryParse).whereType<int>().toSet();
-    final taskIds = (prefs.getStringList('todays5_ids') ?? [])
-        .map(int.tryParse).whereType<int>().toSet();
-    if (mounted) setState(() { _todays5PinnedIds = pinnedIds; _todays5TaskIds = taskIds; });
+    setState(() {
+      _todaysFiveIds = result.taskIds;
+      _todays5TaskIds = result.taskIds;
+      _todays5PinnedIds = result.pinnedIds;
+    });
   }
 
   Future<void> _togglePinInTodays5(int taskId) async {
-    final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now();
     final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    if (prefs.getString('todays5_date') != today) return;
-
-    final pinnedIds = (prefs.getStringList('todays5_pinned') ?? [])
-        .map(int.tryParse).whereType<int>().toSet();
+    final db = DatabaseHelper();
+    final saved = await db.loadTodaysFiveState(today);
+    if (saved == null) return;
+    final pinnedIds = Set<int>.from(saved.pinnedIds);
     if (pinnedIds.contains(taskId)) {
       pinnedIds.remove(taskId);
     } else {
       pinnedIds.add(taskId);
     }
-    await prefs.setStringList(
-      'todays5_pinned',
-      pinnedIds.map((id) => id.toString()).toList(),
+    await db.saveTodaysFiveState(
+      date: today,
+      taskIds: saved.taskIds,
+      completedIds: saved.completedIds,
+      workedOnIds: saved.workedOnIds,
+      pinnedIds: pinnedIds,
     );
     if (mounted) setState(() { _todays5PinnedIds = pinnedIds; });
   }
@@ -110,17 +99,8 @@ class TaskListScreenState extends State<TaskListScreen>
     final currentParent = provider.currentParent;
     if (currentParent == null) return true;
 
-    final prefs = await SharedPreferences.getInstance();
-    final savedDate = prefs.getString('todays5_date');
-    final now = DateTime.now();
-    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    if (savedDate != today) return true;
-
-    final pinnedIds = (prefs.getStringList('todays5_pinned') ?? [])
-        .map(int.tryParse)
-        .whereType<int>()
-        .toSet();
-    if (!pinnedIds.contains(currentParent.id)) return true;
+    final pinnedIds = _todays5PinnedIds;
+    if (pinnedIds == null || !pinnedIds.contains(currentParent.id)) return true;
 
     if (!mounted) return false;
     final confirmed = await showDialog<bool>(
@@ -168,17 +148,15 @@ class TaskListScreenState extends State<TaskListScreen>
   /// Adds a newly created task to Today's 5 (replacing an unpinned undone slot)
   /// and pins it.
   Future<void> _pinNewTaskInTodays5(int taskId) async {
-    final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now();
     final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    if (prefs.getString('todays5_date') != today) return;
+    final db = DatabaseHelper();
+    final saved = await db.loadTodaysFiveState(today);
+    if (saved == null) return;
 
-    final taskIds = (prefs.getStringList('todays5_ids') ?? [])
-        .map(int.tryParse).whereType<int>().toList();
-    final completedIds = (prefs.getStringList('todays5_completed') ?? [])
-        .map(int.tryParse).whereType<int>().toSet();
-    final pinnedIds = (prefs.getStringList('todays5_pinned') ?? [])
-        .map(int.tryParse).whereType<int>().toSet();
+    final taskIds = List<int>.from(saved.taskIds);
+    final completedIds = saved.completedIds;
+    final pinnedIds = Set<int>.from(saved.pinnedIds);
 
     // Find an unpinned, undone slot to replace
     int? replaceIndex;
@@ -200,8 +178,13 @@ class TaskListScreenState extends State<TaskListScreen>
     }
 
     pinnedIds.add(taskId);
-    await prefs.setStringList('todays5_ids', taskIds.map((id) => id.toString()).toList());
-    await prefs.setStringList('todays5_pinned', pinnedIds.map((id) => id.toString()).toList());
+    await db.saveTodaysFiveState(
+      date: today,
+      taskIds: taskIds,
+      completedIds: completedIds,
+      workedOnIds: saved.workedOnIds,
+      pinnedIds: pinnedIds,
+    );
     if (mounted) {
       setState(() {
         _todays5TaskIds = taskIds.toSet();
