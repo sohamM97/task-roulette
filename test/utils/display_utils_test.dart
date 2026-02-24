@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:task_roulette/utils/display_utils.dart';
 
+// Helper to wrap a widget in MaterialApp + Scaffold for widget tests
+Widget _wrap(Widget child) =>
+    MaterialApp(home: Scaffold(body: child));
+
 void main() {
   group('normalizeUrl', () {
     test('returns null for null input', () {
@@ -127,6 +131,82 @@ void main() {
 
     test('does not truncate short URLs', () {
       expect(displayUrl('https://example.com', maxLength: 30), 'example.com');
+    });
+  });
+
+  group('PinButton', () {
+    testWidgets('renders push_pin icon when isPinned is true', (tester) async {
+      await tester.pumpWidget(
+        _wrap(PinButton(isPinned: true, onToggle: () {})),
+      );
+
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+    });
+
+    testWidgets('renders push_pin_outlined icon when isPinned is false',
+        (tester) async {
+      await tester.pumpWidget(
+        _wrap(PinButton(isPinned: false, onToggle: () {})),
+      );
+
+      expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+    });
+
+    testWidgets('calls onToggle when tapped', (tester) async {
+      bool toggled = false;
+      await tester.pumpWidget(
+        _wrap(PinButton(isPinned: false, onToggle: () => toggled = true)),
+      );
+
+      await tester.tap(find.byType(IconButton));
+      expect(toggled, isTrue);
+    });
+
+    testWidgets('shows "Unpin" tooltip when pinned', (tester) async {
+      await tester.pumpWidget(
+        _wrap(PinButton(isPinned: true, onToggle: () {})),
+      );
+
+      final iconButton =
+          tester.widget<IconButton>(find.byType(IconButton));
+      expect(iconButton.tooltip, 'Unpin');
+    });
+
+    testWidgets('shows "Pin" tooltip when unpinned', (tester) async {
+      await tester.pumpWidget(
+        _wrap(PinButton(isPinned: false, onToggle: () {})),
+      );
+
+      final iconButton =
+          tester.widget<IconButton>(find.byType(IconButton));
+      expect(iconButton.tooltip, 'Pin');
+    });
+
+    testWidgets('uses custom size parameter', (tester) async {
+      await tester.pumpWidget(
+        _wrap(PinButton(isPinned: true, onToggle: () {}, size: 24)),
+      );
+
+      final icon = tester.widget<Icon>(find.byType(Icon));
+      expect(icon.size, 24);
+    });
+
+    testWidgets(
+        'when mutedWhenUnpinned is true and not pinned, icon color has alpha 170',
+        (tester) async {
+      await tester.pumpWidget(
+        _wrap(PinButton(
+          isPinned: false,
+          onToggle: () {},
+          mutedWhenUnpinned: true,
+        )),
+      );
+
+      final icon = tester.widget<Icon>(find.byType(Icon));
+      // The color should have alpha 170 (muted)
+      expect((icon.color!.a * 255.0).round(), 170);
     });
   });
 }

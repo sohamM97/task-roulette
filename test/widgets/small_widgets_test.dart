@@ -257,6 +257,110 @@ void main() {
 
       expect(result, isA<SwitchToBrainDump>());
     });
+
+    // -------------------------------------------------------------------------
+    // Pin option in AddTaskDialog
+    // -------------------------------------------------------------------------
+
+    Future<void> openAddTaskDialogWithPin(WidgetTester tester,
+        {required ValueChanged<AddTaskResult?> onResult,
+        bool showPinOption = true}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  final result = await showDialog<AddTaskResult>(
+                    context: context,
+                    builder: (_) =>
+                        AddTaskDialog(showPinOption: showPinOption),
+                  );
+                  onResult(result);
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('when showPinOption is false, no pin toggle is shown',
+        (tester) async {
+      await openAddTaskDialogWithPin(tester,
+          onResult: (_) {}, showPinOption: false);
+
+      expect(find.text("Today's 5"), findsNothing);
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+      expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+    });
+
+    testWidgets(
+        'when showPinOption is true, pin toggle is shown with "Today\'s 5" text',
+        (tester) async {
+      await openAddTaskDialogWithPin(tester, onResult: (_) {});
+
+      expect(find.text("Today's 5"), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
+    });
+
+    testWidgets('tapping pin toggle changes icon to push_pin (filled)',
+        (tester) async {
+      await openAddTaskDialogWithPin(tester, onResult: (_) {});
+
+      // Initially unpinned
+      expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+
+      // Tap the pin toggle
+      await tester.tap(find.text("Today's 5"));
+      await tester.pumpAndSettle();
+
+      // Now pinned
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+    });
+
+    testWidgets(
+        'submitting with pin toggled returns SingleTask with pinInTodays5=true',
+        (tester) async {
+      AddTaskResult? result;
+      await openAddTaskDialogWithPin(tester, onResult: (r) => result = r);
+
+      // Toggle pin on
+      await tester.tap(find.text("Today's 5"));
+      await tester.pumpAndSettle();
+
+      // Enter text and submit
+      await tester.enterText(find.byType(TextField), 'Pinned task');
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+
+      expect(result, isA<SingleTask>());
+      final singleTask = result as SingleTask;
+      expect(singleTask.name, 'Pinned task');
+      expect(singleTask.pinInTodays5, isTrue);
+    });
+
+    testWidgets(
+        'submitting without pin toggled returns SingleTask with pinInTodays5=false',
+        (tester) async {
+      AddTaskResult? result;
+      await openAddTaskDialogWithPin(tester, onResult: (r) => result = r);
+
+      // Do not toggle pin — leave it off
+      await tester.enterText(find.byType(TextField), 'Unpinned task');
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+
+      expect(result, isA<SingleTask>());
+      final singleTask = result as SingleTask;
+      expect(singleTask.name, 'Unpinned task');
+      expect(singleTask.pinInTodays5, isFalse);
+    });
   });
 
   // ---------------------------------------------------------------------------

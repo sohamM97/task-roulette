@@ -1784,6 +1784,16 @@ void main() {
   });
 
   group('Task creation', () {
+    test('addTask returns the new task ID', () async {
+      await provider.loadRootTasks();
+
+      final id = await provider.addTask('Test');
+
+      expect(id, isPositive);
+      expect(provider.tasks, hasLength(1));
+      expect(provider.tasks.first.id, id);
+    });
+
     test('addTask creates task at root when no parent', () async {
       await provider.loadRootTasks();
       expect(provider.tasks, isEmpty);
@@ -2376,6 +2386,237 @@ void main() {
       // parentNamesMap should still contain the leaf's parents
       expect(provider.parentNamesMap[leafId], isNotNull);
       expect(provider.parentNamesMap[leafId], containsAll(['Parent A', 'Parent B']));
+    });
+  });
+
+  group('Sort tiers in _refreshCurrentList', () {
+    // Sort tiers (lower = higher priority):
+    // 0: pinned in Today's 5
+    // 1: high priority
+    // 2: in Today's 5 (unpinned)
+    // 3: normal
+    // 4: worked-on-today
+
+    test('pinned Today\'s 5 tasks appear before high priority tasks', () async {
+      final normalId = await db.insertTask(Task(name: 'Normal'));
+      final hpId = await db.insertTask(Task(name: 'HP', priority: 1));
+      final pinnedId = await db.insertTask(Task(name: 'Pinned'));
+
+      // Save pinned task in Today's 5 state
+      final now = DateTime.now();
+      final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      await db.saveTodaysFiveState(
+        date: today,
+        taskIds: [pinnedId],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {pinnedId},
+      );
+
+      await provider.loadRootTasks();
+      final ids = provider.tasks.map((t) => t.id).toList();
+      final pinnedIdx = ids.indexOf(pinnedId);
+      final hpIdx = ids.indexOf(hpId);
+      final normalIdx = ids.indexOf(normalId);
+
+      // Pinned (tier 0) < HP (tier 1) < Normal (tier 3)
+      expect(pinnedIdx, lessThan(hpIdx));
+      expect(hpIdx, lessThan(normalIdx));
+    });
+
+    test('high priority tasks appear before unpinned Today\'s 5 tasks', () async {
+      final hpId = await db.insertTask(Task(name: 'HP', priority: 1));
+      final todaysFiveId = await db.insertTask(Task(name: 'Today Five'));
+      final normalId = await db.insertTask(Task(name: 'Normal'));
+
+      final now = DateTime.now();
+      final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      await db.saveTodaysFiveState(
+        date: today,
+        taskIds: [todaysFiveId],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {},
+      );
+
+      await provider.loadRootTasks();
+      final ids = provider.tasks.map((t) => t.id).toList();
+      final hpIdx = ids.indexOf(hpId);
+      final t5Idx = ids.indexOf(todaysFiveId);
+      final normalIdx = ids.indexOf(normalId);
+
+      // HP (tier 1) < Today's 5 unpinned (tier 2) < Normal (tier 3)
+      expect(hpIdx, lessThan(t5Idx));
+      expect(t5Idx, lessThan(normalIdx));
+    });
+
+    test('worked-on-today tasks appear last (after normal)', () async {
+      final normalId = await db.insertTask(Task(name: 'Normal'));
+      final workedOnId = await db.insertTask(Task(name: 'Worked On'));
+
+      // Mark as worked on today
+      await db.markWorkedOn(workedOnId);
+
+      await provider.loadRootTasks();
+      final ids = provider.tasks.map((t) => t.id).toList();
+      final normalIdx = ids.indexOf(normalId);
+      final workedOnIdx = ids.indexOf(workedOnId);
+
+      // Normal (tier 3) < Worked-on-today (tier 4)
+      expect(normalIdx, lessThan(workedOnIdx));
+    });
+
+    test('full tier ordering: pinned > HP > Today\'s 5 > normal > worked-on-today', () async {
+      // Create one task per tier
+      final pinnedId = await db.insertTask(Task(name: 'Pinned T5'));
+      final hpId = await db.insertTask(Task(name: 'High Priority', priority: 1));
+      final todaysFiveId = await db.insertTask(Task(name: 'Unpinned T5'));
+      final normalId = await db.insertTask(Task(name: 'Normal'));
+      final workedOnId = await db.insertTask(Task(name: 'Worked On'));
+
+      // Mark worked-on-today
+      await db.markWorkedOn(workedOnId);
+
+      // Save Today's 5 state with pinned and unpinned
+      final now = DateTime.now();
+      final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      await db.saveTodaysFiveState(
+        date: today,
+        taskIds: [pinnedId, todaysFiveId],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {pinnedId},
+      );
+
+      await provider.loadRootTasks();
+      final ids = provider.tasks.map((t) => t.id).toList();
+
+      final pinnedIdx = ids.indexOf(pinnedId);
+      final hpIdx = ids.indexOf(hpId);
+      final t5Idx = ids.indexOf(todaysFiveId);
+      final normalIdx = ids.indexOf(normalId);
+      final workedOnIdx = ids.indexOf(workedOnId);
+
+      // Verify strict ordering across all tiers
+      expect(pinnedIdx, lessThan(hpIdx),
+          reason: 'Pinned (tier 0) should be before HP (tier 1)');
+      expect(hpIdx, lessThan(t5Idx),
+          reason: 'HP (tier 1) should be before Today\'s 5 unpinned (tier 2)');
+      expect(t5Idx, lessThan(normalIdx),
+          reason: 'Today\'s 5 unpinned (tier 2) should be before normal (tier 3)');
+      expect(normalIdx, lessThan(workedOnIdx),
+          reason: 'Normal (tier 3) should be before worked-on-today (tier 4)');
+    });
+
+    test('multiple tasks in the same tier preserve relative DB order', () async {
+      // Insert in order: A, B, C — all normal tier
+      final aId = await db.insertTask(Task(name: 'Task A'));
+      final bId = await db.insertTask(Task(name: 'Task B'));
+      final cId = await db.insertTask(Task(name: 'Task C'));
+
+      await provider.loadRootTasks();
+      final ids = provider.tasks.map((t) => t.id).toList();
+
+      // All same tier (3=normal), so order should match DB order
+      final aIdx = ids.indexOf(aId);
+      final bIdx = ids.indexOf(bId);
+      final cIdx = ids.indexOf(cId);
+
+      expect(aIdx, lessThan(bIdx));
+      expect(bIdx, lessThan(cIdx));
+    });
+
+    test('sort tiers work inside a non-root parent', () async {
+      // Create a parent with children of different tiers
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final pinnedChild = await db.insertTask(Task(name: 'Pinned Child'));
+      final normalChild = await db.insertTask(Task(name: 'Normal Child'));
+      final hpChild = await db.insertTask(Task(name: 'HP Child', priority: 1));
+
+      await db.addRelationship(parentId, pinnedChild);
+      await db.addRelationship(parentId, normalChild);
+      await db.addRelationship(parentId, hpChild);
+
+      // Pin the child in Today's 5
+      final now = DateTime.now();
+      final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      await db.saveTodaysFiveState(
+        date: today,
+        taskIds: [pinnedChild],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {pinnedChild},
+      );
+
+      // Navigate into parent
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      final ids = provider.tasks.map((t) => t.id).toList();
+      final pinnedIdx = ids.indexOf(pinnedChild);
+      final hpIdx = ids.indexOf(hpChild);
+      final normalIdx = ids.indexOf(normalChild);
+
+      // Pinned (0) < HP (1) < Normal (3)
+      expect(pinnedIdx, lessThan(hpIdx));
+      expect(hpIdx, lessThan(normalIdx));
+    });
+
+    test('worked-on-today HP task gets tier 4 (worked-on overrides HP)', () async {
+      // A high priority task that was worked on today should be in tier 4
+      // because isWorkedOnToday check comes first in sortTier
+      final hpWorkedId = await db.insertTask(Task(name: 'HP Worked', priority: 1));
+      final normalId = await db.insertTask(Task(name: 'Normal'));
+
+      await db.markWorkedOn(hpWorkedId);
+
+      await provider.loadRootTasks();
+      final ids = provider.tasks.map((t) => t.id).toList();
+      final hpWorkedIdx = ids.indexOf(hpWorkedId);
+      final normalIdx = ids.indexOf(normalId);
+
+      // HP + worked-on-today → tier 4, normal → tier 3
+      // So normal should come before HP-worked-on
+      expect(normalIdx, lessThan(hpWorkedIdx));
+    });
+
+    test('worked-on-today pinned task gets tier 4 (worked-on overrides pinned)', () async {
+      // A pinned task that was worked on today should be in tier 4
+      final pinnedWorkedId = await db.insertTask(Task(name: 'Pinned Worked'));
+      final normalId = await db.insertTask(Task(name: 'Normal'));
+
+      await db.markWorkedOn(pinnedWorkedId);
+
+      final now = DateTime.now();
+      final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      await db.saveTodaysFiveState(
+        date: today,
+        taskIds: [pinnedWorkedId],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {pinnedWorkedId},
+      );
+
+      await provider.loadRootTasks();
+      final ids = provider.tasks.map((t) => t.id).toList();
+      final pinnedWorkedIdx = ids.indexOf(pinnedWorkedId);
+      final normalIdx = ids.indexOf(normalId);
+
+      // Worked-on-today check comes first → tier 4
+      expect(normalIdx, lessThan(pinnedWorkedIdx));
+    });
+
+    test('no Today\'s 5 state: all tasks get normal/HP tiers only', () async {
+      // When there's no Today's 5 state saved, no task should get tier 0 or 2
+      final hpId = await db.insertTask(Task(name: 'HP', priority: 1));
+      final normalId = await db.insertTask(Task(name: 'Normal'));
+
+      await provider.loadRootTasks();
+      final ids = provider.tasks.map((t) => t.id).toList();
+
+      // HP first, then normal
+      expect(ids.indexOf(hpId), lessThan(ids.indexOf(normalId)));
     });
   });
 }

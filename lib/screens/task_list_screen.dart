@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../data/database_helper.dart';
+import '../data/todays_five_pin_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
@@ -39,8 +40,11 @@ class TaskListScreenState extends State<TaskListScreen>
   // Used by the leaf detail's "Worked on today" undo button.
   final Map<int, int?> _preWorkedOnTimestamps = {};
 
-  /// IDs of tasks currently in Today's 5 (for showing indicator on cards).
+  /// IDs of tasks currently in Today's 5 (for card indicators, pin gating, sort).
   Set<int> _todaysFiveIds = {};
+
+  // Cached Today's 5 pinned IDs — loaded lazily for the leaf detail pin icon.
+  Set<int>? _todays5PinnedIds;
 
   @override
   bool get wantKeepAlive => true;
@@ -57,25 +61,139 @@ class TaskListScreenState extends State<TaskListScreen>
   Future<void> loadTodaysFiveIds() async {
     final now = DateTime.now();
     final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    final ids = await DatabaseHelper().getTodaysFiveTaskIds(today);
+    final result = await DatabaseHelper().getTodaysFiveTaskAndPinIds(today);
     if (!mounted) return;
-    setState(() => _todaysFiveIds = ids);
+    setState(() {
+      _todaysFiveIds = result.taskIds;
+      _todays5PinnedIds = result.pinnedIds;
+    });
+  }
+
+  Future<void> _togglePinInTodays5(int taskId) async {
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final db = DatabaseHelper();
+    final saved = await db.loadTodaysFiveState(today);
+    if (saved == null) return;
+
+    final result = TodaysFivePinHelper.togglePin(saved, taskId);
+    if (result == null) {
+      // Blocked — max pins reached
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
+        );
+      }
+      return;
+    }
+
+    await db.saveTodaysFiveState(
+      date: today,
+      taskIds: result.taskIds,
+      completedIds: saved.completedIds,
+      workedOnIds: saved.workedOnIds,
+      pinnedIds: result.pinnedIds,
+    );
+    if (mounted) {
+      setState(() {
+        _todaysFiveIds = result.taskIds.toSet();
+        _todays5PinnedIds = result.pinnedIds;
+      });
+    }
+  }
+
+  /// Returns true if the user confirmed (or task isn't pinned), false to abort.
+  Future<bool> _warnIfPinned() async {
+    final provider = context.read<TaskProvider>();
+    final currentParent = provider.currentParent;
+    if (currentParent == null) return true;
+
+    final pinnedIds = _todays5PinnedIds;
+    if (pinnedIds == null || !pinnedIds.contains(currentParent.id)) return true;
+
+    if (!mounted) return false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('This task is pinned'),
+        content: Text(
+          '"${currentParent.name}" is in your Today\'s 5 and pinned. '
+          'Adding subtasks will replace it with one of its new subtasks.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Add anyway'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
   }
 
   Future<void> _addTask() async {
+    if (!await _warnIfPinned()) return;
+    if (!mounted) return;
+    final showPin = _todaysFiveIds.isNotEmpty &&
+        (_todays5PinnedIds?.length ?? 0) < maxPins;
     final result = await showDialog<AddTaskResult>(
       context: context,
-      builder: (_) => const AddTaskDialog(),
+      builder: (_) => AddTaskDialog(showPinOption: showPin),
     );
     if (!mounted || result == null) return;
     if (result is SingleTask) {
-      await context.read<TaskProvider>().addTask(result.name);
+      final taskId = await context.read<TaskProvider>().addTask(result.name);
+      if (result.pinInTodays5 && mounted) {
+        await _pinNewTaskInTodays5(taskId);
+      }
     } else if (result is SwitchToBrainDump) {
       await _brainDump();
     }
   }
 
+  /// Adds a newly created task to Today's 5 (replacing an unpinned undone slot)
+  /// and pins it.
+  Future<void> _pinNewTaskInTodays5(int taskId) async {
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final db = DatabaseHelper();
+    final saved = await db.loadTodaysFiveState(today);
+    if (saved == null) return;
+
+    final result = TodaysFivePinHelper.pinNewTask(saved, taskId);
+    if (result == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Couldn\'t pin — all Today\'s 5 slots are full'), showCloseIcon: true, persist: false),
+        );
+      }
+      return;
+    }
+
+    await db.saveTodaysFiveState(
+      date: today,
+      taskIds: result.taskIds,
+      completedIds: saved.completedIds,
+      workedOnIds: saved.workedOnIds,
+      pinnedIds: result.pinnedIds,
+    );
+    if (mounted) {
+      setState(() {
+        _todaysFiveIds = result.taskIds.toSet();
+        _todays5PinnedIds = result.pinnedIds;
+      });
+    }
+  }
+
   Future<void> _brainDump() async {
+    if (!await _warnIfPinned()) return;
+    if (!mounted) return;
     final names = await showDialog<List<String>>(
       context: context,
       builder: (_) => const BrainDumpDialog(),
@@ -105,6 +223,8 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   Future<void> _linkExistingTask() async {
+    if (!await _warnIfPinned()) return;
+    if (!mounted) return;
     final provider = context.read<TaskProvider>();
     final currentParent = provider.currentParent;
     if (currentParent == null) return;
@@ -524,6 +644,11 @@ class TaskListScreenState extends State<TaskListScreen>
             _leafDepsTaskId = null; // invalidate — may have added a dep
           },
           parentNames: parentNames,
+          isPinnedInTodays5: _todays5PinnedIds?.contains(task.id) ?? false,
+          atMaxPins: (_todays5PinnedIds?.length ?? 0) >= maxPins,
+          onTogglePin: _todaysFiveIds.isNotEmpty
+              ? () => _togglePinInTodays5(task.id!)
+              : null,
         );
       },
     );
@@ -934,6 +1059,7 @@ class TaskListScreenState extends State<TaskListScreen>
                             isBlocked: provider.blockedTaskIds.contains(task.id),
                             blockedByName: provider.blockedByNames[task.id],
                             isInTodaysFive: _todaysFiveIds.contains(task.id),
+                            isPinnedInTodaysFive: _todays5PinnedIds?.contains(task.id) ?? false,
                             parentNames: (provider.parentNamesMap[task.id] ?? [])
                                 .where((name) => name != provider.currentParent?.name)
                                 .toList(),

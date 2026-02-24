@@ -16,6 +16,7 @@ class TaskCard extends StatelessWidget {
   final bool isBlocked;
   final String? blockedByName;
   final bool isInTodaysFive;
+  final bool isPinnedInTodaysFive;
   final List<String> parentNames;
 
   const TaskCard({
@@ -32,6 +33,7 @@ class TaskCard extends StatelessWidget {
     this.isBlocked = false,
     this.blockedByName,
     this.isInTodaysFive = false,
+    this.isPinnedInTodaysFive = false,
     this.parentNames = const [],
   });
 
@@ -254,7 +256,7 @@ class TaskCard extends StatelessWidget {
                     children: [
                       if (isInTodaysFive)
                         Icon(
-                          Icons.local_fire_department,
+                          isPinnedInTodaysFive ? Icons.push_pin : Icons.local_fire_department,
                           size: 16,
                           color: Theme.of(context).colorScheme.tertiary,
                         ),

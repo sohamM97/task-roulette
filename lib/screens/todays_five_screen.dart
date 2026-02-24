@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/database_helper.dart';
+import '../data/todays_five_pin_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
 import '../utils/display_utils.dart';
 import '../widgets/completion_animation.dart';
 import '../widgets/profile_icon.dart';
+import '../widgets/task_picker_dialog.dart';
 import 'completed_tasks_screen.dart';
 
 class TodaysFiveScreen extends StatefulWidget {
@@ -32,12 +34,32 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   /// Other tasks completed/worked-on today, outside the Today's 5 set.
   List<Task> _otherDoneToday = [];
   bool _otherDoneExpanded = false;
+  /// Tracks manually pinned tasks — protected from refresh until explicitly swapped.
+  final Set<int> _pinnedIds = {};
   bool _loading = true;
+  TaskProvider? _provider;
 
   @override
   void initState() {
     super.initState();
     _loadTodaysTasks();
+    // Listen for external changes (e.g. undo "Done for good" from All Tasks)
+    // so _otherDoneToday stays in sync without requiring a tab switch.
+    _provider = context.read<TaskProvider>();
+    _provider!.addListener(_onProviderChanged);
+  }
+
+  @override
+  void dispose() {
+    _provider?.removeListener(_onProviderChanged);
+    super.dispose();
+  }
+
+  void _onProviderChanged() {
+    if (!mounted || _loading) return;
+    _loadOtherDoneToday().then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   String _todayKey() {
@@ -60,6 +82,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       final leafIdSet = allLeaves.map((t) => t.id!).toSet();
       final savedCompletedIds = Set<int>.from(saved.completedIds);
       final savedWorkedOnIds = Set<int>.from(saved.workedOnIds);
+      final savedPinnedIds = Set<int>.from(saved.pinnedIds);
       final tasks = <Task>[];
       for (final id in saved.taskIds) {
         if (leafIdSet.contains(id)) {
@@ -79,6 +102,26 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             if (savedCompletedIds.contains(id) || fresh.isCompleted || fresh.isWorkedOnToday) {
               savedCompletedIds.add(id);
               tasks.add(fresh);
+            } else if (savedPinnedIds.contains(id)) {
+              // Pinned task became non-leaf — try to slot in a leaf descendant
+              final descendants = await db.getLeafDescendants(id);
+              final currentIds = tasks.map((t) => t.id).toSet();
+              final descLeafIds = descendants.map((d) => d.id!).toList();
+              final descBlockedIds = await provider.getBlockedChildIds(descLeafIds);
+              final eligibleDesc = descendants.where(
+                (d) => !currentIds.contains(d.id) && !descBlockedIds.contains(d.id),
+              ).toList();
+              if (eligibleDesc.isNotEmpty) {
+                final picked = provider.pickWeightedN(eligibleDesc, 1);
+                if (picked.isNotEmpty) {
+                  tasks.add(picked.first);
+                  savedPinnedIds.remove(id);
+                  savedPinnedIds.add(picked.first.id!);
+                }
+              } else {
+                savedPinnedIds.remove(id);
+                // Will be backfilled randomly below
+              }
             }
           }
         }
@@ -104,6 +147,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       final validWorkedOnIds = savedWorkedOnIds
           .where((id) => taskIdSet.contains(id))
           .toSet();
+      // Keep pinned IDs for tasks still in the list (including transferred pins)
+      final validPinnedIds = savedPinnedIds
+          .where((id) => taskIdSet.contains(id))
+          .toSet();
       if (!mounted) return;
       _todaysTasks = tasks;
       await _loadOtherDoneToday();
@@ -112,6 +159,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       setState(() {
         _completedIds.addAll(validCompletedIds);
         _workedOnIds.addAll(validWorkedOnIds);
+        _pinnedIds.addAll(validPinnedIds);
         _loading = false;
       });
       await _persist();
@@ -155,6 +203,26 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             // Keep for progress tracking
             _completedIds.add(fresh.id!);
             refreshed.add(fresh);
+          } else if (_pinnedIds.contains(t.id)) {
+            // Pinned task became non-leaf — try to slot in a leaf descendant
+            final descendants = await db.getLeafDescendants(t.id!);
+            final currentIds = refreshed.map((r) => r.id).toSet();
+            final descLeafIds = descendants.map((d) => d.id!).toList();
+            final descBlockedIds = await provider.getBlockedChildIds(descLeafIds);
+            final eligibleDesc = descendants.where(
+              (d) => !currentIds.contains(d.id) && !descBlockedIds.contains(d.id),
+            ).toList();
+            if (eligibleDesc.isNotEmpty) {
+              final picked = provider.pickWeightedN(eligibleDesc, 1);
+              if (picked.isNotEmpty) {
+                refreshed.add(picked.first);
+                _pinnedIds.remove(t.id);
+                _pinnedIds.add(picked.first.id!);
+              }
+            } else {
+              _pinnedIds.remove(t.id);
+              // Will be backfilled randomly below
+            }
           }
           // Otherwise: became non-leaf without being done — will be backfilled
         }
@@ -182,6 +250,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     });
     // Keep workedOnIds in sync — remove if no longer in completed set
     _workedOnIds.removeWhere((id) => !_completedIds.contains(id));
+    // Clean pinned IDs: remove if task left the list or is no longer a leaf
+    _pinnedIds.removeWhere((id) {
+      if (!refreshed.any((t) => t.id == id)) return true; // not in list
+      return !leafIdSet.contains(id); // no longer a leaf
+    });
     if (!mounted) return;
     _todaysTasks = refreshed;
     await _loadOtherDoneToday();
@@ -198,8 +271,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     final leafIds = allLeaves.map((t) => t.id!).toList();
     final blockedIds = await provider.getBlockedChildIds(leafIds);
 
-    // Keep done tasks, only replace undone ones
-    final kept = _todaysTasks.where((t) => _completedIds.contains(t.id)).toList();
+    // Keep done + pinned tasks, only replace the rest
+    final kept = _todaysTasks.where(
+      (t) => _completedIds.contains(t.id) || _pinnedIds.contains(t.id),
+    ).toList();
+    // Clean pinned IDs for tasks no longer in the kept set
+    _pinnedIds.removeWhere((id) => !kept.any((t) => t.id == id));
     final keptIds = kept.map((t) => t.id).toSet();
 
     final eligible = allLeaves.where(
@@ -219,12 +296,28 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await _persist();
   }
 
+  /// Trims excess unpinned undone tasks and persists. Calls setState if
+  /// the list actually shrank so the UI updates immediately.
+  Future<void> _persistAndTrim() async {
+    final currentIds = _todaysTasks.map((t) => t.id!).toList();
+    final trimmedIds = TodaysFivePinHelper.trimExcess(
+      currentIds, _completedIds, _pinnedIds,
+    );
+    if (trimmedIds.length < currentIds.length) {
+      final trimmedSet = trimmedIds.toSet();
+      _todaysTasks.removeWhere((t) => !trimmedSet.contains(t.id));
+      if (mounted) setState(() {});
+    }
+    await _persist();
+  }
+
   Future<void> _persist() async {
     await DatabaseHelper().saveTodaysFiveState(
       date: _todayKey(),
       taskIds: _todaysTasks.map((t) => t.id!).toList(),
       completedIds: _completedIds,
       workedOnIds: _workedOnIds,
+      pinnedIds: _pinnedIds,
     );
   }
 
@@ -287,6 +380,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   /// Unmarks a task as done: updates sets, refreshes snapshot, setState, persist.
+  /// Also trims excess tasks — uncompleting may leave unpinned undone tasks
+  /// beyond slot 5 that should be removed.
   Future<void> _unmarkDone(int taskId, {required bool workedOn, required bool autoStarted}) async {
     _completedIds.remove(taskId);
     if (workedOn) _workedOnIds.remove(taskId);
@@ -295,12 +390,13 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await _loadOtherDoneToday();
     if (!mounted) return;
     setState(() {});
-    await _persist();
+    await _persistAndTrim();
   }
 
-  /// Shows a bottom sheet: "In progress" / "Done today" / "Done for good!"
+  /// Shows a bottom sheet: "In progress" / "Done today" / "Done for good!" / Pin/Unpin
   void _showTaskOptions(Task task) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isPinned = _pinnedIds.contains(task.id);
     showModalBottomSheet(
       context: context,
       builder: (ctx) => SafeArea(
@@ -347,11 +443,49 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                     _stopWorking(task);
                   },
                 ),
+              if (isPinned)
+                ListTile(
+                  leading: Icon(Icons.push_pin_outlined, color: colorScheme.onSurfaceVariant),
+                  title: const Text('Unpin'),
+                  subtitle: const Text('Remove from must do'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _togglePinFromSheet(task);
+                  },
+                )
+              else if (_pinnedIds.length < maxPins)
+                ListTile(
+                  leading: Icon(Icons.push_pin, color: colorScheme.tertiary),
+                  title: const Text('Pin'),
+                  subtitle: const Text('Mark as must do'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _togglePinFromSheet(task);
+                  },
+                ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  void _togglePinFromSheet(Task task) {
+    final result = TodaysFivePinHelper.togglePinInPlace(
+      _pinnedIds, task.id!,
+    );
+    if (result == null) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
+      );
+    } else {
+      setState(() {
+        _pinnedIds.clear();
+        _pinnedIds.addAll(result);
+      });
+      _persistAndTrim();
+    }
   }
 
   Future<void> _stopWorking(Task task) async {
@@ -503,29 +637,126 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     await _replaceIfNoLongerLeaf(task);
     if (!mounted) return;
 
+    final wasRemoved = !_todaysTasks.any((t) => t.id == task.id);
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('"${task.name}" restored.'),
+        content: Text(wasRemoved
+            ? '"${task.name}" restored and removed from Today\'s 5 (all slots are pinned).'
+            : '"${task.name}" restored.'),
         showCloseIcon: true,
         persist: false,
-        duration: const Duration(seconds: 3),
+        duration: Duration(seconds: wasRemoved ? 5 : 3),
       ),
     );
   }
 
   Future<void> _confirmNewSet() async {
-    final undoneCount = _todaysTasks.where(
-      (t) => !_completedIds.contains(t.id),
+    final replaceableCount = _todaysTasks.where(
+      (t) => !_completedIds.contains(t.id) && !_pinnedIds.contains(t.id),
     ).length;
-    final message = undoneCount == _todaysTasks.length
-        ? 'Replace all tasks with a fresh set of 5?'
-        : 'Replace $undoneCount undone ${undoneCount == 1 ? 'task' : 'tasks'} with new picks? Done tasks will stay.';
+    final pinnedCount = _todaysTasks.where(
+      (t) => _pinnedIds.contains(t.id) && !_completedIds.contains(t.id),
+    ).length;
+    final String message;
+    if (replaceableCount == 0) {
+      message = 'All tasks are done or pinned — nothing to replace.';
+    } else if (pinnedCount > 0) {
+      message = 'Replace $replaceableCount undone ${replaceableCount == 1 ? 'task' : 'tasks'} '
+          'with new picks? Done and pinned tasks will stay.';
+    } else if (replaceableCount == _todaysTasks.length) {
+      message = 'Replace all tasks with a fresh set of 5?';
+    } else {
+      message = 'Replace $replaceableCount undone ${replaceableCount == 1 ? 'task' : 'tasks'} '
+          'with new picks? Done tasks will stay.';
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('New set?'),
         content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          if (replaceableCount > 0)
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Replace'),
+            ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _generateNewSet();
+  }
+
+  Future<void> _confirmSwapTask(int index) async {
+    final task = _todaysTasks[index];
+    final isPinned = _pinnedIds.contains(task.id);
+    final colorScheme = Theme.of(context).colorScheme;
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isPinned)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Row(
+                    children: [
+                      Icon(Icons.push_pin, size: 16, color: colorScheme.tertiary),
+                      const SizedBox(width: 6),
+                      Text(
+                        'This task was manually pinned.',
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ListTile(
+                leading: Icon(Icons.shuffle, color: colorScheme.onSurfaceVariant),
+                title: const Text('Random replacement'),
+                subtitle: const Text('Replace with a randomly picked task'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  if (isPinned) {
+                    _confirmUnpinAndSwap(index);
+                  } else {
+                    _swapTask(index);
+                  }
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.checklist, color: colorScheme.primary),
+                title: const Text('Choose a task'),
+                subtitle: const Text('Pick a specific task for this slot'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickAndPinTask(index);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Shows extra confirmation when randomly replacing a pinned task.
+  Future<void> _confirmUnpinAndSwap(int index) async {
+    final task = _todaysTasks[index];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Replace pinned task?'),
+        content: Text('"${task.name}" was manually pinned. Replace it with a random task?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -538,29 +769,71 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         ],
       ),
     );
-    if (confirmed == true) await _generateNewSet();
+    if (confirmed == true) {
+      _pinnedIds.remove(task.id);
+      await _swapTask(index);
+    }
   }
 
-  Future<void> _confirmSwapTask(int index) async {
-    final task = _todaysTasks[index];
-    final confirmed = await showDialog<bool>(
+  /// Opens TaskPickerDialog to let the user choose a task for a slot, then pins it.
+  Future<void> _pickAndPinTask(int index) async {
+    final provider = context.read<TaskProvider>();
+    final allLeaves = await provider.getAllLeafTasks();
+    final leafIds = allLeaves.map((t) => t.id!).toList();
+    final blockedIds = await provider.getBlockedChildIds(leafIds);
+
+    final currentIds = _todaysTasks.map((t) => t.id).toSet();
+    final eligible = allLeaves.where(
+      (t) => !currentIds.contains(t.id) &&
+             !blockedIds.contains(t.id) &&
+             !t.isWorkedOnToday,
+    ).toList();
+
+    if (eligible.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No other tasks available to pick'), showCloseIcon: true, persist: false),
+        );
+      }
+      return;
+    }
+
+    final parentNamesMap = await provider.getParentNamesForTaskIds(
+      eligible.map((t) => t.id!).toList(),
+    );
+
+    if (!mounted) return;
+    final picked = await showDialog<Task>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Swap task?'),
-        content: Text('Replace "${task.name}" with another task?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Swap'),
-          ),
-        ],
+      builder: (ctx) => TaskPickerDialog(
+        candidates: eligible,
+        title: 'Pick a task',
+        parentNamesMap: parentNamesMap,
       ),
     );
-    if (confirmed == true) await _swapTask(index);
+    if (picked == null || !mounted) return;
+
+    final oldTask = _todaysTasks[index];
+    final wasPinned = _pinnedIds.remove(oldTask.id);
+    // Always pin the picked task (we just freed a slot if old was pinned)
+    final newPins = TodaysFivePinHelper.togglePinInPlace(_pinnedIds, picked.id!);
+    if (newPins == null) {
+      // Restore old pin if we can't fit the new one
+      if (wasPinned) _pinnedIds.add(oldTask.id!);
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
+        );
+      }
+      return;
+    }
+    _pinnedIds.clear();
+    _pinnedIds.addAll(newPins);
+    setState(() {
+      _todaysTasks[index] = picked;
+    });
+    await _persist();
   }
 
   Future<void> _swapTask(int index) async {
@@ -686,7 +959,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
               );
             },
           ),
-          if (completedCount < totalCount)
+          if (_todaysTasks.any((t) =>
+              !_completedIds.contains(t.id) && !_pinnedIds.contains(t.id)))
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: _confirmNewSet,
@@ -732,33 +1006,93 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            // Task list + other done today
+            // Task list — pinned undone tasks on top as "Must do"
             Expanded(
-              child: ListView(
-                children: [
-                  ..._todaysTasks.asMap().entries.map((entry) {
-                    final index = entry.key;
-                    final task = entry.value;
-                    final isDone = _completedIds.contains(task.id);
-                    return _buildTaskCard(context, task, index, isDone);
-                  }),
-                  if (_otherDoneToday.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      'Also done today',
-                      style: textTheme.titleSmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    _buildOtherDoneSection(context),
-                  ],
-                ],
-              ),
+              child: _buildTaskList(context, colorScheme, textTheme),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildTaskList(BuildContext context, ColorScheme colorScheme, TextTheme textTheme) {
+    // Split into pinned-undone ("Must do") and the rest
+    final mustDo = <int>[]; // indices into _todaysTasks
+    final rest = <int>[];
+    for (int i = 0; i < _todaysTasks.length; i++) {
+      final task = _todaysTasks[i];
+      final isDone = _completedIds.contains(task.id);
+      if (_pinnedIds.contains(task.id) && !isDone) {
+        mustDo.add(i);
+      } else {
+        rest.add(i);
+      }
+    }
+
+    if (mustDo.isEmpty) {
+      // No pinned tasks — flat list, no headers
+      return ListView(
+        children: [
+          ..._todaysTasks.asMap().entries.map((entry) {
+            final index = entry.key;
+            final task = entry.value;
+            final isDone = _completedIds.contains(task.id);
+            return _buildTaskCard(context, task, index, isDone);
+          }),
+          if (_otherDoneToday.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text(
+              'Also done today',
+              style: textTheme.titleSmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 8),
+            _buildOtherDoneSection(context),
+          ],
+        ],
+      );
+    }
+
+    return ListView(
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Text(
+            'Must do',
+            style: textTheme.labelMedium?.copyWith(
+              color: colorScheme.tertiary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        for (final i in mustDo)
+          _buildTaskCard(context, _todaysTasks[i], i, false),
+        if (rest.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 4),
+            child: Text(
+              'Also on the table',
+              style: textTheme.labelMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        for (final i in rest)
+          _buildTaskCard(context, _todaysTasks[i], i, _completedIds.contains(_todaysTasks[i].id)),
+        if (_otherDoneToday.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Text(
+            'Also done today',
+            style: textTheme.titleSmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 8),
+          _buildOtherDoneSection(context),
+        ],
+      ],
     );
   }
 
@@ -812,6 +1146,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (_pinnedIds.contains(task.id) && !isDone)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Icon(Icons.push_pin, size: 14,
+                          color: colorScheme.tertiary),
+                    ),
                   if (task.isHighPriority)
                     Padding(
                       padding: const EdgeInsets.only(right: 4),
@@ -836,20 +1176,45 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (!isDone)
+                PinButton(
+                  isPinned: _pinnedIds.contains(task.id),
+                  onToggle: () {
+                    final result = TodaysFivePinHelper.togglePinInPlace(
+                      _pinnedIds, task.id!,
+                    );
+                    if (result == null) {
+                      ScaffoldMessenger.of(context).clearSnackBars();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
+                      );
+                    } else {
+                      setState(() {
+                        _pinnedIds.clear();
+                        _pinnedIds.addAll(result);
+                      });
+                      _persistAndTrim();
+                    }
+                  },
+                ),
+              if (!isDone)
                 IconButton(
-                  icon: const Icon(Icons.shuffle, size: 20),
+                  icon: const Icon(Icons.shuffle, size: 18),
                   onPressed: () => _confirmSwapTask(index),
                   tooltip: 'Swap task',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 ),
               if (widget.onNavigateToTask != null && !task.isCompleted)
                 IconButton(
-                  icon: const Icon(Icons.open_in_new, size: 20),
+                  icon: const Icon(Icons.open_in_new, size: 18),
                   onPressed: () => widget.onNavigateToTask!(task),
                   tooltip: 'Go to task',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 ),
               if (task.isCompleted)
                 IconButton(
-                  icon: const Icon(archiveIcon, size: 20),
+                  icon: const Icon(archiveIcon, size: 18),
                   onPressed: () async {
                     await Navigator.push(
                       context,
@@ -860,6 +1225,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                     if (mounted) await refreshSnapshots();
                   },
                   tooltip: 'View in archive',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 ),
             ],
           ),

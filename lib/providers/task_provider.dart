@@ -79,7 +79,7 @@ class TaskProvider extends ChangeNotifier {
     await _refreshCurrentList();
   }
 
-  Future<void> addTask(String name, {List<int>? additionalParentIds}) async {
+  Future<int> addTask(String name, {List<int>? additionalParentIds}) async {
     final task = Task(name: name);
     final taskId = await _db.insertTask(task);
 
@@ -96,6 +96,7 @@ class TaskProvider extends ChangeNotifier {
     }
 
     await _refreshCurrentList();
+    return taskId;
   }
 
   /// Deletes a task and returns info needed for undo.
@@ -634,11 +635,32 @@ class TaskProvider extends ChangeNotifier {
     } else {
       _tasks = await _db.getChildren(_currentParent!.id!);
     }
-    // Sort worked-on-today tasks to the end, preserving DB order otherwise
+    // Load today's 5 IDs and pinned IDs for sort priority
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final todaysData = await _db.getTodaysFiveTaskAndPinIds(today);
+    final pinnedIds = todaysData.pinnedIds;
+    final todaysFiveIds = todaysData.taskIds;
+
+    // Sort tiers (lower = higher priority):
+    // 0: pinned in Today's 5
+    // 1: high priority (from DB order — already sorted by priority DESC)
+    // 2: in Today's 5 (unpinned)
+    // 3: normal
+    // 4: worked-on-today (push to end)
+    int sortTier(Task t) {
+      if (t.isWorkedOnToday) return 4;
+      if (pinnedIds.contains(t.id)) return 0;
+      if (t.isHighPriority) return 1;
+      if (todaysFiveIds.contains(t.id)) return 2;
+      return 3;
+    }
+
     _tasks.sort((a, b) {
-      final aWorked = a.isWorkedOnToday ? 1 : 0;
-      final bWorked = b.isWorkedOnToday ? 1 : 0;
-      return aWorked.compareTo(bWorked);
+      final tierA = sortTier(a);
+      final tierB = sortTier(b);
+      if (tierA != tierB) return tierA.compareTo(tierB);
+      return 0; // preserve DB order within same tier
     });
     await _loadAuxiliaryData();
     _reorderByDependencyChains();

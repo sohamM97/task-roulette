@@ -14,12 +14,14 @@ class TodaysFiveData {
   final List<int> taskIds;
   final Set<int> completedIds;
   final Set<int> workedOnIds;
+  final Set<int> pinnedIds;
 
   const TodaysFiveData({
     required this.date,
     required this.taskIds,
     required this.completedIds,
     required this.workedOnIds,
+    this.pinnedIds = const {},
   });
 }
 
@@ -64,7 +66,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 13,
+      version: 14,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -129,7 +131,8 @@ class DatabaseHelper {
             task_id INTEGER NOT NULL,
             is_completed INTEGER NOT NULL DEFAULT 0,
             is_worked_on INTEGER NOT NULL DEFAULT 0,
-            sort_order INTEGER NOT NULL DEFAULT 0
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            is_pinned INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute('CREATE INDEX idx_todays_five_state_date ON todays_five_state(date)');
@@ -236,6 +239,9 @@ class DatabaseHelper {
           ''');
           await db.execute('CREATE INDEX idx_todays_five_state_date ON todays_five_state(date)');
         }
+        if (oldVersion < 14) {
+          await db.execute('ALTER TABLE todays_five_state ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0');
+        }
       },
     );
   }
@@ -278,9 +284,9 @@ class DatabaseHelper {
       // Check schema version is compatible
       final versionResult = await testDb.rawQuery('PRAGMA user_version');
       final version = versionResult.first.values.first as int;
-      if (version < 1 || version > 13) {
+      if (version < 1 || version > 14) {
         throw FormatException(
-          'Incompatible backup version ($version). This app supports versions 1-13.',
+          'Incompatible backup version ($version). This app supports versions 1-14.',
         );
       }
 
@@ -1405,6 +1411,58 @@ class DatabaseHelper {
     return _tasksFromMaps(maps);
   }
 
+  /// Returns all active leaf descendants of [taskId].
+  /// A leaf descendant is one with no active (non-completed, non-skipped) children.
+  Future<List<Task>> getLeafDescendants(int taskId) async {
+    final db = await database;
+    final maps = await db.rawQuery('''
+      WITH RECURSIVE descendants(id) AS (
+        SELECT child_id FROM task_relationships WHERE parent_id = ?
+        UNION
+        SELECT tr.child_id FROM task_relationships tr
+        INNER JOIN descendants d ON tr.parent_id = d.id
+      )
+      SELECT t.* FROM tasks t
+      INNER JOIN descendants d ON t.id = d.id
+      WHERE t.completed_at IS NULL
+      AND t.skipped_at IS NULL
+      AND t.id NOT IN (
+        SELECT DISTINCT tr2.parent_id FROM task_relationships tr2
+        INNER JOIN tasks c ON tr2.child_id = c.id
+        WHERE c.completed_at IS NULL AND c.skipped_at IS NULL
+      )
+    ''', [taskId]);
+    return _tasksFromMaps(maps);
+  }
+
+  /// Returns the set of task IDs (from the given list) that have at least one
+  /// descendant which is in progress (started_at IS NOT NULL AND completed_at IS NULL).
+  /// Uses a single query with a recursive CTE from all started tasks upward
+  /// to find which ancestors have started descendants.
+  Future<Set<int>> getTaskIdsWithStartedDescendants(List<int> taskIds) async {
+    if (taskIds.isEmpty) return {};
+    final db = await database;
+    // Walk upward from all started tasks to find their ancestors,
+    // then intersect with the requested taskIds.
+    final placeholders = taskIds.map((_) => '?').join(',');
+    final rows = await db.rawQuery('''
+      WITH RECURSIVE ancestors(id) AS (
+        -- Start from parents of all in-progress tasks
+        SELECT tr.parent_id FROM task_relationships tr
+        INNER JOIN tasks t ON tr.child_id = t.id
+        WHERE t.started_at IS NOT NULL AND t.completed_at IS NULL AND t.skipped_at IS NULL
+        UNION
+        -- Walk upward through parent relationships
+        SELECT tr.parent_id
+        FROM task_relationships tr
+        INNER JOIN ancestors a ON tr.child_id = a.id
+      )
+      SELECT DISTINCT id FROM ancestors
+      WHERE id IN ($placeholders)
+    ''', taskIds);
+    return rows.map((r) => r['id'] as int).toSet();
+  }
+
   // --- Today's 5 state methods ---
 
   /// Saves Today's 5 state to the DB, replacing any existing data for [date].
@@ -1413,6 +1471,7 @@ class DatabaseHelper {
     required List<int> taskIds,
     required Set<int> completedIds,
     required Set<int> workedOnIds,
+    Set<int> pinnedIds = const {},
   }) async {
     final db = await database;
     await db.transaction((txn) async {
@@ -1425,6 +1484,7 @@ class DatabaseHelper {
           'is_completed': completedIds.contains(id) ? 1 : 0,
           'is_worked_on': workedOnIds.contains(id) ? 1 : 0,
           'sort_order': i,
+          'is_pinned': pinnedIds.contains(id) ? 1 : 0,
         });
       }
     });
@@ -1443,17 +1503,20 @@ class DatabaseHelper {
     final taskIds = <int>[];
     final completedIds = <int>{};
     final workedOnIds = <int>{};
+    final pinnedIds = <int>{};
     for (final row in rows) {
       final taskId = row['task_id'] as int;
       taskIds.add(taskId);
       if (row['is_completed'] == 1) completedIds.add(taskId);
       if (row['is_worked_on'] == 1) workedOnIds.add(taskId);
+      if (row['is_pinned'] == 1) pinnedIds.add(taskId);
     }
     return TodaysFiveData(
       date: date,
       taskIds: taskIds,
       completedIds: completedIds,
       workedOnIds: workedOnIds,
+      pinnedIds: pinnedIds,
     );
   }
 
@@ -1467,6 +1530,25 @@ class DatabaseHelper {
       whereArgs: [date],
     );
     return rows.map((r) => r['task_id'] as int).toSet();
+  }
+
+  /// Returns task IDs and pinned IDs for today's five.
+  Future<({Set<int> taskIds, Set<int> pinnedIds})> getTodaysFiveTaskAndPinIds(String date) async {
+    final db = await database;
+    final rows = await db.query(
+      'todays_five_state',
+      columns: ['task_id', 'is_pinned'],
+      where: 'date = ?',
+      whereArgs: [date],
+    );
+    final taskIds = <int>{};
+    final pinnedIds = <int>{};
+    for (final row in rows) {
+      final id = row['task_id'] as int;
+      taskIds.add(id);
+      if (row['is_pinned'] == 1) pinnedIds.add(id);
+    }
+    return (taskIds: taskIds, pinnedIds: pinnedIds);
   }
 
   /// Migrates Today's 5 state from SharedPreferences to the DB (idempotent).

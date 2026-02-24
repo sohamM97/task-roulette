@@ -2084,4 +2084,628 @@ void main() {
       expect(tasks, isEmpty);
     });
   });
+
+  group('Today\'s 5 state with pinnedIds', () {
+    test('save with pinned IDs, load back, verify pinnedIds', () async {
+      final id1 = await db.insertTask(Task(name: 'Task 1'));
+      final id2 = await db.insertTask(Task(name: 'Task 2'));
+      final id3 = await db.insertTask(Task(name: 'Task 3'));
+
+      await db.saveTodaysFiveState(
+        date: '2026-02-24',
+        taskIds: [id1, id2, id3],
+        completedIds: {id2},
+        workedOnIds: {id1},
+        pinnedIds: {id1, id3},
+      );
+
+      final loaded = await db.loadTodaysFiveState('2026-02-24');
+      expect(loaded, isNotNull);
+      expect(loaded!.taskIds, [id1, id2, id3]);
+      expect(loaded.completedIds, {id2});
+      expect(loaded.workedOnIds, {id1});
+      expect(loaded.pinnedIds, {id1, id3});
+    });
+
+    test('save without pinnedIds defaults to empty', () async {
+      final id1 = await db.insertTask(Task(name: 'Task A'));
+      final id2 = await db.insertTask(Task(name: 'Task B'));
+
+      await db.saveTodaysFiveState(
+        date: '2026-02-24',
+        taskIds: [id1, id2],
+        completedIds: {},
+        workedOnIds: {},
+      );
+
+      final loaded = await db.loadTodaysFiveState('2026-02-24');
+      expect(loaded, isNotNull);
+      expect(loaded!.pinnedIds, isEmpty);
+    });
+
+    test('update pinnedIds by saving again with different pins', () async {
+      final id1 = await db.insertTask(Task(name: 'Task 1'));
+      final id2 = await db.insertTask(Task(name: 'Task 2'));
+      final id3 = await db.insertTask(Task(name: 'Task 3'));
+
+      await db.saveTodaysFiveState(
+        date: '2026-02-24',
+        taskIds: [id1, id2, id3],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {id1},
+      );
+
+      // Update with different pinned IDs
+      await db.saveTodaysFiveState(
+        date: '2026-02-24',
+        taskIds: [id1, id2, id3],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {id2, id3},
+      );
+
+      final loaded = await db.loadTodaysFiveState('2026-02-24');
+      expect(loaded, isNotNull);
+      expect(loaded!.pinnedIds, {id2, id3});
+      expect(loaded.pinnedIds, isNot(contains(id1)));
+    });
+
+    test('loadTodaysFiveState returns null for nonexistent date', () async {
+      final loaded = await db.loadTodaysFiveState('1999-01-01');
+      expect(loaded, isNull);
+    });
+  });
+
+  group('getTodaysFiveTaskAndPinIds', () {
+    test('returns both taskIds and pinnedIds', () async {
+      final id1 = await db.insertTask(Task(name: 'Task 1'));
+      final id2 = await db.insertTask(Task(name: 'Task 2'));
+      final id3 = await db.insertTask(Task(name: 'Task 3'));
+
+      await db.saveTodaysFiveState(
+        date: '2026-02-24',
+        taskIds: [id1, id2, id3],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {id1, id3},
+      );
+
+      final result = await db.getTodaysFiveTaskAndPinIds('2026-02-24');
+      expect(result.taskIds, {id1, id2, id3});
+      expect(result.pinnedIds, {id1, id3});
+    });
+
+    test('returns empty sets for nonexistent date', () async {
+      final result = await db.getTodaysFiveTaskAndPinIds('1999-01-01');
+      expect(result.taskIds, isEmpty);
+      expect(result.pinnedIds, isEmpty);
+    });
+  });
+
+  group('getLeafDescendants', () {
+    test('returns leaf descendants of a parent tree', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child1 = await db.insertTask(Task(name: 'Child 1 (leaf)'));
+      final child2 = await db.insertTask(Task(name: 'Child 2'));
+      final grandchild = await db.insertTask(Task(name: 'Grandchild (leaf)'));
+
+      await db.addRelationship(parent, child1);
+      await db.addRelationship(parent, child2);
+      await db.addRelationship(child2, grandchild);
+
+      final leaves = await db.getLeafDescendants(parent);
+      final leafIds = leaves.map((t) => t.id).toSet();
+
+      expect(leafIds, contains(child1));
+      expect(leafIds, contains(grandchild));
+      expect(leafIds, isNot(contains(child2))); // child2 has children
+      expect(leafIds, isNot(contains(parent)));
+      expect(leafIds, hasLength(2));
+    });
+
+    test('excludes completed and skipped descendants', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child1 = await db.insertTask(Task(name: 'Active leaf'));
+      final child2 = await db.insertTask(Task(name: 'Completed leaf'));
+      final child3 = await db.insertTask(Task(name: 'Skipped leaf'));
+
+      await db.addRelationship(parent, child1);
+      await db.addRelationship(parent, child2);
+      await db.addRelationship(parent, child3);
+
+      await db.completeTask(child2);
+      await db.skipTask(child3);
+
+      final leaves = await db.getLeafDescendants(parent);
+      final leafIds = leaves.map((t) => t.id).toSet();
+
+      expect(leafIds, {child1});
+    });
+
+    test('task with no descendants returns empty', () async {
+      final lonely = await db.insertTask(Task(name: 'No children'));
+      final leaves = await db.getLeafDescendants(lonely);
+      expect(leaves, isEmpty);
+    });
+
+    test('treats child as leaf when its children are all completed', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      final grandchild = await db.insertTask(Task(name: 'Grandchild'));
+
+      await db.addRelationship(parent, child);
+      await db.addRelationship(child, grandchild);
+
+      await db.completeTask(grandchild);
+
+      final leaves = await db.getLeafDescendants(parent);
+      final leafIds = leaves.map((t) => t.id).toSet();
+
+      // child's only child is completed, so child becomes a leaf
+      expect(leafIds, {child});
+    });
+  });
+
+  group('getTaskIdsWithStartedDescendants', () {
+    test('parent with a started child is included', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Started child'));
+
+      await db.addRelationship(parent, child);
+      await db.startTask(child);
+
+      final result = await db.getTaskIdsWithStartedDescendants([parent]);
+      expect(result, {parent});
+    });
+
+    test('parent with no started children returns empty', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Not started child'));
+
+      await db.addRelationship(parent, child);
+
+      final result = await db.getTaskIdsWithStartedDescendants([parent]);
+      expect(result, isEmpty);
+    });
+
+    test('empty input returns empty set', () async {
+      final result = await db.getTaskIdsWithStartedDescendants([]);
+      expect(result, isEmpty);
+    });
+
+    test('deep chain: A -> B -> C (started) returns A', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final c = await db.insertTask(Task(name: 'C'));
+
+      await db.addRelationship(a, b);
+      await db.addRelationship(b, c);
+      await db.startTask(c);
+
+      final result = await db.getTaskIdsWithStartedDescendants([a]);
+      expect(result, {a});
+    });
+
+    test('deep chain: querying middle node also works', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final c = await db.insertTask(Task(name: 'C'));
+
+      await db.addRelationship(a, b);
+      await db.addRelationship(b, c);
+      await db.startTask(c);
+
+      final result = await db.getTaskIdsWithStartedDescendants([a, b]);
+      expect(result, {a, b});
+    });
+
+    test('completed started task is not counted', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+
+      await db.addRelationship(parent, child);
+      await db.startTask(child);
+      await db.completeTask(child);
+
+      final result = await db.getTaskIdsWithStartedDescendants([parent]);
+      expect(result, isEmpty);
+    });
+  });
+
+  group('Backup version check accepts version 14', () {
+    late Directory tempDir;
+    late String mainDbPath;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('task_roulette_test_');
+      mainDbPath = '${tempDir.path}/main.db';
+    });
+
+    tearDown(() async {
+      DatabaseHelper.testDatabasePath = inMemoryDatabasePath;
+      await db.reset();
+      await tempDir.delete(recursive: true);
+    });
+
+    test('accepts valid backup with version 14', () async {
+      DatabaseHelper.testDatabasePath = mainDbPath;
+      await db.reset();
+      await db.database;
+
+      final v14DbPath = '${tempDir.path}/v14.db';
+      final v14Db = await openDatabase(v14DbPath, version: 14,
+        onCreate: (db, version) async {
+          await db.execute('CREATE TABLE tasks (id INTEGER PRIMARY KEY, name TEXT)');
+          await db.execute('CREATE TABLE task_relationships (parent_id INTEGER, child_id INTEGER)');
+          await db.execute('CREATE TABLE task_dependencies (task_id INTEGER, depends_on_task_id INTEGER)');
+        },
+      );
+      await v14Db.close();
+
+      // Should not throw — version 14 is within accepted range
+      await db.importDatabase(v14DbPath);
+    });
+
+    test('rejects version 15 as too high', () async {
+      DatabaseHelper.testDatabasePath = mainDbPath;
+      await db.reset();
+      await db.database;
+
+      final v15DbPath = '${tempDir.path}/v15.db';
+      final v15Db = await openDatabase(v15DbPath, version: 15,
+        onCreate: (db, version) async {
+          await db.execute('CREATE TABLE tasks (id INTEGER PRIMARY KEY, name TEXT)');
+          await db.execute('CREATE TABLE task_relationships (parent_id INTEGER, child_id INTEGER)');
+          await db.execute('CREATE TABLE task_dependencies (task_id INTEGER, depends_on_task_id INTEGER)');
+        },
+      );
+      await v15Db.close();
+
+      expect(
+        () => db.importDatabase(v15DbPath),
+        throwsA(isA<FormatException>().having(
+          (e) => e.message, 'message', contains('Incompatible backup version'),
+        )),
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Pin business rules — simulates _togglePinInTodays5 / _pinNewTaskInTodays5
+  // logic from task_list_screen.dart against the real DB layer.
+  // ---------------------------------------------------------------------------
+  group('Pin business rules', () {
+    const date = '2026-02-24';
+
+    /// Helper: simulates _togglePinInTodays5 logic (pure DB, no widget).
+    /// Returns the resulting (taskIds, pinnedIds) or null if no-op / blocked.
+    Future<({List<int> taskIds, Set<int> pinnedIds})?> togglePin(
+      DatabaseHelper db, int taskId,
+    ) async {
+      final saved = await db.loadTodaysFiveState(date);
+      if (saved == null) return null;
+      final taskIds = List<int>.from(saved.taskIds);
+      final pinnedIds = Set<int>.from(saved.pinnedIds);
+
+      if (pinnedIds.contains(taskId)) {
+        pinnedIds.remove(taskId);
+      } else {
+        if (pinnedIds.length >= 5) return null; // max 5 pins
+        pinnedIds.add(taskId);
+        if (!taskIds.contains(taskId)) {
+          int? replaceIndex;
+          for (int i = taskIds.length - 1; i >= 0; i--) {
+            final id = taskIds[i];
+            if (!saved.completedIds.contains(id) && !pinnedIds.contains(id)) {
+              replaceIndex = i;
+              break;
+            }
+          }
+          if (replaceIndex != null) {
+            taskIds[replaceIndex] = taskId;
+          } else if (taskIds.length < 10) {
+            taskIds.add(taskId);
+          } else {
+            pinnedIds.remove(taskId);
+            return null;
+          }
+        }
+      }
+
+      await db.saveTodaysFiveState(
+        date: date, taskIds: taskIds,
+        completedIds: saved.completedIds, workedOnIds: saved.workedOnIds,
+        pinnedIds: pinnedIds,
+      );
+      return (taskIds: taskIds, pinnedIds: pinnedIds);
+    }
+
+    /// Helper: simulates _pinNewTaskInTodays5 logic.
+    Future<({List<int> taskIds, Set<int> pinnedIds})?> pinNewTask(
+      DatabaseHelper db, int taskId,
+    ) async {
+      final saved = await db.loadTodaysFiveState(date);
+      if (saved == null) return null;
+      final taskIds = List<int>.from(saved.taskIds);
+      final completedIds = saved.completedIds;
+      final pinnedIds = Set<int>.from(saved.pinnedIds);
+
+      if (pinnedIds.length >= 5) return null;
+
+      int? replaceIndex;
+      for (int i = taskIds.length - 1; i >= 0; i--) {
+        final id = taskIds[i];
+        if (!completedIds.contains(id) && !pinnedIds.contains(id)) {
+          replaceIndex = i;
+          break;
+        }
+      }
+
+      if (replaceIndex != null) {
+        taskIds[replaceIndex] = taskId;
+      } else if (taskIds.length < 10) {
+        taskIds.add(taskId);
+      } else {
+        return null;
+      }
+
+      pinnedIds.add(taskId);
+      await db.saveTodaysFiveState(
+        date: date, taskIds: taskIds,
+        completedIds: completedIds, workedOnIds: saved.workedOnIds,
+        pinnedIds: pinnedIds,
+      );
+      return (taskIds: taskIds, pinnedIds: pinnedIds);
+    }
+
+    test('pin a task already in Today\'s 5', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 5; i++) {
+        ids.add(await db.insertTask(Task(name: 'T$i')));
+      }
+      await db.saveTodaysFiveState(
+        date: date, taskIds: ids, completedIds: {}, workedOnIds: {},
+      );
+
+      final result = await togglePin(db, ids[2]);
+      expect(result, isNotNull);
+      expect(result!.pinnedIds, {ids[2]});
+      expect(result.taskIds, ids); // list unchanged
+    });
+
+    test('unpin a pinned task', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 5; i++) {
+        ids.add(await db.insertTask(Task(name: 'T$i')));
+      }
+      await db.saveTodaysFiveState(
+        date: date, taskIds: ids, completedIds: {}, workedOnIds: {},
+        pinnedIds: {ids[0], ids[1]},
+      );
+
+      final result = await togglePin(db, ids[0]);
+      expect(result, isNotNull);
+      expect(result!.pinnedIds, {ids[1]}); // ids[0] removed
+      expect(result.taskIds, ids); // list unchanged
+    });
+
+    test('pin external task replaces last unpinned undone slot', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 5; i++) {
+        ids.add(await db.insertTask(Task(name: 'T$i')));
+      }
+      // Pin first two, leave rest unpinned
+      await db.saveTodaysFiveState(
+        date: date, taskIds: ids, completedIds: {}, workedOnIds: {},
+        pinnedIds: {ids[0], ids[1]},
+      );
+
+      final external = await db.insertTask(Task(name: 'External'));
+      final result = await togglePin(db, external);
+      expect(result, isNotNull);
+      // External replaces last unpinned undone (ids[4])
+      expect(result!.taskIds, contains(external));
+      expect(result.taskIds, isNot(contains(ids[4])));
+      expect(result.pinnedIds, {ids[0], ids[1], external});
+      expect(result.taskIds.length, 5); // still 5 total
+    });
+
+    test('pin external task appends when all slots are done or pinned', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 5; i++) {
+        ids.add(await db.insertTask(Task(name: 'T$i')));
+      }
+      // Pin 2, complete the other 3
+      await db.saveTodaysFiveState(
+        date: date, taskIds: ids,
+        completedIds: {ids[2], ids[3], ids[4]}, workedOnIds: {},
+        pinnedIds: {ids[0], ids[1]},
+      );
+
+      final external = await db.insertTask(Task(name: 'External'));
+      final result = await togglePin(db, external);
+      expect(result, isNotNull);
+      expect(result!.taskIds.length, 6); // appended
+      expect(result.taskIds.last, external);
+      expect(result.pinnedIds, {ids[0], ids[1], external});
+    });
+
+    test('max 5 pins blocks 6th pin', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 5; i++) {
+        ids.add(await db.insertTask(Task(name: 'T$i')));
+      }
+      await db.saveTodaysFiveState(
+        date: date, taskIds: ids, completedIds: {}, workedOnIds: {},
+        pinnedIds: ids.toSet(), // all 5 pinned
+      );
+
+      final external = await db.insertTask(Task(name: 'Sixth'));
+      final result = await togglePin(db, external);
+      expect(result, isNull); // blocked
+
+      // Verify DB unchanged
+      final saved = await db.loadTodaysFiveState(date);
+      expect(saved!.taskIds, ids);
+      expect(saved.pinnedIds, ids.toSet());
+    });
+
+    test('max 10 total slots blocks append when full', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 10; i++) {
+        ids.add(await db.insertTask(Task(name: 'T$i')));
+      }
+      // Pin 4 of them, complete the other 6 (so no replaceable slot)
+      final pinned = ids.sublist(0, 4).toSet();
+      final completed = ids.sublist(4).toSet();
+      await db.saveTodaysFiveState(
+        date: date, taskIds: ids,
+        completedIds: completed, workedOnIds: {},
+        pinnedIds: pinned,
+      );
+
+      final external = await db.insertTask(Task(name: 'Eleventh'));
+      final result = await togglePin(db, external);
+      expect(result, isNull); // 10 slots full, no replaceable → blocked
+    });
+
+    test('appending respects 10-slot max', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 9; i++) {
+        ids.add(await db.insertTask(Task(name: 'T$i')));
+      }
+      // All completed, 2 pinned — no replaceable slots
+      await db.saveTodaysFiveState(
+        date: date, taskIds: ids,
+        completedIds: ids.toSet(), workedOnIds: {},
+        pinnedIds: {ids[0], ids[1]},
+      );
+
+      final external = await db.insertTask(Task(name: 'Tenth'));
+      final result = await togglePin(db, external);
+      expect(result, isNotNull);
+      expect(result!.taskIds.length, 10);
+      expect(result.taskIds.last, external);
+
+      // Now try an 11th — should fail (10 full, all done/pinned)
+      final external2 = await db.insertTask(Task(name: 'Eleventh'));
+      final result2 = await togglePin(db, external2);
+      expect(result2, isNull);
+    });
+
+    test('pin replaces last unpinned undone, not pinned or completed', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 5; i++) {
+        ids.add(await db.insertTask(Task(name: 'T$i')));
+      }
+      // ids[0] pinned, ids[1] completed, ids[2-4] unpinned undone
+      await db.saveTodaysFiveState(
+        date: date, taskIds: ids,
+        completedIds: {ids[1]}, workedOnIds: {},
+        pinnedIds: {ids[0]},
+      );
+
+      final external = await db.insertTask(Task(name: 'External'));
+      final result = await togglePin(db, external);
+      expect(result, isNotNull);
+      // Should replace ids[4] (last unpinned undone, searching from end)
+      expect(result!.taskIds[4], external);
+      expect(result.taskIds, contains(ids[0])); // pinned kept
+      expect(result.taskIds, contains(ids[1])); // completed kept
+      expect(result.taskIds, contains(ids[2])); // still there
+      expect(result.taskIds, contains(ids[3])); // still there
+      expect(result.taskIds, isNot(contains(ids[4]))); // replaced
+    });
+
+    // --- _pinNewTaskInTodays5 rules ---
+
+    test('pinNewTask replaces unpinned undone slot and pins it', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 5; i++) {
+        ids.add(await db.insertTask(Task(name: 'T$i')));
+      }
+      await db.saveTodaysFiveState(
+        date: date, taskIds: ids, completedIds: {}, workedOnIds: {},
+        pinnedIds: {ids[0]},
+      );
+
+      final newTask = await db.insertTask(Task(name: 'New'));
+      final result = await pinNewTask(db, newTask);
+      expect(result, isNotNull);
+      expect(result!.taskIds, contains(newTask));
+      expect(result.pinnedIds, {ids[0], newTask});
+      expect(result.taskIds.length, 5);
+    });
+
+    test('pinNewTask appends when no replaceable slot (all done/pinned)', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 5; i++) {
+        ids.add(await db.insertTask(Task(name: 'T$i')));
+      }
+      await db.saveTodaysFiveState(
+        date: date, taskIds: ids,
+        completedIds: {ids[2], ids[3], ids[4]}, workedOnIds: {},
+        pinnedIds: {ids[0], ids[1]},
+      );
+
+      final newTask = await db.insertTask(Task(name: 'New'));
+      final result = await pinNewTask(db, newTask);
+      expect(result, isNotNull);
+      expect(result!.taskIds.length, 6); // appended
+      expect(result.taskIds.last, newTask);
+      expect(result.pinnedIds, {ids[0], ids[1], newTask});
+    });
+
+    test('pinNewTask blocked when already 5 pins', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 5; i++) {
+        ids.add(await db.insertTask(Task(name: 'T$i')));
+      }
+      await db.saveTodaysFiveState(
+        date: date, taskIds: ids, completedIds: {}, workedOnIds: {},
+        pinnedIds: ids.toSet(),
+      );
+
+      final newTask = await db.insertTask(Task(name: 'New'));
+      final result = await pinNewTask(db, newTask);
+      expect(result, isNull); // blocked by max 5 pins
+    });
+
+    test('pinNewTask appends up to 10 then blocks', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 9; i++) {
+        ids.add(await db.insertTask(Task(name: 'T$i')));
+      }
+      // All completed, 2 pinned
+      await db.saveTodaysFiveState(
+        date: date, taskIds: ids,
+        completedIds: ids.toSet(), workedOnIds: {},
+        pinnedIds: {ids[0], ids[1]},
+      );
+
+      // 10th slot — should work
+      final task10 = await db.insertTask(Task(name: 'T9'));
+      final r1 = await pinNewTask(db, task10);
+      expect(r1, isNotNull);
+      expect(r1!.taskIds.length, 10);
+
+      // 11th — all 10 slots full, all completed/pinned → blocks
+      final task11 = await db.insertTask(Task(name: 'T10'));
+      final r2 = await pinNewTask(db, task11);
+      expect(r2, isNull);
+    });
+
+    test('pinNewTask with no saved state is a no-op', () async {
+      final newTask = await db.insertTask(Task(name: 'New'));
+      final result = await pinNewTask(db, newTask);
+      expect(result, isNull);
+    });
+
+    test('togglePin with no saved state is a no-op', () async {
+      final task = await db.insertTask(Task(name: 'T'));
+      final result = await togglePin(db, task);
+      expect(result, isNull);
+    });
+  });
 }

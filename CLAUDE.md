@@ -85,6 +85,7 @@ The goal of this app is **minimal cognitive load**. The user wants a quick place
 
 ## Development Preferences
 
+- **Always run `flutter analyze` before committing** and fix all issues including `info`-level ones (e.g. deprecated API usage). `flutter analyze` exits non-zero on any issue, so even infos fail CI.
 - Ask user about committing and pushing occasionally — don't wait until asked. But first remind them to review the changes and test on Linux (via `./dev.sh`, not `flutter build`) before committing.
 - Before pushing a new release (tagging a version), remind the user to test on their phone first.
 - **Always update `version:` in `pubspec.yaml`** to match the tag version before committing and tagging a release.
