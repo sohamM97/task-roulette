@@ -954,3 +954,463 @@ Future<void> _navigateToTask(Task task) async {
 3. **I-14** — Track completion type in Today's 5 for correct undo (20 min, `todays_five_screen.dart`)
 4. **M-13** — Await async `navigateToTask` in DAG view (2 min, `dag_view_screen.dart`)
 5. **Remaining open items** from Round 1/2/3 (I6, M3, M5, M6, M9, M-10, M-12, N1–N4) — as time permits
+
+---
+---
+
+## Round 5 (2026-02-24)
+
+Full codebase review after Pinned Tasks Phase 2 merge, cloud sync/auth feature
+addition, and version bump to 1.0.10. Verified all Round 4 items. Major focus
+on the new sync/auth layer and interactions with existing state management.
+
+---
+
+### Previous Round Verification
+
+- [x] I-13: `_completeNormalTask` re-fetches task snapshot — verified fixed, `_markDone` calls `_refreshTaskSnapshot` at `todays_five_screen.dart:559`
+- [x] I-14: Track completion type for correct undo — verified fixed, `_workedOnIds` and `_autoStartedIds` sets at `todays_five_screen.dart:27-31`, used in `_handleUncomplete` at line 618
+- [x] I-15: Archive undo no longer calls `reCompleteTask`/`reSkipTask` — verified fixed at `completed_tasks_screen.dart:101-111`
+- [x] M-13: `_navigateToTask` awaits async call — verified fixed at `dag_view_screen.dart:281-284`
+
+### Round 1/2/3 Items Still Open
+
+- I6: Loading indicators for async UI transitions — still open
+- M3: `_renameTask` dialog leaks TextEditingController — still open
+- M5: `BackupService` hardcodes Android download path — still open
+- M6: DAG view doesn't recompute layout on rotation — still open
+- M9: N+1 queries in `_addParent` for grandparent siblings — still open
+- M-10: `showEditUrlDialog` leaks TextEditingController — still open
+- M-12: Repeating task code is dead code — still open
+- N1–N4: All still open
+
+---
+
+### Critical
+
+#### CR-5. Sort tier bug — pinned tasks pushed to end when worked on today
+**File:** `lib/providers/task_provider.dart:651-657`
+
+The `sortTier()` function checks `isWorkedOnToday` BEFORE `pinnedIds.contains()`.
+Any pinned task that the user marks as "Done today" gets demoted to tier 4
+(bottom of list), defeating the purpose of pinning:
+
+```dart
+int sortTier(Task t) {
+  if (t.isWorkedOnToday) return 4;          // ← checked FIRST
+  if (pinnedIds.contains(t.id)) return 0;   // ← never reached if worked on
+  if (t.isHighPriority) return 1;
+  if (todaysFiveIds.contains(t.id)) return 2;
+  return 3;
+}
+```
+
+**Reproduction:**
+1. Pin a task in Today's 5
+2. Mark it "Done today"
+3. Navigate to All Tasks → pinned task is at the bottom instead of the top
+
+**Fix:** Check pinned status first:
+```dart
+int sortTier(Task t) {
+  if (pinnedIds.contains(t.id)) return 0;  // Pinned always on top
+  if (t.isWorkedOnToday) return 4;
+  if (t.isHighPriority) return 1;
+  if (todaysFiveIds.contains(t.id)) return 2;
+  return 3;
+}
+```
+
+---
+
+#### CR-6. Sync queue drained before processing — data loss on partial push failure
+**File:** `lib/services/sync_service.dart:251-284`
+
+`push()` calls `drainSyncQueue()` (line 251), which atomically deletes ALL queue
+entries and returns them. Then it processes them one-by-one (lines 252-284).
+If processing fails midway (network error, expired token on the 5th of 10
+entries), the remaining entries are permanently lost — they were already deleted
+from the queue.
+
+```dart
+// Line 251: ALL entries deleted from DB here
+final queue = await _db.drainSyncQueue();
+for (final entry in queue) {
+  // Lines 258-283: process one at a time — if this throws,
+  // remaining entries are gone forever
+  switch (entityType) {
+    case 'relationship':
+      await _firestore.pushRelationships(...);  // network call — can fail
+    // ...
+  }
+}
+```
+
+**Impact:** Relationship additions/removals, dependency changes, and task
+deletions can be silently lost during sync failures. The local DB is correct,
+but the cloud never receives the changes, causing permanent divergence.
+
+**Fix:** Process queue entries individually, deleting each only after
+successful push:
+```dart
+final queue = await _db.peekSyncQueue(); // read without deleting
+for (final entry in queue) {
+  // ... process entry ...
+  await _db.deleteSyncQueueEntry(entry['id'] as int); // delete after success
+}
+```
+
+---
+
+#### CR-7. `_getValidToken()` doesn't check token expiry — sync silently fails after 1 hour
+**File:** `lib/services/sync_service.dart:354-361`
+
+Firebase ID tokens expire after 1 hour. `_getValidToken()` only checks if the
+token is non-null — it doesn't check whether it's expired:
+
+```dart
+Future<String?> _getValidToken() async {
+  if (_authProvider.firebaseIdToken != null) {
+    return _authProvider.firebaseIdToken;  // returns expired token
+  }
+  final success = await _authProvider.refreshToken();
+  return success ? _authProvider.firebaseIdToken : null;
+}
+```
+
+After 1 hour, the token remains in memory (non-null) but is expired. All sync
+API calls receive 401 errors. Combined with CR-6, this means the sync queue
+gets drained and lost on the first push attempt after token expiry.
+
+**Fix:** Track token expiry time in `AuthService` and proactively refresh:
+```dart
+DateTime? _tokenExpiresAt;
+
+Future<String?> _getValidToken() async {
+  final token = _authProvider.firebaseIdToken;
+  if (token != null && _authProvider.tokenExpiresAt.isAfter(DateTime.now())) {
+    return token;
+  }
+  final success = await _authProvider.refreshToken();
+  return success ? _authProvider.firebaseIdToken : null;
+}
+```
+
+Firebase's token response includes `expires_in` (seconds). Parse it at sign-in
+and store `DateTime.now().add(Duration(seconds: expiresIn - 60))` (with 60s
+buffer).
+
+---
+
+### Important
+
+#### I-16. `pushRelationships` and `pushDependencies` don't check HTTP response status
+**File:** `lib/services/firestore_service.dart:82-86, 115-119`
+
+Both methods fire Firestore `:commit` requests but never check the response
+status code. Compare with `pushTasks()` (line 51) which correctly throws on
+non-200:
+
+```dart
+// pushTasks (correct):
+if (response.statusCode != 200) {
+  throw FirestoreException('Push tasks failed: ${response.statusCode}');
+}
+
+// pushRelationships (line 82-86 — no check):
+await http.post(commitUrl, headers: _headers(idToken), body: ...);
+// Silent — could be 401, 403, 500, etc.
+```
+
+**Impact:** Sync reports "synced" status even when relationships/dependencies
+failed to push. Cloud data silently diverges from local.
+
+**Fix:** Add the same status code check as `pushTasks()`:
+```dart
+final response = await http.post(commitUrl, ...);
+if (response.statusCode != 200) {
+  throw FirestoreException('Push relationships failed: ${response.statusCode}');
+}
+```
+
+---
+
+#### I-17. No concurrency guard on sync operations
+**File:** `lib/services/sync_service.dart`
+
+`push()`, `pull()`, `initialMigration()`, `replaceLocalWithCloud()`, and
+`mergeBoth()` have no mutual exclusion. They can run concurrently via:
+- Debounce timer fires `push()` while periodic timer fires `pull()`
+- User taps "Sync now" (`syncNow()` = `push()` + `pull()`) while a debounced
+  push is in-flight
+- `initialMigration()` runs while periodic pull starts
+
+Concurrent sync can cause: duplicate Firestore documents (push race), sync
+queue drained twice (data loss), and inconsistent `lastSyncAt` timestamps.
+
+**Fix:** Add a simple lock:
+```dart
+bool _syncing = false;
+
+Future<void> push() async {
+  if (_syncing || !_canSync) return;
+  _syncing = true;
+  try {
+    // ... existing logic
+  } finally {
+    _syncing = false;
+  }
+}
+```
+
+---
+
+#### I-18. Missing `mounted` checks in Today's 5 undo SnackBar handlers
+**File:** `lib/screens/todays_five_screen.dart:544-547, 567-569`
+
+The SnackBar undo callbacks perform multiple async operations followed by
+`_unmarkDone()` (which calls `setState()`) without any `mounted` check:
+
+```dart
+// Line 544-547
+onPressed: () async {
+  await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
+  if (!wasStarted) await provider.unstartTask(task.id!);
+  await _unmarkDone(task.id!, workedOn: true, autoStarted: !wasStarted);
+  // ↑ calls setState() — crashes if widget disposed between awaits
+},
+```
+
+Same pattern at line 567-569 for the "Done for good!" undo.
+
+**Fix:** Add `if (!mounted) return;` after each `await`:
+```dart
+onPressed: () async {
+  await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
+  if (!mounted) return;
+  if (!wasStarted) await provider.unstartTask(task.id!);
+  if (!mounted) return;
+  await _unmarkDone(task.id!, workedOn: true, autoStarted: !wasStarted);
+},
+```
+
+---
+
+#### I-19. Pin state not cleaned in `_swapTask` — stale pins and inflated pin count
+**File:** `lib/screens/todays_five_screen.dart:862-873`
+
+`_swapTask` replaces a task at an index with a random pick, but doesn't
+remove the old task's pin status. Compare with `_pickSpecificTask` (line 817)
+which correctly calls `_pinnedIds.remove(oldTask.id)`:
+
+```dart
+// _swapTask (line 862-863 — pin NOT removed):
+final picked = provider.pickWeightedN(eligible, 1);
+if (picked.isNotEmpty) {
+  _todaysTasks[index] = picked.first;  // old task's pin orphaned in _pinnedIds
+  // ...
+}
+
+// _pickSpecificTask (line 817 — pin correctly removed):
+final wasPinned = _pinnedIds.remove(oldTask.id);
+```
+
+**Impact:** `_pinnedIds` retains the old task's ID (no longer in `_todaysTasks`).
+`TodaysFivePinHelper` counts this as a valid pin, potentially blocking the user
+from pinning another task ("Max 5 pinned tasks" error when only 4 are visible).
+
+Same issue in `_replaceIfNoLongerLeaf` (line 605-611): replacement doesn't
+clean the old task's pin.
+
+**Fix:** Remove old pin before replacing in both methods:
+```dart
+// _swapTask:
+_pinnedIds.remove(_todaysTasks[index].id);
+_todaysTasks[index] = picked.first;
+
+// _replaceIfNoLongerLeaf:
+_pinnedIds.remove(_todaysTasks[idx].id);
+if (replacements.isNotEmpty) {
+  _todaysTasks[idx] = replacements.first;
+} else {
+  _todaysTasks.removeAt(idx);
+}
+```
+
+---
+
+#### I-20. Unsafe JSON cast in `pullTasksSince` — crashes on non-array response
+**File:** `lib/services/firestore_service.dart:290`
+
+The Firestore `:runQuery` response is cast to `List<dynamic>` without a
+type check. If Firestore returns an error object or unexpected format, this
+throws `TypeError` instead of a catchable `FirestoreException`:
+
+```dart
+final results = json.decode(response.body) as List<dynamic>;
+```
+
+**Scenario:** Firestore returns `{"error": {"code": 400, ...}}` (JSON object,
+not array) → `as List<dynamic>` throws `_CastError`.
+
+**Fix:** Add a type check:
+```dart
+final decoded = json.decode(response.body);
+if (decoded is! List) {
+  throw FirestoreException('Unexpected query response format');
+}
+final results = decoded;
+```
+
+---
+
+#### I-21. Sync-queue DB operations not transactional — data can diverge from sync state
+**File:** `lib/data/database_helper.dart:403-426, 721-745, 925-948, 950-974`
+
+Four methods perform relationship/dependency mutations followed by sync queue
+inserts as separate operations (not in a transaction):
+
+```dart
+// addRelationship (line 403-426):
+await db.insert('task_relationships', {...});  // step 1: mutate
+final rows = await db.rawQuery(...);           // step 2: fetch sync IDs
+await db.insert('sync_queue', {...});          // step 3: queue sync
+```
+
+If the app crashes between step 1 and step 3, the local DB has the change
+but the sync queue doesn't — the change never propagates to cloud.
+
+Same pattern in `removeRelationship`, `addDependency`, `removeDependency`.
+
+**Fix:** Wrap each method body in `db.transaction()`:
+```dart
+Future<void> addRelationship(int parentId, int childId) async {
+  final db = await database;
+  await db.transaction((txn) async {
+    await txn.insert('task_relationships', {...});
+    final rows = await txn.rawQuery(...);
+    if (syncIds.containsKey(parentId) && syncIds.containsKey(childId)) {
+      await txn.insert('sync_queue', {...});
+    }
+  });
+}
+```
+
+---
+
+#### I-22. Silent catch blocks in `AuthService` lose all error context
+**File:** `lib/services/auth_service.dart:83-85, 236-238`
+
+`silentSignIn()` and `_signInDesktop()` catch all exceptions with `catch (_)`
+and discard the error. This makes debugging auth failures impossible — the
+user just sees "sign in failed" with no indication of why:
+
+```dart
+// Line 83-85:
+} catch (_) {
+  // Token expired or revoked — user must sign in again
+}
+```
+
+In reality, the exception could be: network timeout, malformed JSON response,
+TLS error, SharedPreferences read failure, etc. All are indistinguishable.
+
+**Fix:** Log the actual exception (at minimum use `debugPrint`):
+```dart
+} catch (e) {
+  debugPrint('AuthService: silentSignIn failed: $e');
+}
+```
+
+---
+
+### Minor
+
+#### M-14. Firestore `integerValue` uses `.toString()` — incorrect type for structured query
+**File:** `lib/services/firestore_service.dart:281`
+
+The `updated_at` filter value is converted to string:
+```dart
+'value': {'integerValue': lastSyncAt.toString()},
+```
+
+Firestore REST API documents `integerValue` as a string-encoded 64-bit
+integer, so this technically works — but only because Firestore accepts the
+string representation. For consistency with how Firestore encodes other integer
+fields, this is correct as-is. However, `lastSyncAt` is `int?`, and calling
+`.toString()` on `null` produces `"null"` (the string), which would cause a
+silent query failure.
+
+**Fix:** Guard against null (the `lastSyncAt` parameter is nullable):
+```dart
+if (lastSyncAt != null) {
+  // add the 'where' clause to the query
+}
+```
+
+---
+
+#### M-15. Refresh token stored in plaintext `SharedPreferences`
+**File:** `lib/services/auth_service.dart:280-282`
+
+The Firebase refresh token is stored in `SharedPreferences`, which is plaintext
+on both platforms (XML on Android, plist on Linux). On a rooted device or if
+the filesystem is accessed, the token can be extracted and used to generate
+new ID tokens.
+
+**Fix (future):** Use `flutter_secure_storage` (Android Keystore / Linux
+Secret Service) for the refresh token. Not critical for a personal app, but
+worth noting for general security posture.
+
+---
+
+#### M-16. No error handling in `_loadTodaysTasks()` initial load
+**File:** `lib/screens/todays_five_screen.dart:69-169`
+
+The initial load performs many DB queries with no try-catch. If any query
+fails (e.g., corrupted DB, migration issue), the exception propagates
+unhandled and the screen stays in `_loading = true` state forever (spinner
+shown indefinitely).
+
+**Fix:** Wrap in try-catch and show an error message or fallback UI:
+```dart
+try {
+  // ... existing load logic
+} catch (e) {
+  debugPrint('TodaysFive: load failed: $e');
+  if (mounted) setState(() => _loading = false);
+}
+```
+
+---
+
+#### M-17. `navigateToLevel` missing bounds check
+**File:** `lib/providers/task_provider.dart:67-73`
+
+```dart
+Future<void> navigateToLevel(int level) async {
+  final target = breadcrumb[level];  // can throw RangeError
+```
+
+No validation that `level` is within bounds of the `breadcrumb` list.
+
+**Fix:** Add a guard:
+```dart
+if (level < 0 || level >= breadcrumb.length) return;
+```
+
+---
+
+## Round 5 — Suggested Implementation Order
+
+1. **CR-5** — Fix sort tier priority order (2 min, `task_provider.dart` line 652 — swap two lines)
+2. **CR-7** — Track token expiry in `AuthService` (20 min, `auth_service.dart` + `sync_service.dart`)
+3. **CR-6** — Process sync queue entries individually instead of drain-then-process (15 min, `sync_service.dart` + `database_helper.dart`)
+4. **I-16** — Add status code checks to `pushRelationships`/`pushDependencies` (2 min, `firestore_service.dart`)
+5. **I-17** — Add sync lock to prevent concurrent operations (5 min, `sync_service.dart`)
+6. **I-18** — Add mounted checks in Today's 5 undo handlers (5 min, `todays_five_screen.dart`)
+7. **I-19** — Clean pin state in `_swapTask` and `_replaceIfNoLongerLeaf` (5 min, `todays_five_screen.dart`)
+8. **I-20** — Add type check for Firestore query response (2 min, `firestore_service.dart`)
+9. **I-21** — Wrap sync-queue DB operations in transactions (15 min, `database_helper.dart`)
+10. **I-22** — Replace silent catches with `debugPrint` (5 min, `auth_service.dart`)
+11. **Remaining open items** from previous rounds (I6, M3, M5, M6, M9, M-10, M-12, N1–N4) — as time permits
