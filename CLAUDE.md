@@ -91,6 +91,7 @@ The goal of this app is **minimal cognitive load**. The user wants a quick place
 - When setup instructions change (new deps, build steps), ask user if they want to update README.
 - Capture any user-mentioned future work items as todo tasks immediately.
 - Keep a persistent TODO list in the Claude memory directory.
+- **Before exiting plan mode to implement**, ask the user if they want to create a feature branch first (via `/feature`). If the task warranted a plan, it likely warrants its own branch.
 - After completing a new feature, ask the user if they want to add test cases for it.
 - When a bug is found and confirmed reproducible, always add a test case for it.
 - When writing tests in bulk, run `flutter test --coverage` and check `lcov.info` to identify remaining gaps. Use `genhtml` or similar to inspect per-file line coverage.
