@@ -966,6 +966,25 @@ on the new sync/auth layer and interactions with existing state management.
 
 ---
 
+### Round 5 Status
+
+| Item | Status |
+|------|--------|
+| CR-5. Sort tier bug | Invalid — by design (worked-on-today tasks should sink regardless of pin) |
+| CR-6. Sync queue data loss | Fixed |
+| CR-7. Token expiry | Fixed |
+| I-16. Missing HTTP status checks | Fixed |
+| I-17. Sync concurrency guard | Fixed |
+| I-18. Missing `mounted` checks | Fixed |
+| I-19. Pin state cleanup | Fixed |
+| I-20. Unsafe JSON cast | Fixed |
+| I-21. Transactional sync queue ops | Fixed |
+| I-22. Silent catch blocks | Fixed |
+| M-14. Firestore integerValue | Open |
+| M-15. Refresh token plaintext | Open (future) |
+| M-16. No error handling in load | Open |
+| M-17. `navigateToLevel` bounds check | Fixed |
+
 ### Previous Round Verification
 
 - [x] I-13: `_completeNormalTask` re-fetches task snapshot — verified fixed, `_markDone` calls `_refreshTaskSnapshot` at `todays_five_screen.dart:559`

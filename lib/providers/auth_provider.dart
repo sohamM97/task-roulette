@@ -10,6 +10,7 @@ class AuthProvider extends ChangeNotifier {
   bool get isSignedIn => _authService.isSignedIn;
   String? get uid => _authService.uid;
   String? get firebaseIdToken => _authService.firebaseIdToken;
+  bool get isTokenExpired => _authService.isTokenExpired;
   bool get isConfigured => _authService.isConfigured;
 
   SyncStatus _syncStatus = SyncStatus.idle;

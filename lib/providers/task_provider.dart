@@ -65,6 +65,7 @@ class TaskProvider extends ChangeNotifier {
   /// Navigate to a specific level in the breadcrumb.
   /// Level 0 = root, 1 = first task, etc.
   Future<void> navigateToLevel(int level) async {
+    if (level < 0 || level >= breadcrumb.length) return;
     final target = breadcrumb[level];
     // Trim the stack to just the entries before the target level
     _parentStack.removeRange(level, _parentStack.length);

@@ -16,6 +16,7 @@ class SyncService {
 
   Timer? _pushDebounceTimer;
   Timer? _periodicPullTimer;
+  bool _syncing = false;
 
   static const _prefsKeyLastSyncAt = 'sync_last_sync_at';
   static const _prefsKeyInitialMigrationDone = 'sync_initial_migration_done';
@@ -230,7 +231,8 @@ class SyncService {
 
   /// Push pending local changes to Firestore.
   Future<void> push() async {
-    if (!_canSync) return;
+    if (!_canSync || _syncing) return;
+    _syncing = true;
 
     _authProvider.setSyncStatus(SyncStatus.syncing);
 
@@ -247,9 +249,11 @@ class SyncService {
         await _db.markTasksSynced(taskIds);
       }
 
-      // Drain sync queue for relationships, dependencies, and task deletions
-      final queue = await _db.drainSyncQueue();
+      // Process sync queue entries one at a time — only delete after success
+      // so entries survive partial push failures.
+      final queue = await _db.peekSyncQueue();
       for (final entry in queue) {
+        final entryId = entry['id'] as int;
         final entityType = entry['entity_type'] as String;
         final action = entry['action'] as String;
         final key1 = entry['key1'] as String;
@@ -281,17 +285,21 @@ class SyncService {
               await _firestore.deleteDependency(uid, idToken, key1, key2);
             }
         }
+        await _db.deleteSyncQueueEntry(entryId);
       }
 
       _authProvider.setSyncStatus(SyncStatus.synced);
     } catch (e) {
       _authProvider.setSyncStatus(SyncStatus.error, error: e.toString());
+    } finally {
+      _syncing = false;
     }
   }
 
   /// Pull remote changes and merge into local DB.
   Future<void> pull() async {
-    if (!_canSync) return;
+    if (!_canSync || _syncing) return;
+    _syncing = true;
 
     _authProvider.setSyncStatus(SyncStatus.syncing);
 
@@ -338,6 +346,8 @@ class SyncService {
       }
     } catch (e) {
       _authProvider.setSyncStatus(SyncStatus.error, error: e.toString());
+    } finally {
+      _syncing = false;
     }
   }
 
@@ -351,9 +361,9 @@ class SyncService {
   VoidCallback? _onDataChanged;
   set onDataChanged(VoidCallback? callback) => _onDataChanged = callback;
 
-  /// Get a valid token, refreshing if needed.
+  /// Get a valid token, refreshing if expired or missing.
   Future<String?> _getValidToken() async {
-    if (_authProvider.firebaseIdToken != null) {
+    if (_authProvider.firebaseIdToken != null && !_authProvider.isTokenExpired) {
       return _authProvider.firebaseIdToken;
     }
     final success = await _authProvider.refreshToken();

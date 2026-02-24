@@ -79,11 +79,14 @@ class FirestoreService {
       final commitUrl = Uri.parse(
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
       );
-      await http.post(
+      final response = await http.post(
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': writes}),
       );
+      if (response.statusCode != 200) {
+        throw FirestoreException('Push relationships failed: ${response.statusCode} ${response.body}');
+      }
     }
   }
 
@@ -112,11 +115,14 @@ class FirestoreService {
       final commitUrl = Uri.parse(
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
       );
-      await http.post(
+      final response = await http.post(
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': writes}),
       );
+      if (response.statusCode != 200) {
+        throw FirestoreException('Push dependencies failed: ${response.statusCode} ${response.body}');
+      }
     }
   }
 
@@ -287,7 +293,11 @@ class FirestoreService {
     if (response.statusCode != 200) {
       throw FirestoreException('Query tasks failed: ${response.statusCode}');
     }
-    final results = json.decode(response.body) as List<dynamic>;
+    final decoded = json.decode(response.body);
+    if (decoded is! List) {
+      throw FirestoreException('Unexpected query response format');
+    }
+    final results = decoded;
     final tasks = <Task>[];
     for (final result in results) {
       final doc = (result as Map<String, dynamic>)['document'] as Map<String, dynamic>?;
