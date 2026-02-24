@@ -1111,9 +1111,14 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                         const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
                       );
                     } else {
+                      final wasUnpin = _pinnedIds.contains(task.id) && !result.contains(task.id);
                       setState(() {
                         _pinnedIds.clear();
                         _pinnedIds.addAll(result);
+                        // Shrink list back toward 5 if unpinning an undone task
+                        if (wasUnpin && _todaysTasks.length > 5 && !isDone) {
+                          _todaysTasks.removeWhere((t) => t.id == task.id);
+                        }
                       });
                       _persist();
                     }

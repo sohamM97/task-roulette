@@ -137,6 +137,77 @@ void main() {
       TodaysFivePinHelper.togglePin(original, 2);
       expect(original.pinnedIds, isEmpty); // original unchanged
     });
+
+    test('unpin shrinks list back when over 5 tasks', () {
+      // 7 tasks: 5 original + 2 appended via pin
+      final state = _state(
+        taskIds: [1, 2, 3, 4, 5, 6, 7],
+        pinnedIds: {6, 7},
+        completedIds: {1, 2, 3, 4, 5},
+      );
+      final result = TodaysFivePinHelper.togglePin(state, 6);
+      expect(result, isNotNull);
+      expect(result!.pinnedIds, {7});
+      // 6 was unpinned and undone → removed from list
+      expect(result.taskIds, isNot(contains(6)));
+      expect(result.taskIds.length, 6);
+    });
+
+    test('unpin does not shrink list at exactly 5 tasks', () {
+      final state = _state(
+        taskIds: [1, 2, 3, 4, 5],
+        pinnedIds: {3},
+      );
+      final result = TodaysFivePinHelper.togglePin(state, 3);
+      expect(result, isNotNull);
+      // Still 5 — no shrink
+      expect(result!.taskIds.length, 5);
+      expect(result.taskIds, contains(3));
+    });
+
+    test('unpin does not remove completed task even when over 5', () {
+      final state = _state(
+        taskIds: [1, 2, 3, 4, 5, 6],
+        pinnedIds: {6},
+        completedIds: {6},
+      );
+      final result = TodaysFivePinHelper.togglePin(state, 6);
+      expect(result, isNotNull);
+      // 6 is completed → kept despite unpin
+      expect(result!.taskIds, contains(6));
+      expect(result.taskIds.length, 6);
+    });
+
+    test('unpinning all shrinks list back to 5', () {
+      // Started with 5, appended 3 pinned tasks → 8 total
+      final state = _state(
+        taskIds: [1, 2, 3, 4, 5, 6, 7, 8],
+        completedIds: {1, 2, 3, 4, 5},
+        pinnedIds: {6, 7, 8},
+      );
+      // Unpin 8 → list shrinks to 7
+      var result = TodaysFivePinHelper.togglePin(state, 8)!;
+      expect(result.taskIds.length, 7);
+
+      // Unpin 7 → list shrinks to 6
+      var next = _state(
+        taskIds: result.taskIds,
+        completedIds: {1, 2, 3, 4, 5},
+        pinnedIds: result.pinnedIds,
+      );
+      result = TodaysFivePinHelper.togglePin(next, 7)!;
+      expect(result.taskIds.length, 6);
+
+      // Unpin 6 → list shrinks to 5
+      next = _state(
+        taskIds: result.taskIds,
+        completedIds: {1, 2, 3, 4, 5},
+        pinnedIds: result.pinnedIds,
+      );
+      result = TodaysFivePinHelper.togglePin(next, 6)!;
+      expect(result.taskIds.length, 5);
+      expect(result.pinnedIds, isEmpty);
+    });
   });
 
   group('pinNewTask', () {

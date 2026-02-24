@@ -37,8 +37,11 @@ class TodaysFivePinHelper {
     final pinnedIds = Set<int>.from(saved.pinnedIds);
 
     if (pinnedIds.contains(taskId)) {
-      // Unpin
+      // Unpin — and shrink list back toward 5 if this task was appended
       pinnedIds.remove(taskId);
+      if (taskIds.length > 5 && !saved.completedIds.contains(taskId)) {
+        taskIds.remove(taskId);
+      }
       return PinResult(taskIds: taskIds, pinnedIds: pinnedIds);
     }
 
