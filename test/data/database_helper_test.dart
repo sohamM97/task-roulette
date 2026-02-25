@@ -1974,6 +1974,103 @@ void main() {
       final queue = await db.drainSyncQueue();
       expect(queue, isEmpty);
     });
+
+    test('restoreTask cancels sync deletion and marks task pending', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+      await db.drainSyncQueue();
+
+      // Delete with reparent (enqueues sync events)
+      final result = await db.deleteTaskAndReparentChildren(childId);
+      final queueAfterDelete = await db.peekSyncQueue();
+      final taskRemovals = queueAfterDelete
+          .where((e) => e['entity_type'] == 'task' && e['action'] == 'remove')
+          .toList();
+      expect(taskRemovals, isNotEmpty);
+
+      // Restore the task
+      await db.restoreTask(
+        result.task,
+        result.parentIds,
+        result.childIds,
+        dependsOnIds: result.dependsOnIds,
+        dependedByIds: result.dependedByIds,
+        removeReparentLinks: result.addedReparentLinks,
+      );
+
+      // Verify: task deletion entries should be cancelled
+      final queueAfterRestore = await db.drainSyncQueue();
+      final remainingRemovals = queueAfterRestore
+          .where((e) => e['entity_type'] == 'task' && e['action'] == 'remove')
+          .toList();
+      expect(remainingRemovals, isEmpty);
+
+      // Verify: restored task should be 'pending' for re-push
+      final restored = await db.getTaskById(childId);
+      expect(restored, isNotNull);
+      expect(restored!.syncStatus, 'pending');
+    });
+
+    test('restoreTask enqueues relationship additions for restored links', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+      await db.drainSyncQueue();
+
+      final result = await db.deleteTaskAndReparentChildren(childId);
+
+      await db.restoreTask(
+        result.task,
+        result.parentIds,
+        result.childIds,
+        removeReparentLinks: result.addedReparentLinks,
+      );
+
+      final queue = await db.drainSyncQueue();
+      final relAdds = queue
+          .where((e) => e['entity_type'] == 'relationship' && e['action'] == 'add')
+          .toList();
+      // Should have re-added the parent→child relationship
+      expect(relAdds.length, 1);
+    });
+
+    test('restoreTaskSubtree cancels deletions and marks tasks pending', () async {
+      final rootId = await db.insertTask(Task(name: 'Root'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(rootId, childId);
+      await db.drainSyncQueue();
+
+      final result = await db.deleteTaskSubtree(rootId);
+      // Should have enqueued task removal entries
+      final queueAfterDelete = await db.peekSyncQueue();
+      expect(queueAfterDelete.where((e) => e['action'] == 'remove'), isNotEmpty);
+
+      await db.restoreTaskSubtree(
+        tasks: result.deletedTasks,
+        relationships: result.deletedRelationships,
+        dependencies: result.deletedDependencies,
+      );
+
+      // Task deletion entries should be cancelled
+      final queue = await db.drainSyncQueue();
+      final taskRemovals = queue
+          .where((e) => e['entity_type'] == 'task' && e['action'] == 'remove')
+          .toList();
+      expect(taskRemovals, isEmpty);
+
+      // Restored tasks should be 'pending'
+      final root = await db.getTaskById(rootId);
+      final child = await db.getTaskById(childId);
+      expect(root!.syncStatus, 'pending');
+      expect(child!.syncStatus, 'pending');
+
+      // Relationship should be re-added
+      final relAdds = queue
+          .where((e) => e['entity_type'] == 'relationship' && e['action'] == 'add')
+          .toList();
+      expect(relAdds.length, 1);
+    });
   });
 
   group('Sync query methods', () {

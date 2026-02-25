@@ -149,6 +149,7 @@ class _AppShellState extends State<AppShell> {
             key: _todaysFiveKey,
             onNavigateToTask: (task) async {
               await context.read<TaskProvider>().navigateToTask(task);
+              if (!mounted) return;
               _pageController.animateToPage(
                 1,
                 duration: const Duration(milliseconds: 300),

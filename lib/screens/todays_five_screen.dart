@@ -268,6 +268,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   Future<void> _generateNewSet() async {
+    // Clear stale per-session tracking sets from previous day
+    _workedOnIds.clear();
+    _autoStartedIds.clear();
+    _preWorkedOnLastWorkedAt.clear();
+
     final provider = context.read<TaskProvider>();
     final allLeaves = await provider.getAllLeafTasks();
 
@@ -637,7 +642,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     } else if (task.isCompleted) {
       // "Done for good!" (or externally completed) — revert completion
       await provider.uncompleteTask(task.id!);
-      if (wasWorkedOn) await provider.unmarkWorkedOn(task.id!);
+      if (wasWorkedOn) {
+        final restoreTo = _preWorkedOnLastWorkedAt.remove(task.id);
+        await provider.unmarkWorkedOn(task.id!, restoreTo: restoreTo);
+      }
     }
     if (!mounted) return;
 
@@ -876,15 +884,16 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
 
     final picked = provider.pickWeightedN(eligible, 1);
     if (picked.isNotEmpty) {
+      // Complete async work before mutating state
+      final ancestors = await DatabaseHelper().getAncestorPath(picked.first.id!);
+      if (!mounted) return;
       _pinnedIds.remove(_todaysTasks[index].id);
       _todaysTasks[index] = picked.first;
-      final ancestors = await DatabaseHelper().getAncestorPath(picked.first.id!);
       if (ancestors.isNotEmpty) {
         _taskPaths[picked.first.id!] = ancestors.map((t) => t.name).join(' › ');
       } else {
         _taskPaths.remove(picked.first.id!);
       }
-      if (!mounted) return;
       setState(() {});
       await _persist();
     }
@@ -1302,6 +1311,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         textDirection: TextDirection.ltr,
       )..layout();
       final rawChipWidth = 14 + 4 + textPainter.width + 20 + 2;
+      textPainter.dispose();
       final chipWidth = rawChipWidth.clamp(0.0, maxChipWidth);
       final neededWidth = usedWidth > 0 ? chipWidth + spacing : chipWidth;
 
@@ -1341,6 +1351,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             textDirection: TextDirection.ltr,
           )..layout();
           final rawChipWidth = 14 + 4 + textPainter.width + 20 + 2;
+          textPainter.dispose();
           final chipWidth = rawChipWidth.clamp(0.0, maxChipWidth);
           final neededWidth = usedWidth > 0 ? chipWidth + spacing : chipWidth;
 
