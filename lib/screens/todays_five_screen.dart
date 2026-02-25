@@ -1225,6 +1225,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   Widget _buildOtherDoneBox(BuildContext context, TextTheme textTheme, ColorScheme colorScheme) {
+    final hasOverflow = _otherDoneToday.length > 1;
     return Padding(
       padding: const EdgeInsets.only(top: 16),
       child: Container(
@@ -1238,10 +1239,26 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Also done today',
-              style: textTheme.labelMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
+            GestureDetector(
+              onTap: hasOverflow ? () => setState(() => _otherDoneExpanded = !_otherDoneExpanded) : null,
+              behavior: HitTestBehavior.opaque,
+              child: Row(
+                children: [
+                  Text(
+                    'Also done today',
+                    style: textTheme.labelMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  if (hasOverflow) ...[
+                    const SizedBox(width: 4),
+                    Icon(
+                      _otherDoneExpanded ? Icons.expand_less : Icons.expand_more,
+                      size: 18,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ],
+                ],
               ),
             ),
             const SizedBox(height: 8),
@@ -1253,44 +1270,17 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   Widget _buildOtherDoneChips(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
     if (_otherDoneExpanded) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: _otherDoneToday.map((task) =>
-              _buildOtherDoneChip(context, task),
-            ).toList(),
-          ),
-          const SizedBox(height: 4),
-          GestureDetector(
-            onTap: () => setState(() => _otherDoneExpanded = false),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.expand_less, size: 16, color: colorScheme.onSurfaceVariant),
-                  const SizedBox(width: 2),
-                  Text(
-                    'Show less',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
+      return Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: _otherDoneToday.map((task) =>
+          _buildOtherDoneChip(context, task),
+        ).toList(),
       );
     }
 
-    // Collapsed: show chips that fit in one row, plus a "+N more" chip
+    // Collapsed: show chips that fit in one row
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxWidth = constraints.maxWidth;
@@ -1312,11 +1302,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
           final chipWidth = rawChipWidth.clamp(0.0, maxChipWidth);
           final neededWidth = usedWidth > 0 ? chipWidth + spacing : chipWidth;
 
-          const moreChipWidth = 80.0;
-          final isLast = visibleCount == _otherDoneToday.length - 1;
-          final reserveForMore = isLast ? 0.0 : moreChipWidth + spacing;
-
-          if (usedWidth + neededWidth + reserveForMore <= maxWidth) {
+          if (usedWidth + neededWidth <= maxWidth) {
             usedWidth += neededWidth;
             visibleCount++;
           } else {
@@ -1325,41 +1311,13 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         }
 
         if (visibleCount == 0) visibleCount = 1;
-        final remaining = _otherDoneToday.length - visibleCount;
 
         return Wrap(
           spacing: spacing,
           runSpacing: spacing,
-          children: [
-            ..._otherDoneToday.take(visibleCount).map((task) =>
-              _buildOtherDoneChip(context, task),
-            ),
-            if (remaining > 0)
-              GestureDetector(
-                onTap: () => setState(() => _otherDoneExpanded = true),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest.withAlpha(80),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: colorScheme.outlineVariant.withAlpha(80)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.expand_more, size: 14, color: colorScheme.onSurfaceVariant),
-                      const SizedBox(width: 2),
-                      Text(
-                        '+$remaining more',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-          ],
+          children: _otherDoneToday.take(visibleCount).map((task) =>
+            _buildOtherDoneChip(context, task),
+          ).toList(),
         );
       },
     );
@@ -1370,31 +1328,36 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     final chipColor = doneForGood ? Colors.green : Colors.lightGreen;
     final icon = doneForGood ? Icons.done_all : Icons.check;
 
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 160),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: chipColor.withAlpha(40),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: chipColor.withAlpha(80)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: chipColor),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(
-                task.name,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: chipColor,
+    return Tooltip(
+      message: task.name,
+      triggerMode: TooltipTriggerMode.tap,
+      preferBelow: true,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 160),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: chipColor.withAlpha(40),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: chipColor.withAlpha(80)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: chipColor),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  task.name,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: chipColor,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
