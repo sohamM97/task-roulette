@@ -50,7 +50,7 @@ class AuthProvider extends ChangeNotifier {
       return success;
     } catch (e) {
       // Transient failure (network error, timeout) — don't sign out
-      debugPrint('AuthProvider: token refresh failed: $e');
+      if (kDebugMode) debugPrint('AuthProvider: token refresh failed: $e');
       return false;
     }
   }

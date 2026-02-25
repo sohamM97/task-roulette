@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'dart:io' show Platform, Process;
 
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis_auth/auth_io.dart' as auth_io;
 import 'package:googleapis_auth/googleapis_auth.dart';
@@ -42,11 +43,14 @@ class AuthService {
     defaultValue: '1009352820106-uigevs5kld7t51s1gol27l7n85m2vp36.apps.googleusercontent.com',
   );
 
-  static const _prefsKeyRefreshToken = 'auth_refresh_token';
+  static const _secureKeyRefreshToken = 'auth_refresh_token';
+  static const _prefsKeyRefreshToken = 'auth_refresh_token'; // legacy key for migration
   static const _prefsKeyUid = 'auth_uid';
   static const _prefsKeyDisplayName = 'auth_display_name';
   static const _prefsKeyEmail = 'auth_email';
   static const _prefsKeyPhotoUrl = 'auth_photo_url';
+
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
 
   String? _firebaseIdToken;
   String? _firebaseRefreshToken;
@@ -67,7 +71,18 @@ class AuthService {
   /// Attempts silent sign-in using stored refresh token.
   Future<bool> silentSignIn() async {
     final prefs = await SharedPreferences.getInstance();
-    final refreshToken = prefs.getString(_prefsKeyRefreshToken);
+
+    // Read refresh token from secure storage, with migration from SharedPreferences
+    String? refreshToken = await _secureStorage.read(key: _secureKeyRefreshToken);
+    if (refreshToken == null) {
+      // Migrate from legacy SharedPreferences storage
+      final legacyToken = prefs.getString(_prefsKeyRefreshToken);
+      if (legacyToken != null) {
+        await _secureStorage.write(key: _secureKeyRefreshToken, value: legacyToken);
+        await prefs.remove(_prefsKeyRefreshToken);
+        refreshToken = legacyToken;
+      }
+    }
     if (refreshToken == null || _firebaseApiKey.isEmpty) return false;
 
     try {
@@ -80,11 +95,11 @@ class AuthService {
           email: prefs.getString(_prefsKeyEmail),
           photoUrl: prefs.getString(_prefsKeyPhotoUrl),
         );
-        await _persistTokens(prefs);
+        await _persistTokens();
         return true;
       }
     } catch (e) {
-      debugPrint('AuthService: silent sign-in failed: $e');
+      if (kDebugMode) debugPrint('AuthService: silent sign-in failed: $e');
     }
     return false;
   }
@@ -136,8 +151,8 @@ class AuthService {
       photoUrl: photoUrl ?? firebaseResult['photoUrl'] as String?,
     );
 
+    await _persistTokens();
     final prefs = await SharedPreferences.getInstance();
-    await _persistTokens(prefs);
     await _persistUserInfo(prefs);
 
     return _user;
@@ -149,8 +164,9 @@ class AuthService {
     _tokenExpiresAt = null;
     _user = null;
 
+    await _secureStorage.delete(key: _secureKeyRefreshToken);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_prefsKeyRefreshToken);
+    await prefs.remove(_prefsKeyRefreshToken); // clean up legacy key if present
     await prefs.remove(_prefsKeyUid);
     await prefs.remove(_prefsKeyDisplayName);
     await prefs.remove(_prefsKeyEmail);
@@ -161,7 +177,7 @@ class AuthService {
       try {
         await GoogleSignIn().signOut();
       } catch (e) {
-        debugPrint('AuthService: Google sign-out failed: $e');
+        if (kDebugMode) debugPrint('AuthService: Google sign-out failed: $e');
       }
     }
   }
@@ -172,8 +188,7 @@ class AuthService {
     final result = await _refreshFirebaseToken(_firebaseRefreshToken!);
     if (result != null) {
       _applyTokenResult(result);
-      final prefs = await SharedPreferences.getInstance();
-      await _persistTokens(prefs);
+      await _persistTokens();
       return true;
     }
     return false;
@@ -201,7 +216,7 @@ class AuthService {
       if (account == null) return null;
       final auth = await account.authentication;
       if (auth.idToken == null || auth.idToken!.isEmpty) {
-        debugPrint('AuthService: Google sign-in succeeded but idToken is null');
+        if (kDebugMode) debugPrint('AuthService: Google sign-in succeeded but idToken is null');
         return null;
       }
       return {
@@ -211,7 +226,7 @@ class AuthService {
         'photoUrl': account.photoUrl ?? '',
       };
     } catch (e) {
-      debugPrint('AuthService: Mobile sign-in error: $e');
+      if (kDebugMode) debugPrint('AuthService: Mobile sign-in error: $e');
       return null;
     }
   }
@@ -253,7 +268,7 @@ class AuthService {
         'photoUrl': payload['picture'] as String? ?? '',
       };
     } catch (e) {
-      debugPrint('AuthService: desktop sign-in failed: $e');
+      if (kDebugMode) debugPrint('AuthService: desktop sign-in failed: $e');
       return null;
     }
   }
@@ -272,11 +287,11 @@ class AuthService {
         'returnIdpCredential': true,
         'returnSecureToken': true,
       }),
-    );
+    ).timeout(const Duration(seconds: 30));
     if (response.statusCode == 200) {
       return json.decode(response.body) as Map<String, dynamic>;
     }
-    debugPrint('AuthService: Firebase token exchange failed: ${response.statusCode} ${response.body}');
+    if (kDebugMode) debugPrint('AuthService: Firebase token exchange failed: ${response.statusCode} ${response.body}');
     return null;
   }
 
@@ -289,16 +304,17 @@ class AuthService {
       url,
       headers: {'Content-Type': 'application/x-www-form-urlencoded'},
       body: 'grant_type=refresh_token&refresh_token=$refreshToken',
-    );
+    ).timeout(const Duration(seconds: 30));
     if (response.statusCode == 200) {
       return json.decode(response.body) as Map<String, dynamic>;
     }
     return null;
   }
 
-  Future<void> _persistTokens(SharedPreferences prefs) async {
+  Future<void> _persistTokens() async {
     if (_firebaseRefreshToken != null) {
-      await prefs.setString(_prefsKeyRefreshToken, _firebaseRefreshToken!);
+      await _secureStorage.write(
+          key: _secureKeyRefreshToken, value: _firebaseRefreshToken!);
     }
   }
 

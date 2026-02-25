@@ -14,6 +14,8 @@ class FirestoreService {
   static const _baseUrl =
       'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents';
 
+  static const _httpTimeout = Duration(seconds: 30);
+
   bool get isConfigured => _projectId.isNotEmpty;
 
   Map<String, String> _headers(String idToken) => {
@@ -47,7 +49,7 @@ class FirestoreService {
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': writes}),
-      );
+      ).timeout(_httpTimeout);
       if (response.statusCode != 200) {
         throw FirestoreException('Push tasks failed: ${response.statusCode} ${response.body}');
       }
@@ -83,7 +85,7 @@ class FirestoreService {
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': writes}),
-      );
+      ).timeout(_httpTimeout);
       if (response.statusCode != 200) {
         throw FirestoreException('Push relationships failed: ${response.statusCode} ${response.body}');
       }
@@ -119,7 +121,7 @@ class FirestoreService {
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': writes}),
-      );
+      ).timeout(_httpTimeout);
       if (response.statusCode != 200) {
         throw FirestoreException('Push dependencies failed: ${response.statusCode} ${response.body}');
       }
@@ -129,7 +131,7 @@ class FirestoreService {
   /// Deletes a task document from Firestore.
   Future<void> deleteTask(String uid, String idToken, String syncId) async {
     final url = Uri.parse('${_tasksPath(uid)}/$syncId');
-    final response = await http.delete(url, headers: _headers(idToken));
+    final response = await http.delete(url, headers: _headers(idToken)).timeout(_httpTimeout);
     // 404 is OK — document may already be deleted
     if (response.statusCode != 200 && response.statusCode != 404) {
       throw FirestoreException('Delete task failed: ${response.statusCode} ${response.body}');
@@ -145,7 +147,7 @@ class FirestoreService {
   ) async {
     final docId = '${parentSyncId}_$childSyncId';
     final url = Uri.parse('${_relationshipsPath(uid)}/$docId');
-    final response = await http.delete(url, headers: _headers(idToken));
+    final response = await http.delete(url, headers: _headers(idToken)).timeout(_httpTimeout);
     if (response.statusCode != 200 && response.statusCode != 404) {
       throw FirestoreException('Delete relationship failed: ${response.statusCode} ${response.body}');
     }
@@ -160,7 +162,7 @@ class FirestoreService {
   ) async {
     final docId = '${taskSyncId}_$dependsOnSyncId';
     final url = Uri.parse('${_dependenciesPath(uid)}/$docId');
-    final response = await http.delete(url, headers: _headers(idToken));
+    final response = await http.delete(url, headers: _headers(idToken)).timeout(_httpTimeout);
     if (response.statusCode != 200 && response.statusCode != 404) {
       throw FirestoreException('Delete dependency failed: ${response.statusCode} ${response.body}');
     }
@@ -171,7 +173,7 @@ class FirestoreService {
   /// Returns true if the user has any task documents in Firestore.
   Future<bool> hasRemoteData(String uid, String idToken) async {
     final url = Uri.parse('${_tasksPath(uid)}?pageSize=1');
-    final response = await http.get(url, headers: _headers(idToken));
+    final response = await http.get(url, headers: _headers(idToken)).timeout(_httpTimeout);
     if (response.statusCode != 200) return false;
     final body = json.decode(response.body) as Map<String, dynamic>;
     final docs = body['documents'] as List<dynamic>? ?? [];
@@ -205,7 +207,7 @@ class FirestoreService {
     do {
       var url = '${_relationshipsPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
-      final response = await http.get(Uri.parse(url), headers: _headers(idToken));
+      final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
       if (response.statusCode != 200) break;
       final body = json.decode(response.body) as Map<String, dynamic>;
       final docs = body['documents'] as List<dynamic>? ?? [];
@@ -233,7 +235,7 @@ class FirestoreService {
     do {
       var url = '${_dependenciesPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
-      final response = await http.get(Uri.parse(url), headers: _headers(idToken));
+      final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
       if (response.statusCode != 200) break;
       final body = json.decode(response.body) as Map<String, dynamic>;
       final docs = body['documents'] as List<dynamic>? ?? [];
@@ -259,7 +261,7 @@ class FirestoreService {
     do {
       var url = '${_tasksPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
-      final response = await http.get(Uri.parse(url), headers: _headers(idToken));
+      final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
       if (response.statusCode != 200) {
         throw FirestoreException('List tasks failed: ${response.statusCode}');
       }
@@ -299,7 +301,7 @@ class FirestoreService {
           },
         },
       }),
-    );
+    ).timeout(_httpTimeout);
     if (response.statusCode != 200) {
       throw FirestoreException('Query tasks failed: ${response.statusCode}');
     }
@@ -351,17 +353,25 @@ class FirestoreService {
     final name = doc['name'] as String? ?? '';
     final syncId = name.split('/').last;
 
+    // Validate and truncate field sizes to prevent oversized remote data
+    final rawName = _stringField(fields, 'name') ?? '';
+    final name2 = rawName.length > 500 ? rawName.substring(0, 500) : rawName;
+    final rawUrl = _stringField(fields, 'url');
+    final url = rawUrl != null && rawUrl.length <= 2048 ? rawUrl : null;
+    final rawRepeat = _stringField(fields, 'repeat_interval');
+    final repeatInterval = rawRepeat != null && rawRepeat.length <= 50 ? rawRepeat : null;
+
     return Task(
-      name: _stringField(fields, 'name') ?? '',
+      name: name2,
       createdAt: _intField(fields, 'created_at'),
       completedAt: _intFieldNullable(fields, 'completed_at'),
       startedAt: _intFieldNullable(fields, 'started_at'),
-      url: _stringField(fields, 'url'),
+      url: url,
       skippedAt: _intFieldNullable(fields, 'skipped_at'),
       priority: _intField(fields, 'priority'),
       difficulty: _intField(fields, 'difficulty'),
       lastWorkedAt: _intFieldNullable(fields, 'last_worked_at'),
-      repeatInterval: _stringField(fields, 'repeat_interval'),
+      repeatInterval: repeatInterval,
       nextDueAt: _intFieldNullable(fields, 'next_due_at'),
       syncId: syncId,
       updatedAt: _intFieldNullable(fields, 'updated_at'),

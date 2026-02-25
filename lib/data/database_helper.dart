@@ -1629,6 +1629,29 @@ class DatabaseHelper {
     )).toList();
   }
 
+  /// Returns true if adding a relationship (by sync_ids) would create a cycle.
+  Future<bool> wouldRelationshipCreateCycle(String parentSyncId, String childSyncId) async {
+    final db = await database;
+    final parentRows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [parentSyncId]);
+    final childRows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [childSyncId]);
+    if (parentRows.isEmpty || childRows.isEmpty) return false;
+    final parentId = parentRows.first['id'] as int;
+    final childId = childRows.first['id'] as int;
+    // Would adding child→parent path create a cycle? Check if parent is already reachable from child.
+    return hasPath(childId, parentId);
+  }
+
+  /// Returns true if adding a dependency (by sync_ids) would create a cycle.
+  Future<bool> wouldDependencyCreateCycle(String taskSyncId, String dependsOnSyncId) async {
+    final db = await database;
+    final taskRows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [taskSyncId]);
+    final depRows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [dependsOnSyncId]);
+    if (taskRows.isEmpty || depRows.isEmpty) return false;
+    final taskId = taskRows.first['id'] as int;
+    final depId = depRows.first['id'] as int;
+    return hasDependencyPath(depId, taskId);
+  }
+
   /// Upserts a relationship from remote using sync_ids.
   Future<void> upsertRelationshipFromRemote(String parentSyncId, String childSyncId) async {
     final db = await database;
