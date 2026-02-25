@@ -544,6 +544,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
           onPressed: () async {
             await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
             if (!wasStarted) await provider.unstartTask(task.id!);
+            if (!mounted) return;
             await _unmarkDone(task.id!, workedOn: true, autoStarted: !wasStarted);
           },
         ),
@@ -566,6 +567,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
           label: 'Undo',
           onPressed: () async {
             await provider.uncompleteTask(task.id!);
+            if (!mounted) return;
             await _unmarkDone(task.id!, workedOn: false, autoStarted: false);
           },
         ),
@@ -602,6 +604,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     ).toList();
     final replacements = provider.pickWeightedN(eligible, 1);
     if (!mounted) return;
+    _pinnedIds.remove(task.id);
     setState(() {
       if (replacements.isNotEmpty) {
         _todaysTasks[idx] = replacements.first;
@@ -860,6 +863,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
 
     final picked = provider.pickWeightedN(eligible, 1);
     if (picked.isNotEmpty) {
+      _pinnedIds.remove(_todaysTasks[index].id);
       _todaysTasks[index] = picked.first;
       final ancestors = await DatabaseHelper().getAncestorPath(picked.first.id!);
       if (ancestors.isNotEmpty) {

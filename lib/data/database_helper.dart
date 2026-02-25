@@ -402,27 +402,28 @@ class DatabaseHelper {
 
   Future<void> addRelationship(int parentId, int childId) async {
     final db = await database;
-    await db.insert('task_relationships', {
-      'parent_id': parentId,
-      'child_id': childId,
-    });
-    // Enqueue sync
-    final rows = await db.rawQuery(
-      'SELECT id, sync_id FROM tasks WHERE id IN (?, ?)', [parentId, childId]);
-    final syncIds = <int, String>{};
-    for (final r in rows) {
-      final sid = r['sync_id'] as String?;
-      if (sid != null) syncIds[r['id'] as int] = sid;
-    }
-    if (syncIds.containsKey(parentId) && syncIds.containsKey(childId)) {
-      await db.insert('sync_queue', {
-        'entity_type': 'relationship',
-        'action': 'add',
-        'key1': syncIds[parentId],
-        'key2': syncIds[childId],
-        'created_at': DateTime.now().millisecondsSinceEpoch,
+    await db.transaction((txn) async {
+      await txn.insert('task_relationships', {
+        'parent_id': parentId,
+        'child_id': childId,
       });
-    }
+      final rows = await txn.rawQuery(
+        'SELECT id, sync_id FROM tasks WHERE id IN (?, ?)', [parentId, childId]);
+      final syncIds = <int, String>{};
+      for (final r in rows) {
+        final sid = r['sync_id'] as String?;
+        if (sid != null) syncIds[r['id'] as int] = sid;
+      }
+      if (syncIds.containsKey(parentId) && syncIds.containsKey(childId)) {
+        await txn.insert('sync_queue', {
+          'entity_type': 'relationship',
+          'action': 'add',
+          'key1': syncIds[parentId],
+          'key2': syncIds[childId],
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        });
+      }
+    });
   }
 
   Future<List<Task>> getRootTasks() async {
@@ -720,28 +721,29 @@ class DatabaseHelper {
 
   Future<void> removeRelationship(int parentId, int childId) async {
     final db = await database;
-    // Enqueue sync before deleting
-    final rows = await db.rawQuery(
-      'SELECT id, sync_id FROM tasks WHERE id IN (?, ?)', [parentId, childId]);
-    final syncIds = <int, String>{};
-    for (final r in rows) {
-      final sid = r['sync_id'] as String?;
-      if (sid != null) syncIds[r['id'] as int] = sid;
-    }
-    await db.delete(
-      'task_relationships',
-      where: 'parent_id = ? AND child_id = ?',
-      whereArgs: [parentId, childId],
-    );
-    if (syncIds.containsKey(parentId) && syncIds.containsKey(childId)) {
-      await db.insert('sync_queue', {
-        'entity_type': 'relationship',
-        'action': 'remove',
-        'key1': syncIds[parentId],
-        'key2': syncIds[childId],
-        'created_at': DateTime.now().millisecondsSinceEpoch,
-      });
-    }
+    await db.transaction((txn) async {
+      final rows = await txn.rawQuery(
+        'SELECT id, sync_id FROM tasks WHERE id IN (?, ?)', [parentId, childId]);
+      final syncIds = <int, String>{};
+      for (final r in rows) {
+        final sid = r['sync_id'] as String?;
+        if (sid != null) syncIds[r['id'] as int] = sid;
+      }
+      await txn.delete(
+        'task_relationships',
+        where: 'parent_id = ? AND child_id = ?',
+        whereArgs: [parentId, childId],
+      );
+      if (syncIds.containsKey(parentId) && syncIds.containsKey(childId)) {
+        await txn.insert('sync_queue', {
+          'entity_type': 'relationship',
+          'action': 'remove',
+          'key1': syncIds[parentId],
+          'key2': syncIds[childId],
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        });
+      }
+    });
   }
 
   /// Marks a task as completed by setting completed_at to now.
@@ -924,53 +926,55 @@ class DatabaseHelper {
 
   Future<void> addDependency(int taskId, int dependsOnId) async {
     final db = await database;
-    await db.insert('task_dependencies', {
-      'task_id': taskId,
-      'depends_on_id': dependsOnId,
-    });
-    // Enqueue sync
-    final rows = await db.rawQuery(
-      'SELECT id, sync_id FROM tasks WHERE id IN (?, ?)', [taskId, dependsOnId]);
-    final syncIds = <int, String>{};
-    for (final r in rows) {
-      final sid = r['sync_id'] as String?;
-      if (sid != null) syncIds[r['id'] as int] = sid;
-    }
-    if (syncIds.containsKey(taskId) && syncIds.containsKey(dependsOnId)) {
-      await db.insert('sync_queue', {
-        'entity_type': 'dependency',
-        'action': 'add',
-        'key1': syncIds[taskId],
-        'key2': syncIds[dependsOnId],
-        'created_at': DateTime.now().millisecondsSinceEpoch,
+    await db.transaction((txn) async {
+      await txn.insert('task_dependencies', {
+        'task_id': taskId,
+        'depends_on_id': dependsOnId,
       });
-    }
+      final rows = await txn.rawQuery(
+        'SELECT id, sync_id FROM tasks WHERE id IN (?, ?)', [taskId, dependsOnId]);
+      final syncIds = <int, String>{};
+      for (final r in rows) {
+        final sid = r['sync_id'] as String?;
+        if (sid != null) syncIds[r['id'] as int] = sid;
+      }
+      if (syncIds.containsKey(taskId) && syncIds.containsKey(dependsOnId)) {
+        await txn.insert('sync_queue', {
+          'entity_type': 'dependency',
+          'action': 'add',
+          'key1': syncIds[taskId],
+          'key2': syncIds[dependsOnId],
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        });
+      }
+    });
   }
 
   Future<void> removeDependency(int taskId, int dependsOnId) async {
     final db = await database;
-    // Enqueue sync before deleting
-    final rows = await db.rawQuery(
-      'SELECT id, sync_id FROM tasks WHERE id IN (?, ?)', [taskId, dependsOnId]);
-    final syncIds = <int, String>{};
-    for (final r in rows) {
-      final sid = r['sync_id'] as String?;
-      if (sid != null) syncIds[r['id'] as int] = sid;
-    }
-    await db.delete(
-      'task_dependencies',
-      where: 'task_id = ? AND depends_on_id = ?',
-      whereArgs: [taskId, dependsOnId],
-    );
-    if (syncIds.containsKey(taskId) && syncIds.containsKey(dependsOnId)) {
-      await db.insert('sync_queue', {
-        'entity_type': 'dependency',
-        'action': 'remove',
-        'key1': syncIds[taskId],
-        'key2': syncIds[dependsOnId],
-        'created_at': DateTime.now().millisecondsSinceEpoch,
-      });
-    }
+    await db.transaction((txn) async {
+      final rows = await txn.rawQuery(
+        'SELECT id, sync_id FROM tasks WHERE id IN (?, ?)', [taskId, dependsOnId]);
+      final syncIds = <int, String>{};
+      for (final r in rows) {
+        final sid = r['sync_id'] as String?;
+        if (sid != null) syncIds[r['id'] as int] = sid;
+      }
+      await txn.delete(
+        'task_dependencies',
+        where: 'task_id = ? AND depends_on_id = ?',
+        whereArgs: [taskId, dependsOnId],
+      );
+      if (syncIds.containsKey(taskId) && syncIds.containsKey(dependsOnId)) {
+        await txn.insert('sync_queue', {
+          'entity_type': 'dependency',
+          'action': 'remove',
+          'key1': syncIds[taskId],
+          'key2': syncIds[dependsOnId],
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        });
+      }
+    });
   }
 
   /// Returns all tasks that [taskId] depends on (completed or not, for UI).
@@ -1276,6 +1280,20 @@ class DatabaseHelper {
   }
 
   /// Drains and returns all entries from the sync_queue, deleting them.
+  /// Returns all pending sync queue entries without deleting them.
+  Future<List<Map<String, dynamic>>> peekSyncQueue() async {
+    final db = await database;
+    return db.query('sync_queue', orderBy: 'id ASC');
+  }
+
+  /// Deletes a single sync queue entry by its row ID.
+  Future<void> deleteSyncQueueEntry(int id) async {
+    final db = await database;
+    await db.delete('sync_queue', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Reads and deletes all sync queue entries atomically.
+  /// @deprecated Use peekSyncQueue + deleteSyncQueueEntry for safe processing.
   Future<List<Map<String, dynamic>>> drainSyncQueue() async {
     final db = await database;
     return db.transaction((txn) async {

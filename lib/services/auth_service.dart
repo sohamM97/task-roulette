@@ -50,9 +50,13 @@ class AuthService {
 
   String? _firebaseIdToken;
   String? _firebaseRefreshToken;
+  DateTime? _tokenExpiresAt;
   AuthUser? _user;
 
   String? get firebaseIdToken => _firebaseIdToken;
+  bool get isTokenExpired =>
+      _tokenExpiresAt == null ||
+      DateTime.now().isAfter(_tokenExpiresAt!.subtract(const Duration(minutes: 1)));
   AuthUser? get user => _user;
   bool get isSignedIn => _user != null && _firebaseIdToken != null;
   String? get uid => _user?.uid;
@@ -69,8 +73,7 @@ class AuthService {
     try {
       final result = await _refreshFirebaseToken(refreshToken);
       if (result != null) {
-        _firebaseIdToken = result['id_token'];
-        _firebaseRefreshToken = result['refresh_token'];
+        _applyTokenResult(result);
         _user = AuthUser(
           uid: prefs.getString(_prefsKeyUid) ?? '',
           displayName: prefs.getString(_prefsKeyDisplayName),
@@ -80,8 +83,8 @@ class AuthService {
         await _persistTokens(prefs);
         return true;
       }
-    } catch (_) {
-      // Token expired or revoked — user must sign in again
+    } catch (e) {
+      debugPrint('AuthService: silent sign-in failed: $e');
     }
     return false;
   }
@@ -120,6 +123,10 @@ class AuthService {
 
     _firebaseIdToken = firebaseResult['idToken'] as String?;
     _firebaseRefreshToken = firebaseResult['refreshToken'] as String?;
+    final expiresIn = int.tryParse('${firebaseResult['expiresIn'] ?? ''}');
+    _tokenExpiresAt = expiresIn != null
+        ? DateTime.now().add(Duration(seconds: expiresIn))
+        : null;
     final uid = firebaseResult['localId'] as String? ?? '';
 
     _user = AuthUser(
@@ -139,6 +146,7 @@ class AuthService {
   Future<void> signOut() async {
     _firebaseIdToken = null;
     _firebaseRefreshToken = null;
+    _tokenExpiresAt = null;
     _user = null;
 
     final prefs = await SharedPreferences.getInstance();
@@ -152,7 +160,9 @@ class AuthService {
     if (!kIsWeb && !Platform.isLinux && !Platform.isWindows) {
       try {
         await GoogleSignIn().signOut();
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('AuthService: Google sign-out failed: $e');
+      }
     }
   }
 
@@ -161,13 +171,22 @@ class AuthService {
     if (_firebaseRefreshToken == null) return false;
     final result = await _refreshFirebaseToken(_firebaseRefreshToken!);
     if (result != null) {
-      _firebaseIdToken = result['id_token'];
-      _firebaseRefreshToken = result['refresh_token'];
+      _applyTokenResult(result);
       final prefs = await SharedPreferences.getInstance();
       await _persistTokens(prefs);
       return true;
     }
     return false;
+  }
+
+  /// Applies id_token, refresh_token, and expires_in from a refresh response.
+  void _applyTokenResult(Map<String, dynamic> result) {
+    _firebaseIdToken = result['id_token'] as String?;
+    _firebaseRefreshToken = result['refresh_token'] as String?;
+    final expiresIn = int.tryParse('${result['expires_in'] ?? ''}');
+    _tokenExpiresAt = expiresIn != null
+        ? DateTime.now().add(Duration(seconds: expiresIn))
+        : null;
   }
 
   // --- Private helpers ---
