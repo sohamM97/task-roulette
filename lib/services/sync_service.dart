@@ -17,6 +17,7 @@ class SyncService {
   Timer? _pushDebounceTimer;
   Timer? _periodicPullTimer;
   bool _syncing = false;
+  bool _pushPending = false;
 
   static const _prefsKeyLastSyncAt = 'sync_last_sync_at';
   static const _prefsKeyInitialMigrationDone = 'sync_initial_migration_done';
@@ -231,7 +232,11 @@ class SyncService {
 
   /// Push pending local changes to Firestore.
   Future<void> push() async {
-    if (!_canSync || _syncing) return;
+    if (!_canSync) return;
+    if (_syncing) {
+      _pushPending = true;
+      return;
+    }
     _syncing = true;
 
     _authProvider.setSyncStatus(SyncStatus.syncing);
@@ -293,6 +298,10 @@ class SyncService {
       _authProvider.setSyncStatus(SyncStatus.error, error: e.toString());
     } finally {
       _syncing = false;
+      if (_pushPending) {
+        _pushPending = false;
+        schedulePush();
+      }
     }
   }
 
