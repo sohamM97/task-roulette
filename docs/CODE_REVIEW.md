@@ -1982,3 +1982,296 @@ void toggle() {
 10. **I-29** — Load `_taskPaths` in `_pickAndPinTask` (5 min, `todays_five_screen.dart`)
 11. **I-30** — Add debugPrint to `_signInDesktop` catch (1 min, `auth_service.dart`)
 12. **Remaining open items** from previous rounds — as time permits
+
+---
+---
+
+## Round 7 (2026-02-25)
+
+Full codebase review after Round 6 fixes (sync layer completeness, auth resilience).
+Verified all Round 6 items — all fixed. Major focus: sync correctness on undo/restore
+operations, pull-side relationship drift, and mounted-check gaps in async callbacks.
+
+---
+
+### Previous Round Verification
+
+- [x] CR-8: Sync gap for completeTask/skipTask/markWorkedOnAndNavigateBack — verified fixed, `onMutation?.call()` at `task_provider.dart:191, 204, 519`
+- [x] CR-9: `deleteTaskSubtree` sync events — verified fixed, enqueues task/relationship/dependency removal entries at `database_helper.dart:1271-1317`
+- [x] CR-10: `deleteTaskAndReparentChildren` sync events — verified fixed, enqueues task deletion and reparent additions at `database_helper.dart:1167-1204`
+- [x] CR-11: Firestore delete HTTP status checks — verified fixed, all three delete methods check status at `firestore_service.dart:130-167`
+- [x] I-23: Sync status reset on null token — verified fixed, `SyncStatus.idle` set at `sync_service.dart:256, 330`
+- [x] I-24: `removeAllDependencies` sync events — verified fixed, enqueues removal entries in transaction at `database_helper.dart:1066-1089`
+- [x] I-25: `pull()` blocked by `_syncing` — verified present (acceptable trade-off, periodic pulls catch up)
+- [x] I-26: `_handleUncomplete` passes `restoreTo` — verified fixed at `todays_five_screen.dart:634` (but see I-31 below for an edge case)
+- [x] I-27: `AuthProvider.refreshToken()` — verified fixed, catches transient errors without sign-out at `auth_provider.dart:42-56`
+- [x] I-28: PinButton disabled at max pins — verified fixed, `onPressed: disabled ? null : onToggle` at `display_utils.dart:67`
+- [x] I-29: `_pickAndPinTask` loads `_taskPaths` — verified fixed at `todays_five_screen.dart:843-848`
+- [x] I-30: `_signInDesktop` debugPrint — verified fixed at `auth_service.dart:256`
+- [x] M-18 through M-23: Not explicitly fixed (still open from Round 6)
+
+### Items Still Open From Previous Rounds
+
+- I6: Loading indicators for async UI transitions — still open
+- M3: `_renameTask` dialog leaks TextEditingController — still open
+- M5: `BackupService` hardcodes Android download path — still open
+- M6: DAG view doesn't recompute layout on rotation — still open
+- M9: N+1 queries in `_addParent` for grandparent siblings — still open
+- M-10: `showEditUrlDialog` leaks TextEditingController — still open
+- M-12: Repeating task code is dead code — still open
+- M-14: Firestore `integerValue` null guard on `lastSyncAt` — still open
+- M-15: Refresh token stored in plaintext SharedPreferences — still open (future)
+- M-16: No error handling in `_loadTodaysTasks()` initial load — still open
+- M-18: `_preWorkedOnTimestamps` map grows unboundedly — still open
+- M-19: Double refresh on tab navigation — still open
+- M-20: Missing `WidgetsFlutterBinding.ensureInitialized()` in `main()` — still open
+- M-21: `_initAuth` has no error handling — still open
+- M-22: Theme data duplicated between light and dark — still open
+- M-23: `ThemeProvider` race between `_loadPreference()` and `toggle()` — still open
+- N1–N4: All still open
+
+---
+
+### Critical
+
+#### CR-12. Undo-delete restores task locally but sync queue still has the deletion — cloud data permanently lost
+**File:** `lib/data/database_helper.dart:859-901` (restoreTask), `lib/data/database_helper.dart:1338-1359` (restoreTaskSubtree)
+
+When a task is deleted, sync queue entries are enqueued (`task/remove`, `relationship/remove`, etc.). When the user undoes the deletion via `restoreTask`, the task is re-inserted into the DB with its original `sync_status` (from `task.toMap()`), which is `'synced'`. However:
+
+1. **The deletion entries remain in the sync queue.** On the next `push()`, the deletion is processed and the task is removed from Firestore — even though it was restored locally.
+2. **The restored task is never re-pushed.** `push()` only pushes tasks with `sync_status: 'pending'`. The restored task has `sync_status: 'synced'`, so it's invisible to push.
+3. **Restored relationships and dependencies are also not re-enqueued.** The sync queue only has removal entries from the original deletion.
+
+**Reproduction:**
+1. Delete a synced task (sync queue gets 'task/remove' entry)
+2. Undo the deletion (task restored locally with `sync_status: 'synced'`)
+3. Wait for next push → task deleted from Firestore, never re-added
+4. On another device, the task is permanently gone
+
+**Impact:** On multi-device setups, undoing a delete appears to work locally but the task is permanently lost in the cloud and on other devices. Same issue affects `restoreTaskSubtree`.
+
+**Fix:** In `restoreTask` and `restoreTaskSubtree`:
+1. Cancel pending sync queue entries for the restored task's `sync_id`:
+```dart
+// Inside the transaction, before re-inserting the task:
+if (task.syncId != null) {
+  await txn.delete('sync_queue',
+    where: "entity_type = 'task' AND action = 'remove' AND key1 = ?",
+    whereArgs: [task.syncId]);
+}
+```
+2. Mark the restored task as `sync_status: 'pending'` so it gets re-pushed:
+```dart
+final map = task.toMap();
+map['sync_status'] = 'pending';
+await txn.insert('tasks', map);
+```
+3. Also cancel relationship/dependency removal entries and re-enqueue additions for restored links.
+
+---
+
+#### CR-13. Sync pull never removes stale relationships/dependencies — permanent drift between devices
+**File:** `lib/services/sync_service.dart:349-360`
+
+The `pull()` method pulls all remote relationships and dependencies, then upserts each one locally. But it **never removes** local relationships that don't exist in the remote set. Similarly for dependencies.
+
+```dart
+// pull() — lines 352-360:
+final remoteRels = await _firestore.pullAllRelationships(uid, idToken);
+for (final rel in remoteRels) {
+  await _db.upsertRelationshipFromRemote(rel.parentSyncId, rel.childSyncId);
+  // ← only adds, never removes
+}
+```
+
+**Scenario:**
+1. Device A: User removes a parent link from task X
+2. Device A pushes: `sync_queue` has `relationship/remove`, Firestore deletes it
+3. Device B pulls: gets all remote relationships, upserts them. But the removed relationship still exists locally from before — `upsertRelationshipFromRemote` is INSERT OR IGNORE, so it persists
+4. Device B still shows the old parent link
+
+Note: `removeRelationshipFromRemote` and `removeDependencyFromRemote` methods exist in `database_helper.dart:1510-1541` but are **never called** anywhere in the codebase.
+
+**Impact:** Relationship and dependency deletions propagated via push are silently lost on the pulling device. Over time, devices diverge — one device has relationships the other doesn't.
+
+**Fix:** After pulling all remote relationships, compute the diff with local synced relationships and remove any that exist locally but not remotely:
+```dart
+final remoteRels = await _firestore.pullAllRelationships(uid, idToken);
+final remoteRelSet = remoteRels.map((r) => '${r.parentSyncId}:${r.childSyncId}').toSet();
+final localRels = await _db.getAllSyncedRelationships(); // new method needed
+for (final local in localRels) {
+  final key = '${local.parentSyncId}:${local.childSyncId}';
+  if (!remoteRelSet.contains(key)) {
+    await _db.removeRelationshipFromRemote(local.parentSyncId, local.childSyncId);
+  }
+}
+```
+Same pattern for dependencies.
+
+---
+
+### Important
+
+#### I-31. `_handleUncomplete` doesn't pass `restoreTo` in the `task.isCompleted` branch
+**File:** `lib/screens/todays_five_screen.dart:637-641`
+
+When a task was marked "Done today" (stored in `_workedOnIds`) and then externally completed (e.g., via "Go to task" → complete in All Tasks), `_handleUncomplete` enters the `task.isCompleted` branch. Line 640 calls `unmarkWorkedOn` without `restoreTo`:
+
+```dart
+} else if (task.isCompleted) {
+  await provider.uncompleteTask(task.id!);
+  if (wasWorkedOn) await provider.unmarkWorkedOn(task.id!);  // ← no restoreTo
+}
+```
+
+The original `lastWorkedAt` value IS in `_preWorkedOnLastWorkedAt[task.id]` but is never read in this branch. This wipes `lastWorkedAt` to `null`, permanently erasing any prior "last worked" timestamp.
+
+**Fix:**
+```dart
+if (wasWorkedOn) {
+  final restoreTo = _preWorkedOnLastWorkedAt.remove(task.id);
+  await provider.unmarkWorkedOn(task.id!, restoreTo: restoreTo);
+}
+```
+
+---
+
+#### I-32. `_swapTask` mutates state before `mounted` check — inconsistent state if widget disposed
+**File:** `lib/screens/todays_five_screen.dart:878-887`
+
+After awaiting `getAncestorPath` (line 881), the method mutates `_pinnedIds` (line 879), `_todaysTasks` (line 880), and `_taskPaths` (lines 883-885) before checking `mounted` on line 887. If the widget is disposed during the `await`, the state is mutated but `setState` never fires, causing inconsistency between in-memory state and persisted state (since `_persist()` on line 889 is never reached).
+
+```dart
+_pinnedIds.remove(_todaysTasks[index].id);     // line 879 — mutates
+_todaysTasks[index] = picked.first;             // line 880 — mutates
+final ancestors = await DatabaseHelper()...;    // line 881 — await
+// lines 882-885: more mutations
+if (!mounted) return;                           // line 887 — too late
+```
+
+**Fix:** Move the `mounted` check before the state mutations, or restructure so async work completes before any state is changed:
+```dart
+final picked = provider.pickWeightedN(eligible, 1);
+if (picked.isEmpty) return;
+final ancestors = await DatabaseHelper().getAncestorPath(picked.first.id!);
+if (!mounted) return;
+// Now safe to mutate state
+_pinnedIds.remove(_todaysTasks[index].id);
+_todaysTasks[index] = picked.first;
+if (ancestors.isNotEmpty) {
+  _taskPaths[picked.first.id!] = ancestors.map((t) => t.name).join(' › ');
+} else {
+  _taskPaths.remove(picked.first.id!);
+}
+setState(() {});
+await _persist();
+```
+
+---
+
+#### I-33. `onNavigateToTask` callback doesn't check `mounted` after `await`
+**File:** `lib/main.dart:150-157`
+
+The `onNavigateToTask` callback awaits `navigateToTask` and then calls `_pageController.animateToPage` without checking `mounted`:
+
+```dart
+onNavigateToTask: (task) async {
+  await context.read<TaskProvider>().navigateToTask(task);
+  _pageController.animateToPage(0, ...);  // ← _pageController may be disposed
+},
+```
+
+If the `_AppShellState` is disposed during `navigateToTask` (e.g., app backgrounded), `_pageController` could be disposed, causing an exception.
+
+**Fix:**
+```dart
+onNavigateToTask: (task) async {
+  await context.read<TaskProvider>().navigateToTask(task);
+  if (!mounted) return;
+  _pageController.animateToPage(0, ...);
+},
+```
+
+---
+
+#### I-34. `getDeletedTasks()` queries for `sync_status = 'deleted'` which is never set — dead code
+**File:** `lib/data/database_helper.dart:1382-1387`
+
+```dart
+Future<List<Task>> getDeletedTasks() async {
+  final db = await database;
+  final maps = await db.query('tasks', where: "sync_status = 'deleted'");
+  return _tasksFromMaps(maps);
+}
+```
+
+No code anywhere in the codebase sets `sync_status` to `'deleted'`. Task deletions use `DELETE FROM tasks` (actual row removal), not a soft-delete flag. This method always returns an empty list.
+
+**Fix:** Remove `getDeletedTasks()` as dead code.
+
+---
+
+#### I-35. `removeRelationshipFromRemote` and `removeDependencyFromRemote` are never called
+**File:** `lib/data/database_helper.dart:1510-1541`
+
+These methods exist to remove relationships/dependencies by sync_id (for processing remote deletions during pull), but they are never called anywhere. The `pull()` method only upserts, never removes (see CR-13). These are unused but correctly implemented — they should be wired into the pull logic per CR-13.
+
+**Fix:** Wire these into the `pull()` method as part of the CR-13 fix.
+
+---
+
+### Minor
+
+#### M-24. `_autoStartedIds` never cleaned up on day rollover
+**File:** `lib/screens/todays_five_screen.dart:31`
+
+`_autoStartedIds` is an in-memory set tracking which tasks were auto-started by "Done today". It's never cleared when `_generateNewSet` runs (day rollover) or in `_loadTodaysTasks`. Stale IDs accumulate harmlessly but waste memory.
+
+**Fix:** Clear `_autoStartedIds` (and `_workedOnIds`, `_preWorkedOnLastWorkedAt`) at the start of `_generateNewSet`.
+
+---
+
+#### M-25. `_chipsOverflow` creates `TextPainter` objects without disposing them
+**File:** `lib/screens/todays_five_screen.dart:1290-1312`
+
+`_chipsOverflow` creates `TextPainter(...)..layout()` to measure chip widths but never calls `textPainter.dispose()`. In modern Flutter, `TextPainter` allocates native resources that should be disposed. This is called on every build when the "Also done today" box is visible.
+
+**Fix:** Call `tp.dispose()` after measuring each chip:
+```dart
+final tp = TextPainter(...)..layout();
+final width = tp.width;
+tp.dispose();
+```
+
+---
+
+#### M-26. `BackupService.importDatabase` doesn't trigger Today's 5 refresh
+**File:** `lib/services/backup_service.dart:90-110`
+
+After importing a backup, `provider.loadRootTasks()` refreshes the All Tasks screen, but Today's 5 in-memory state (`_todaysTasks`, `_completedIds`, `_pinnedIds`) remains stale. The imported DB may have different `todays_five_state` data, but the Today's 5 screen won't refresh until the user manually switches tabs.
+
+**Fix:** After import, also trigger `refreshSnapshots()` on the Today's 5 screen, or navigate to root and force-refresh both screens.
+
+---
+
+#### M-27. `_EdgePainter.shouldRepaint` uses identity comparison on lists
+**File:** `lib/screens/dag_view_screen.dart:586`
+
+`shouldRepaint` compares `edgePaths` with `!=` (identity comparison for List). Since `_edgePaths` is a new list on every `_computeLayout`, this always returns `true`. The painter repaints correctly but does unnecessary work.
+
+**Fix:** Use `listEquals` from `foundation.dart`, or accept as negligible (DAG screen is rarely rebuilt).
+
+---
+
+## Round 7 — Suggested Implementation Order
+
+1. **CR-12** — Fix undo-delete sync: cancel pending deletions + mark restored task as pending (20 min, `database_helper.dart`)
+2. **CR-13** — Fix pull to remove stale local relationships/dependencies (30 min, `sync_service.dart` + `database_helper.dart`)
+3. **I-31** — Pass `restoreTo` in `_handleUncomplete` completed branch (2 min, `todays_five_screen.dart`)
+4. **I-32** — Fix `_swapTask` mounted check ordering (5 min, `todays_five_screen.dart`)
+5. **I-33** — Add mounted check in `onNavigateToTask` (1 min, `main.dart`)
+6. **I-34** — Remove dead `getDeletedTasks()` (1 min, `database_helper.dart`)
+7. **I-35** — Wire `removeRelationshipFromRemote`/`removeDependencyFromRemote` into pull (part of CR-13)
+8. **M-24 through M-27** — as time permits
+9. **Remaining open items** from previous rounds — as time permits
