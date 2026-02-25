@@ -1433,3 +1433,552 @@ if (level < 0 || level >= breadcrumb.length) return;
 9. **I-21** — Wrap sync-queue DB operations in transactions (15 min, `database_helper.dart`)
 10. **I-22** — Replace silent catches with `debugPrint` (5 min, `auth_service.dart`)
 11. **Remaining open items** from previous rounds (I6, M3, M5, M6, M9, M-10, M-12, N1–N4) — as time permits
+
+---
+---
+
+## Round 6 (2026-02-25)
+
+Full codebase review after "Also done today" UI rework, sync concurrency fix, and
+version 1.0.11. Verified Round 5 items. Major focus: sync layer completeness gaps —
+multiple core operations never trigger cloud sync.
+
+---
+
+### Previous Round Verification
+
+- [x] CR-5: Sort tier bug — confirmed intentional (by-design, not a bug) per Round 5 status
+- [x] CR-6: Sync queue data loss — verified fixed, `peekSyncQueue()` at `sync_service.dart:259` + `deleteSyncQueueEntry()` at line 293
+- [x] CR-7: Token expiry — verified fixed, `isTokenExpired` getter at `auth_service.dart:57-59`, checked in `_getValidToken()` at `sync_service.dart:375`
+- [x] I-16: Missing HTTP status checks — verified fixed, status checks at `firestore_service.dart:87-88` and `123-124`
+- [x] I-17: Sync concurrency guard — verified fixed, `_syncing` flag with `_pushPending` at `sync_service.dart:236-304`
+- [x] I-18: Missing `mounted` checks — verified fixed, extensive `mounted` checks throughout `todays_five_screen.dart`
+- [x] I-19: Pin state cleanup — verified fixed, `_pinnedIds.remove()` in `_swapTask` (line 866) and `_replaceIfNoLongerLeaf` (line 607)
+- [x] I-20: Unsafe JSON cast — verified fixed, `decoded is! List` check at `firestore_service.dart:297`
+- [x] I-21: Transactional sync queue ops — verified fixed, `addRelationship` (line 405), `addDependency` (line 929), `removeRelationship` (line 724), `removeDependency` (line 955) all wrapped in `db.transaction()`
+- [x] I-22: Silent catch blocks — **partially fixed**: `silentSignIn()` now logs with `debugPrint` at `auth_service.dart:87`, but `_signInDesktop()` at line 255 still has a bare `catch (e) { return null; }` with no logging
+- [x] M-17: `navigateToLevel` bounds check — verified fixed at `task_provider.dart:68`
+
+### Round 1/2/3/5 Items Still Open
+
+- I6: Loading indicators for async UI transitions — still open
+- M3: `_renameTask` dialog leaks TextEditingController — still open
+- M5: `BackupService` hardcodes Android download path — still open
+- M6: DAG view doesn't recompute layout on rotation — still open
+- M9: N+1 queries in `_addParent` for grandparent siblings — still open
+- M-10: `showEditUrlDialog` leaks TextEditingController — still open
+- M-12: Repeating task code is dead code — still open
+- M-14: Firestore `integerValue` null guard on `lastSyncAt` — still open
+- M-15: Refresh token stored in plaintext SharedPreferences — still open (future)
+- M-16: No error handling in `_loadTodaysTasks()` initial load — still open
+- N1–N4: All still open
+
+---
+
+### Critical
+
+#### CR-8. Sync gap: `completeTask`, `skipTask`, and `markWorkedOnAndNavigateBack` never trigger sync push
+**Files:**
+- `lib/providers/task_provider.dart:183-205, 514-518`
+- `lib/providers/task_provider.dart:50-54, 633, 669`
+
+The three most common user mutations — completing a task, skipping a task, and
+marking "Done today" — all route through `navigateBack()` (line 50-54), which
+calls `_refreshCurrentList(isMutation: false)`. Because `isMutation` is false,
+`onMutation?.call()` at line 669 is **never invoked**, so `syncService.schedulePush()`
+is never called.
+
+```dart
+// task_provider.dart
+Future<Task> completeTask(int taskId) async {
+  await _db.completeTask(taskId);    // marks sync_status='pending' in DB
+  await navigateBack();              // isMutation: false → onMutation NOT called
+  return task;
+}
+
+Future<void> navigateBack() async {
+  _currentParent = _parentStack.removeLast();
+  await _refreshCurrentList(isMutation: false);  // ← push never scheduled
+}
+```
+
+The DB correctly marks the task as `sync_status: 'pending'`, but no push is
+ever scheduled. The data stays pending until:
+- Another mutation that **does** trigger `onMutation` (e.g., rename, add task)
+- User manually taps "Sync now"
+
+The periodic timer only calls `pull()`, not `push()`.
+
+**Impact:** The core workflow of completing/skipping tasks silently fails to
+sync to cloud. The user can complete 100 tasks, close the app, and none of
+them are pushed to Firestore.
+
+**Fix:** Either:
+(a) Change `navigateBack()` to accept an `isMutation` parameter:
+```dart
+Future<bool> navigateBack({bool isMutation = false}) async {
+  if (_parentStack.isEmpty) return false;
+  _currentParent = _parentStack.removeLast();
+  await _refreshCurrentList(isMutation: isMutation);
+  return true;
+}
+```
+Then pass `isMutation: true` from `completeTask`, `skipTask`, and `markWorkedOnAndNavigateBack`.
+
+(b) Or call `onMutation?.call()` directly in those methods before `navigateBack()`.
+
+---
+
+#### CR-9. Sync gap: `deleteTaskSubtree` doesn't enqueue any sync events
+**File:** `lib/data/database_helper.dart:1162-1216`
+
+`deleteTaskSubtree` deletes multiple tasks, all their relationships, and all
+their dependencies inside a transaction — but inserts **zero** entries into
+`sync_queue`. Compare with `deleteTaskWithRelationships` (line 836-844)
+which correctly enqueues a task deletion.
+
+```dart
+// deleteTaskSubtree (line 1201-1209):
+await txn.rawDelete('DELETE FROM task_relationships WHERE ...');
+await txn.rawDelete('DELETE FROM task_dependencies WHERE ...');
+await txn.rawDelete('DELETE FROM tasks WHERE ...');
+// ← no sync_queue inserts anywhere
+```
+
+**Impact:** Deleting a task subtree locally leaves all those tasks, relationships,
+and dependencies intact in Firestore. On next pull, the deleted data comes back.
+
+**Fix:** Inside the transaction, after collecting subtree data but before deleting,
+enqueue sync events for each task with a `sync_id`:
+```dart
+for (final task in deletedTasks) {
+  if (task.syncId != null) {
+    await txn.insert('sync_queue', {
+      'entity_type': 'task', 'action': 'remove',
+      'key1': task.syncId!, 'key2': '',
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+}
+// Also enqueue relationship and dependency removals
+```
+
+---
+
+#### CR-10. Sync gap: `deleteTaskAndReparentChildren` doesn't enqueue sync events
+**File:** `lib/data/database_helper.dart:1099-1154`
+
+Same issue as CR-9. This method deletes a task, its relationships, and its
+dependencies, then reparents children — all without any `sync_queue` entries.
+The deleted task stays in Firestore, and the new reparent relationships are
+never pushed.
+
+**Fix:** Enqueue task deletion and new reparent relationship additions inside
+the transaction. The reparented links (`addedLinks`) need 'relationship/add'
+entries, and the deleted task needs a 'task/remove' entry.
+
+---
+
+#### CR-11. Firestore delete methods silently ignore HTTP errors — failed deletes lost forever
+**File:** `lib/services/firestore_service.dart:130-157`
+
+All three delete methods (`deleteTask`, `deleteRelationship`, `deleteDependency`)
+fire HTTP DELETE requests without checking the response status:
+
+```dart
+Future<void> deleteTask(String uid, String idToken, String syncId) async {
+  final url = Uri.parse('${_tasksPath(uid)}/$syncId');
+  await http.delete(url, headers: _headers(idToken));  // response IGNORED
+}
+```
+
+In `sync_service.dart:push()`, each sync queue entry is deleted after the
+Firestore operation (line 293: `await _db.deleteSyncQueueEntry(entryId)`).
+If the HTTP DELETE returns 401/403/500, the error is silently swallowed, and
+the sync queue entry is still deleted — the deletion is permanently lost.
+
+Compare with `pushTasks`, `pushRelationships`, and `pushDependencies` which
+all correctly throw `FirestoreException` on non-200 status.
+
+**Fix:** Check response status in all three delete methods:
+```dart
+Future<void> deleteTask(String uid, String idToken, String syncId) async {
+  final url = Uri.parse('${_tasksPath(uid)}/$syncId');
+  final response = await http.delete(url, headers: _headers(idToken));
+  if (response.statusCode != 200 && response.statusCode != 404) {
+    throw FirestoreException('Delete task failed: ${response.statusCode}');
+  }
+}
+```
+(404 is acceptable — the document may already be deleted.)
+
+---
+
+### Important
+
+#### I-23. Sync status stuck at "syncing" when token is null
+**File:** `lib/services/sync_service.dart:92-96, 131-135, 242-246, 313-317`
+
+Multiple methods set `_authProvider.setSyncStatus(SyncStatus.syncing)` and then
+have an early return if `_getValidToken()` returns null:
+
+```dart
+_authProvider.setSyncStatus(SyncStatus.syncing);  // line 92/131/242/313
+try {
+  final idToken = await _getValidToken();
+  if (idToken == null) return;  // ← exits without resetting status
+```
+
+When the token is null (e.g., refresh failed, user not signed in), the sync
+status is permanently stuck at `SyncStatus.syncing`. The UI shows "Syncing..."
+forever until the next successful sync operation.
+
+For `push()` and `pull()`, the `finally` block clears `_syncing` but does not
+reset the sync status. For `initialMigration()` and `replaceLocalWithCloud()`,
+there is no `finally` block at all.
+
+**Fix:** Reset status to `idle` (or `error`) on early return:
+```dart
+if (idToken == null) {
+  _authProvider.setSyncStatus(SyncStatus.idle);
+  return;
+}
+```
+
+---
+
+#### I-24. `removeAllDependencies` doesn't enqueue sync events
+**File:** `lib/data/database_helper.dart:1065-1072`
+
+`removeAllDependencies` deletes all dependencies for a task without inserting
+any `sync_queue` entries:
+
+```dart
+Future<void> removeAllDependencies(int taskId) async {
+  final db = await database;
+  await db.delete('task_dependencies', where: 'task_id = ?', whereArgs: [taskId]);
+}
+```
+
+Compare with `removeDependency` (line 953-974) which correctly enqueues
+a 'dependency/remove' entry in `sync_queue`.
+
+**Impact:** When a task's dependency is changed (old dependency removed via
+`removeAllDependencies`, new one added via `addDependency`), only the new
+dependency is synced. The old dependency remains in Firestore.
+
+**Fix:** Query existing dependencies before deleting, then enqueue removal
+entries for each:
+```dart
+Future<void> removeAllDependencies(int taskId) async {
+  final db = await database;
+  await db.transaction((txn) async {
+    final deps = await txn.query('task_dependencies',
+      where: 'task_id = ?', whereArgs: [taskId]);
+    for (final dep in deps) {
+      // Enqueue sync removal (look up sync_ids first)
+      // ...
+    }
+    await txn.delete('task_dependencies', where: 'task_id = ?', whereArgs: [taskId]);
+  });
+}
+```
+
+---
+
+#### I-25. `pull()` blocked by `_syncing` is permanently dropped — no retry mechanism
+**File:** `lib/services/sync_service.dart:310`
+
+```dart
+Future<void> pull() async {
+  if (!_canSync || _syncing) return;  // ← silently dropped
+```
+
+Unlike `push()` which sets `_pushPending = true` when blocked (line 237),
+`pull()` has no equivalent "pull pending" flag. If a pull is blocked because
+a push is in progress, the pull is silently discarded.
+
+The periodic pull timer fires every N minutes, so the next periodic pull
+will eventually succeed. But if a pull was triggered by the user tapping
+"Sync now" (`syncNow()` calls `push()` then `pull()`), the push succeeds
+and the pull is immediately blocked by the `_syncing` flag still being true
+inside `push()`'s `finally` block.
+
+Wait — actually, `push()` sets `_syncing = false` in its `finally` block
+(line 300) before `syncNow()` calls `pull()`. So the sequential call is fine.
+The real risk is when a periodic pull timer fires while a push is in progress.
+
+**Fix (optional):** Add `_pullPending` flag mirroring `_pushPending`, or
+document that this is an acceptable trade-off since periodic pulls will
+catch up.
+
+---
+
+#### I-26. `_handleUncomplete` doesn't pass `restoreTo` when reverting "Done today"
+**File:** `lib/screens/todays_five_screen.dart:629`
+
+```dart
+await provider.unmarkWorkedOn(task.id!);  // no restoreTo parameter
+```
+
+Unlike the SnackBar undo in `_workedOnTask` (line 545) which passes
+`restoreTo: previousLastWorkedAt`, the check-icon uncomplete path calls
+`unmarkWorkedOn` without `restoreTo`. This sets `lastWorkedAt` to `null`
+in the DB, permanently erasing any previous `lastWorkedAt` value (e.g.,
+"worked on yesterday").
+
+This was flagged in CR-4 (Round 2) and partially fixed for the SnackBar
+undo path, but the check-icon uncomplete path was never addressed.
+
+**Fix:** Track the original `lastWorkedAt` in the `_workedOnTask` flow
+and make it available to `_handleUncomplete`. One approach: add a
+`Map<int, int?> _preWorkedOnLastWorkedAt` that stores the pre-mutation
+value when "Done today" is tapped, and read from it in `_handleUncomplete`.
+
+---
+
+#### I-27. `AuthProvider.refreshToken()` signs out on transient network errors
+**File:** `lib/providers/auth_provider.dart:42-50`
+
+```dart
+Future<bool> refreshToken() async {
+  final success = await _authService.refreshToken();
+  if (!success) {
+    await _authService.signOut();  // ← destroys session on ANY failure
+    notifyListeners();
+  }
+  return success;
+}
+```
+
+If `_authService.refreshToken()` returns false due to a temporary network
+error (not a permanent token revocation), the user is signed out and all
+credentials are wiped from SharedPreferences. The user must sign in
+interactively again.
+
+Additionally, if `_authService.refreshToken()` **throws** (e.g.,
+`SocketException` from `http.post`), the exception propagates uncaught —
+`signOut()` is never called, but the token state is left inconsistent.
+
+**Fix:** Distinguish permanent failures (HTTP 400 "invalid grant") from
+transient ones (network error, timeout):
+```dart
+Future<bool> refreshToken() async {
+  try {
+    final success = await _authService.refreshToken();
+    if (!success) {
+      // Permanent failure (invalid/revoked token) — sign out
+      await _authService.signOut();
+      notifyListeners();
+    }
+    return success;
+  } catch (e) {
+    // Transient failure (network) — don't sign out, just report
+    debugPrint('AuthProvider: token refresh failed: $e');
+    return false;
+  }
+}
+```
+
+---
+
+#### I-28. `PinButton` is tappable when visually disabled
+**File:** `lib/utils/display_utils.dart:67`
+
+```dart
+final disabled = atMaxPins && !isPinned;
+// ... visual dimming applied ...
+onPressed: onToggle,  // ← always active, never null
+```
+
+When `disabled` is true (max pins reached, task not pinned), the button's icon
+is dimmed and tooltip says "Max pins reached", but `onPressed` is never set to
+null. The button remains tappable. Callers handle this gracefully (show a
+snackbar), but the button should be actually disabled per Material guidelines.
+
+**Fix:**
+```dart
+onPressed: disabled ? null : onToggle,
+```
+
+---
+
+#### I-29. `_pickAndPinTask` doesn't update `_taskPaths` — new task shows without breadcrumb
+**File:** `lib/screens/todays_five_screen.dart:836-839`
+
+After picking and pinning a new task, `_pickAndPinTask` calls `setState` and
+`_persist()` but does NOT update `_taskPaths` for the new task. Compare with
+`_swapTask` (lines 868-873) which correctly loads the ancestor path.
+
+The new task renders without its "Parent > Grandparent" breadcrumb subtitle
+until the next `refreshSnapshots()` call.
+
+**Fix:** Load the path after picking, same as `_swapTask`:
+```dart
+final ancestors = await DatabaseHelper().getAncestorPath(picked.id!);
+if (ancestors.isNotEmpty) {
+  _taskPaths[picked.id!] = ancestors.map((t) => t.name).join(' › ');
+} else {
+  _taskPaths.remove(picked.id!);
+}
+```
+
+---
+
+#### I-30. `_signInDesktop` still swallows exceptions with no logging
+**File:** `lib/services/auth_service.dart:255-257`
+
+I-22 was only partially fixed. `silentSignIn()` now has `debugPrint` (line 87),
+but `_signInDesktop()` still has a bare catch that discards all error context:
+
+```dart
+} catch (e) {
+  return null;  // network error? TLS error? JSON parse error? — unknown
+}
+```
+
+**Fix:**
+```dart
+} catch (e) {
+  debugPrint('AuthService: desktop sign-in failed: $e');
+  return null;
+}
+```
+
+---
+
+### Minor
+
+#### M-18. `_preWorkedOnTimestamps` map grows unboundedly
+**File:** `lib/screens/task_list_screen.dart:41, 382`
+
+Entries are added to `_preWorkedOnTimestamps` on every `_workedOn` call but
+only removed in the `onUndoWorkedOn` callback (line 634). If the user marks
+many tasks as "worked on" without pressing undo, the map grows for the
+lifetime of the screen.
+
+**Fix:** Clear entries for tasks that are no longer in `_tasks` during
+`_refreshCurrentList`, or simply clear the map on navigation.
+
+---
+
+#### M-19. Double refresh on tab navigation
+**File:** `lib/main.dart:137-146, 164-175`
+
+Both the `onPageChanged` callback (PageView) and `onDestinationSelected`
+callback (NavigationBar) trigger `refreshSnapshots()` / `loadTodaysFiveIds()`.
+When the user taps a navigation bar item, `animateToPage` fires, which
+triggers `onPageChanged` — both callbacks fire, causing double refreshes.
+
+**Fix:** Only trigger refresh from one callback. Since `onDestinationSelected`
+is the user action, move refresh logic there and remove it from `onPageChanged`.
+
+---
+
+#### M-20. Missing `WidgetsFlutterBinding.ensureInitialized()` in `main()`
+**File:** `lib/main.dart:13-18`
+
+```dart
+void main() {
+  if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
+    sqfliteFfiInit();  // ← runs before binding initialized
+    databaseFactory = databaseFactoryFfi;
+  }
+  runApp(const TaskRouletteApp());
+}
+```
+
+`sqfliteFfiInit()` runs before `runApp()` which is where
+`WidgetsFlutterBinding.ensureInitialized()` is called. If `sqfliteFfiInit()`
+uses any Flutter binding internals, this could fail on some platforms.
+
+**Fix:** Add `WidgetsFlutterBinding.ensureInitialized()` as the first line
+in `main()`.
+
+---
+
+#### M-21. `_initAuth` in `_HomeScreenState` has no error handling
+**File:** `lib/main.dart:95-96`
+
+```dart
+void initState() {
+  super.initState();
+  _initAuth();  // fire-and-forget, no .catchError
+}
+```
+
+If any awaited call inside `_initAuth` throws, the exception is unhandled.
+Sync will never start, with no user feedback.
+
+**Fix:** Wrap `_initAuth` body in try-catch:
+```dart
+Future<void> _initAuth() async {
+  try {
+    // ... existing logic ...
+  } catch (e) {
+    debugPrint('Failed to initialize auth/sync: $e');
+  }
+}
+```
+
+---
+
+#### M-22. Theme data duplicated between light and dark themes
+**File:** `lib/main.dart:41-68`
+
+`cardTheme` and `snackBarTheme` are copy-pasted identically in both `theme:`
+and `darkTheme:` blocks. If one is updated, the other must be updated manually.
+
+**Fix:** Extract shared theme components:
+```dart
+const _cardTheme = CardThemeData(
+  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+  clipBehavior: Clip.antiAlias,
+);
+const _snackBarTheme = SnackBarThemeData(behavior: SnackBarBehavior.floating);
+```
+
+---
+
+#### M-23. `ThemeProvider` race between `_loadPreference()` and `toggle()`
+**File:** `lib/providers/theme_provider.dart:12, 26-27`
+
+The constructor fires `_loadPreference()` as fire-and-forget. If the user
+toggles the theme before `_loadPreference()` completes, the async load
+can overwrite the user's toggle with the old saved value.
+
+**Fix:** Track whether a manual toggle occurred during load:
+```dart
+bool _manuallyToggled = false;
+
+Future<void> _loadPreference() async {
+  final prefs = await SharedPreferences.getInstance();
+  final saved = prefs.getString(_key);
+  if (saved != null && !_manuallyToggled) {
+    _themeMode = saved == 'dark' ? ThemeMode.dark : ThemeMode.light;
+    notifyListeners();
+  }
+}
+
+void toggle() {
+  _manuallyToggled = true;
+  // ... existing toggle logic
+}
+```
+
+---
+
+## Round 6 — Suggested Implementation Order
+
+1. **CR-8** — Fix sync gap for completeTask/skipTask/markWorkedOnAndNavigateBack (10 min, `task_provider.dart`)
+2. **CR-11** — Add HTTP status checks to Firestore delete methods (5 min, `firestore_service.dart`)
+3. **CR-9** — Enqueue sync events in `deleteTaskSubtree` (20 min, `database_helper.dart`)
+4. **CR-10** — Enqueue sync events in `deleteTaskAndReparentChildren` (20 min, `database_helper.dart`)
+5. **I-23** — Reset sync status on null token early return (5 min, `sync_service.dart`)
+6. **I-24** — Enqueue sync events in `removeAllDependencies` (10 min, `database_helper.dart`)
+7. **I-27** — Don't sign out on transient network errors (10 min, `auth_provider.dart`)
+8. **I-26** — Pass `restoreTo` in `_handleUncomplete` (10 min, `todays_five_screen.dart`)
+9. **I-28** — Disable PinButton when at max pins (2 min, `display_utils.dart`)
+10. **I-29** — Load `_taskPaths` in `_pickAndPinTask` (5 min, `todays_five_screen.dart`)
+11. **I-30** — Add debugPrint to `_signInDesktop` catch (1 min, `auth_service.dart`)
+12. **Remaining open items** from previous rounds — as time permits
