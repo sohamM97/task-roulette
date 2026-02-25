@@ -1833,6 +1833,147 @@ void main() {
       final second = await db.drainSyncQueue();
       expect(second, isEmpty);
     });
+
+    test('removeAllDependencies enqueues sync removal for each dependency', () async {
+      final id1 = await db.insertTask(Task(name: 'Task'));
+      final id2 = await db.insertTask(Task(name: 'Dep A'));
+      final id3 = await db.insertTask(Task(name: 'Dep B'));
+      await db.addDependency(id1, id2);
+      await db.addDependency(id1, id3);
+      await db.drainSyncQueue(); // clear setup entries
+
+      await db.removeAllDependencies(id1);
+
+      final queue = await db.drainSyncQueue();
+      final depEntries = queue.where((e) => e['entity_type'] == 'dependency').toList();
+      expect(depEntries.length, 2);
+      for (final entry in depEntries) {
+        expect(entry['action'], 'remove');
+        expect(entry['key1'], isNotEmpty);
+        expect(entry['key2'], isNotEmpty);
+      }
+    });
+
+    test('removeAllDependencies skips sync for unsynced tasks', () async {
+      final id1 = await db.insertTask(Task(name: 'Task'));
+      final id2 = await db.insertTask(Task(name: 'Dep'));
+      await db.addDependency(id1, id2);
+      await db.drainSyncQueue();
+
+      // Clear sync_ids to simulate unsynced tasks
+      final rawDb = await db.database;
+      await rawDb.update('tasks', {'sync_id': null});
+
+      await db.removeAllDependencies(id1);
+
+      final queue = await db.drainSyncQueue();
+      final depEntries = queue.where((e) => e['entity_type'] == 'dependency').toList();
+      expect(depEntries, isEmpty);
+    });
+
+    test('deleteTaskAndReparentChildren enqueues sync events', () async {
+      // Grandparent → Parent → Child
+      final gpId = await db.insertTask(Task(name: 'Grandparent'));
+      final pId = await db.insertTask(Task(name: 'Parent'));
+      final cId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(gpId, pId);
+      await db.addRelationship(pId, cId);
+      await db.drainSyncQueue();
+
+      await db.deleteTaskAndReparentChildren(pId);
+
+      final queue = await db.drainSyncQueue();
+
+      // Should enqueue: task removal, relationship add (gp→child),
+      // relationship remove (gp→parent), relationship remove (parent→child)
+      final taskEntries = queue.where((e) => e['entity_type'] == 'task').toList();
+      expect(taskEntries.length, 1);
+      expect(taskEntries[0]['action'], 'remove');
+
+      final relAdds = queue.where(
+        (e) => e['entity_type'] == 'relationship' && e['action'] == 'add',
+      ).toList();
+      expect(relAdds.length, 1); // gp→child reparent
+
+      final relRemoves = queue.where(
+        (e) => e['entity_type'] == 'relationship' && e['action'] == 'remove',
+      ).toList();
+      expect(relRemoves.length, 2); // gp→parent + parent→child
+    });
+
+    test('deleteTaskAndReparentChildren skips sync for unsynced tasks', () async {
+      final pId = await db.insertTask(Task(name: 'Parent'));
+      final cId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(pId, cId);
+      await db.drainSyncQueue();
+
+      // Clear sync_ids
+      final rawDb = await db.database;
+      await rawDb.update('tasks', {'sync_id': null});
+
+      await db.deleteTaskAndReparentChildren(pId);
+
+      final queue = await db.drainSyncQueue();
+      expect(queue, isEmpty);
+    });
+
+    test('deleteTaskSubtree enqueues sync events for tasks and relationships', () async {
+      // Root → A → B (subtree to delete: Root, A, B)
+      final rootId = await db.insertTask(Task(name: 'Root'));
+      final aId = await db.insertTask(Task(name: 'A'));
+      final bId = await db.insertTask(Task(name: 'B'));
+      await db.addRelationship(rootId, aId);
+      await db.addRelationship(aId, bId);
+      await db.drainSyncQueue();
+
+      await db.deleteTaskSubtree(rootId);
+
+      final queue = await db.drainSyncQueue();
+
+      final taskEntries = queue.where((e) => e['entity_type'] == 'task').toList();
+      expect(taskEntries.length, 3); // Root, A, B
+      for (final entry in taskEntries) {
+        expect(entry['action'], 'remove');
+      }
+
+      final relEntries = queue.where((e) => e['entity_type'] == 'relationship').toList();
+      expect(relEntries.length, 2); // Root→A, A→B
+      for (final entry in relEntries) {
+        expect(entry['action'], 'remove');
+      }
+    });
+
+    test('deleteTaskSubtree enqueues sync events for dependencies', () async {
+      final rootId = await db.insertTask(Task(name: 'Root'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      final externalId = await db.insertTask(Task(name: 'External'));
+      await db.addRelationship(rootId, childId);
+      await db.addDependency(childId, externalId);
+      await db.drainSyncQueue();
+
+      await db.deleteTaskSubtree(rootId);
+
+      final queue = await db.drainSyncQueue();
+
+      final depEntries = queue.where((e) => e['entity_type'] == 'dependency').toList();
+      expect(depEntries.length, 1);
+      expect(depEntries[0]['action'], 'remove');
+    });
+
+    test('deleteTaskSubtree skips sync for unsynced tasks', () async {
+      final rootId = await db.insertTask(Task(name: 'Root'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(rootId, childId);
+      await db.drainSyncQueue();
+
+      final rawDb = await db.database;
+      await rawDb.update('tasks', {'sync_id': null});
+
+      await db.deleteTaskSubtree(rootId);
+
+      final queue = await db.drainSyncQueue();
+      expect(queue, isEmpty);
+    });
   });
 
   group('Sync query methods', () {

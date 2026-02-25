@@ -2619,4 +2619,78 @@ void main() {
       expect(ids.indexOf(hpId), lessThan(ids.indexOf(normalId)));
     });
   });
+
+  group('onMutation callback', () {
+    test('completeTask calls onMutation', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      final child = provider.tasks.firstWhere((t) => t.id == childId);
+      await provider.navigateInto(child);
+
+      int callCount = 0;
+      provider.onMutation = () => callCount++;
+
+      await provider.completeTask(childId);
+      expect(callCount, 1);
+    });
+
+    test('skipTask calls onMutation', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      final child = provider.tasks.firstWhere((t) => t.id == childId);
+      await provider.navigateInto(child);
+
+      int callCount = 0;
+      provider.onMutation = () => callCount++;
+
+      await provider.skipTask(childId);
+      expect(callCount, 1);
+    });
+
+    test('markWorkedOnAndNavigateBack calls onMutation', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+      await db.startTask(childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      final child = provider.tasks.firstWhere((t) => t.id == childId);
+      await provider.navigateInto(child);
+
+      int callCount = 0;
+      provider.onMutation = () => callCount++;
+
+      await provider.markWorkedOnAndNavigateBack(childId);
+      expect(callCount, 1);
+    });
+
+    test('onMutation is not called when callback is null', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      final child = provider.tasks.firstWhere((t) => t.id == childId);
+      await provider.navigateInto(child);
+
+      provider.onMutation = null;
+
+      // Should not throw when onMutation is null
+      await provider.completeTask(childId);
+    });
+  });
 }
