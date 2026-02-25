@@ -583,3 +583,331 @@ return normalized;
 | **LOW** | LOW-10: `firstWhere` without `orElse` | **Still open** |
 | **LOW** | LOW-12: Add `maxLength` to URL field | **New** |
 | **LOW** | LOW-13: Validate URL host after normalization | **New** |
+
+---
+
+## Round 3 (2026-02-25)
+
+**Scope:** Full review of new cloud sync layer (Google Sign-In + Firestore REST APIs), plus verification of all Round 1/2 fixes.
+
+### Previous Round Verification
+
+**Round 1 findings — all 8 outstanding items from Round 2 resolved:**
+- [x] HIGH-1: `file_picker` updated to 10.3.10 — verified in `pubspec.yaml` and `pubspec.lock`
+- [x] MED-5: R8 code shrinking enabled — `build.gradle.kts:55-56` has `isMinifyEnabled = true` and `isShrinkResources = true`
+- [x] MED-6: Brain dump dialog limits — `brain_dump_dialog.dart:72` has `maxLength: 25000`, and `_parseNames()` at line 34 truncates each line to 500 chars
+- [x] LOW-4: Pre-import backup — `database_helper.dart:314-317` copies `.db` to `.db.bak` before overwriting
+- [x] LOW-9: Debug signing fallback warning — `build.gradle.kts:19` logs `logger.warn("WARNING: key.properties not found...")`
+- [x] LOW-10: `firstWhere` without `orElse` — all three call sites at `task_provider.dart:108,188,201` now have explicit `orElse` clauses. They still throw `StateError` but with descriptive messages, and the `_currentParent?.id == taskId` short-circuit above each reduces the likelihood of reaching the throw path
+- [x] LOW-12: URL maxLength — `leaf_task_detail.dart:102` has `maxLength: 2048`
+- [x] LOW-13: normalizeUrl host validation — `display_utils.dart:19` checks `uri.host.contains('.')`
+
+**Round 1/2 accepted items — status unchanged:**
+- LOW-6: Unencrypted DB at rest — still accepted for threat model
+- LOW-7: Unencrypted backup export — still accepted for threat model
+- LOW-11: `share_plus` outdated — **resolved: dependency removed** (no longer in `pubspec.yaml`)
+
+**Previously correct positive findings now invalidated by sync layer:**
+- ~~Positive Finding #3 "No Sensitive Data Stored"~~ — Firebase refresh token is now stored in SharedPreferences
+- ~~Positive Finding #4 "No Network Communication in Release"~~ — Sync layer adds network calls; INTERNET permission is now merged in via `google_sign_in`/`http` plugin manifests
+- ~~INFO-6 "No Logging Statements"~~ — 8 `debugPrint()` calls added in `auth_service.dart` and `auth_provider.dart`
+
+### Findings
+
+#### HIGH-2: Firebase Refresh Token Stored in Plaintext SharedPreferences
+
+- **Severity:** High
+- **File:** `lib/services/auth_service.dart:300-303`
+- **Code:**
+  ```dart
+  Future<void> _persistTokens(SharedPreferences prefs) async {
+    if (_firebaseRefreshToken != null) {
+      await prefs.setString(_prefsKeyRefreshToken, _firebaseRefreshToken!);
+    }
+  }
+  ```
+
+**Description:** The Firebase refresh token is stored in SharedPreferences without encryption. Refresh tokens are long-lived credentials that can generate new ID tokens indefinitely, granting full read/write access to the user's Firestore data (all tasks, relationships, dependencies).
+
+- **Android:** SharedPreferences are stored in the app's sandboxed `/data/data/` directory. Requires root access to read — acceptable on Android.
+- **Linux:** `shared_preferences_linux` stores data in `~/.local/share/com.taskroulette.task_roulette/shared_preferences.json`, a plain JSON file readable by any process running as the same user. Any malware, browser extension with file access, or another local app could read the refresh token.
+
+**Impact:** Token theft → full access to the user's cloud task data, including ability to read, modify, and delete all synced tasks.
+
+**Recommended Fix:**
+On Linux, use the system keyring via `flutter_secure_storage` (which uses libsecret/GNOME Keyring):
+```dart
+// Store refresh token securely
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+final _secureStorage = FlutterSecureStorage();
+await _secureStorage.write(key: 'auth_refresh_token', value: token);
+```
+On Android, `flutter_secure_storage` uses Android Keystore. This provides encryption at rest on both platforms.
+
+---
+
+#### MED-7: `debugPrint` Statements Leak Auth Error Details to System Log
+
+- **Severity:** Medium
+- **File:** `lib/services/auth_service.dart:87,164,204,214,256,279`
+- **Code (worst case):**
+  ```dart
+  debugPrint('AuthService: Firebase token exchange failed: ${response.statusCode} ${response.body}');
+  ```
+
+**Description:** The auth service contains 6 `debugPrint()` calls that log authentication error details. Unlike `assert`, `debugPrint` is NOT stripped in release builds — it calls `print()` which writes to the system log. On Android, this goes to logcat, readable by any app with `READ_LOGS` permission (Android <4.1) or via `adb logcat`. The logged data includes:
+- Firebase API response bodies (error codes, project identifiers)
+- Google Sign-In error messages (could include account details)
+- Token refresh failure reasons
+
+The `auth_provider.dart:53` also logs: `debugPrint('AuthProvider: token refresh failed: $e')`.
+
+This breaks the previous positive finding (INFO-6) that the codebase had zero logging statements.
+
+**Recommended Fix:** Remove all `debugPrint` calls from auth code. If debug logging is needed, gate it:
+```dart
+if (kDebugMode) {
+  debugPrint('AuthService: ...');
+}
+```
+`kDebugMode` is a compile-time constant that is `false` in release builds, so the entire block is tree-shaken.
+
+---
+
+#### MED-8: Remote Sync Bypasses DAG Cycle Detection
+
+- **Severity:** Medium
+- **File:** `lib/data/database_helper.dart:1632-1644, 1658-1667`
+- **Code:**
+  ```dart
+  Future<void> upsertRelationshipFromRemote(String parentSyncId, String childSyncId) async {
+    // ...
+    await db.rawInsert(
+      'INSERT OR IGNORE INTO task_relationships (parent_id, child_id) VALUES (?, ?)',
+      [parentId, childId],
+    );
+  }
+  ```
+
+**Description:** When pulling relationships and dependencies from Firestore, the sync layer inserts them directly with `INSERT OR IGNORE` without calling `hasPath()` or `hasDependencyPath()` for cycle detection. The local DAG invariant (no cycles) is a core safety property — the recursive CTE queries in `hasPath` and navigation rely on it. Sources of corrupted data:
+1. A bug in a future version of the app that pushes invalid data
+2. Direct Firestore edits (via Firebase console or API)
+3. Race conditions during concurrent sync from multiple devices
+
+**Impact:** A cycle in the relationship graph could cause infinite loops in recursive CTE queries, hanging the app. A cycle in the dependency graph would create unresolvable blockers.
+
+**Recommended Fix:** After pulling all relationships, validate the DAG:
+```dart
+for (final rel in remoteRels) {
+  // Check if adding this would create a cycle
+  final childId = await _db.getTaskIdBySyncId(rel.childSyncId);
+  final parentId = await _db.getTaskIdBySyncId(rel.parentSyncId);
+  if (childId != null && parentId != null) {
+    final wouldCycle = await _db.hasPath(childId, parentId);
+    if (!wouldCycle) {
+      await _db.upsertRelationshipFromRemote(rel.parentSyncId, rel.childSyncId);
+    }
+  }
+}
+```
+
+---
+
+#### MED-9: No Validation of Remote Task Field Sizes
+
+- **Severity:** Medium
+- **File:** `lib/services/firestore_service.dart:346-369`
+- **Code:**
+  ```dart
+  return Task(
+    name: _stringField(fields, 'name') ?? '',
+    // ... no length checks on any field
+  );
+  ```
+
+**Description:** `taskFromFirestoreDoc` deserializes task data from Firestore documents without validating field sizes. Firestore documents can be up to 1MB. A corrupted or maliciously modified cloud document with an extremely long `name` (e.g., 500KB) or `url` field would be:
+1. Stored in the local SQLite database, causing bloat
+2. Rendered in `Text` widgets in the grid view, causing layout thrash and jank
+3. Passed to `TextEditingController` in rename dialogs, potentially causing memory issues
+
+This is especially concerning because the data comes from a network source the user doesn't directly control after initial sign-in.
+
+**Recommended Fix:** Truncate fields during deserialization:
+```dart
+name: (_stringField(fields, 'name') ?? '').substring(0, min(500, name.length)),
+url: urlField != null && urlField.length <= 2048 ? urlField : null,
+```
+
+---
+
+#### MED-10: Sync Error Messages Expose Internal Details to UI
+
+- **Severity:** Medium
+- **File:** `lib/services/sync_service.dart:126,174,231,309,399`
+- **Code:**
+  ```dart
+  _authProvider.setSyncStatus(SyncStatus.error, error: e.toString());
+  ```
+
+**Description:** Raw exception messages (including `FirestoreException` with HTTP status codes and response bodies, `SocketException` with server addresses, and other internal errors) are passed to the UI via `setSyncStatus`. These are displayed in the profile bottom sheet's sync status row (`profile_icon.dart:368`). Example message a user would see: `"FirestoreException: Push tasks failed: 403 {"error":{"code":403,"message":"Missing or insufficient permissions.","status":"PERMISSION_DENIED"}}"`.
+
+**Recommended Fix:** Map exceptions to user-friendly messages:
+```dart
+} catch (e) {
+  final message = e is FirestoreException
+      ? 'Sync failed — check your connection'
+      : 'Sync error — try again later';
+  _authProvider.setSyncStatus(SyncStatus.error, error: message);
+}
+```
+
+---
+
+#### LOW-14: INTERNET Permission Now Present in Release Builds
+
+- **Severity:** Low (informational correction)
+- **File:** `android/app/src/main/AndroidManifest.xml`
+
+**Description:** The previous security review (Round 1, Positive Finding #4) stated "No Network Communication in Release. The main AndroidManifest.xml has no INTERNET permission." This is now incorrect. The `google_sign_in`, `http`, and `googleapis_auth` packages declare INTERNET permission in their plugin manifests, which are merged into the release APK by the Android build system. The app now communicates with:
+- `identitytoolkit.googleapis.com` (Firebase Auth)
+- `securetoken.googleapis.com` (token refresh)
+- `firestore.googleapis.com` (data sync)
+- Google OAuth endpoints (sign-in)
+
+**Recommended Fix:** Add `<uses-permission android:name="android.permission.INTERNET"/>` to the main `AndroidManifest.xml` for transparency and self-documentation. It's already present via merging, but explicitly declaring it makes the app's capabilities clear.
+
+---
+
+#### LOW-15: Firestore Security Rules Not Version-Controlled
+
+- **Severity:** Low
+- **Files:** No `firestore.rules` or `firebase.json` in the repository
+
+**Description:** The app reads and writes to Firestore paths: `/users/{uid}/tasks/*`, `/users/{uid}/relationships/*`, `/users/{uid}/dependencies/*`. Firestore Security Rules must ensure that only the authenticated user can access their own data (`request.auth.uid == uid`). Without the rules in the repository, there's no visibility into the current production rules, no code review for rule changes, and no way to verify correct access controls.
+
+**Recommended Fix:** Initialize Firebase in the repo and add security rules:
+```bash
+firebase init firestore
+```
+Minimal rules file (`firestore.rules`):
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
+```
+
+---
+
+#### LOW-16: No HTTP Request Timeout on Sync/Auth API Calls
+
+- **Severity:** Low
+- **Files:** `lib/services/firestore_service.dart` (all `http.post`/`http.get` calls), `lib/services/auth_service.dart:266,288`
+
+**Description:** All HTTP requests use the default `http` package client with no explicit timeout. A hung server connection (e.g., DNS resolution stall, firewall drop without RST) would block the sync operation indefinitely. Since `SyncService._syncing` is a mutex flag, a single stuck request prevents all future sync operations until the app is restarted.
+
+**Recommended Fix:** Use `http.Client` with a timeout, or wrap calls:
+```dart
+final response = await http.post(url, ...).timeout(
+  const Duration(seconds: 30),
+  onTimeout: () => http.Response('', 408),
+);
+```
+
+---
+
+#### LOW-17: `NetworkImage` Loads Profile Photo Without Scheme Validation
+
+- **Severity:** Low
+- **File:** `lib/widgets/profile_icon.dart:37-39, 292-294`
+- **Code:**
+  ```dart
+  backgroundImage: photoUrl != null && photoUrl.isNotEmpty
+      ? NetworkImage(photoUrl)
+      : null,
+  ```
+
+**Description:** The user's Google profile photo URL is loaded via `NetworkImage` without validating the URL scheme. While Google always returns HTTPS URLs for profile photos, the URL is stored in SharedPreferences and restored on silent sign-in. If SharedPreferences were tampered with (see HIGH-2), a `file://` or other scheme could be loaded. On its own this is low risk since `NetworkImage` only supports HTTP/S, but it's defense-in-depth to validate.
+
+**Recommended Fix:** Validate scheme before using:
+```dart
+backgroundImage: photoUrl != null && photoUrl.isNotEmpty && isAllowedUrl(photoUrl)
+    ? NetworkImage(photoUrl)
+    : null,
+```
+
+---
+
+#### INFO-8: User Info Stored in SharedPreferences
+
+- **Severity:** Informational
+- **File:** `lib/services/auth_service.dart:305-318`
+
+**Description:** User display name, email, and photo URL are stored in SharedPreferences for silent sign-in restoration. On Linux, these are in a plain JSON file. This is PII (email address, name). Not a vulnerability given the threat model (single-user desktop app), but worth noting for data inventory purposes.
+
+---
+
+#### INFO-9: Firebase Web Client ID Hardcoded as Default Value
+
+- **Severity:** Informational
+- **File:** `lib/services/auth_service.dart:42-43`
+- **Code:**
+  ```dart
+  static const _webClientId = String.fromEnvironment(
+    'GOOGLE_WEB_CLIENT_ID',
+    defaultValue: '1009352820106-uigevs5kld7t51s1gol27l7n85m2vp36.apps.googleusercontent.com',
+  );
+  ```
+
+**Description:** The Google OAuth web client ID is hardcoded as a `defaultValue`. This is the same client ID already public in `google-services.json`. OAuth client IDs are designed to be public — they identify the app, not authenticate it. However, having it as a `defaultValue` means the `--dart-define` override is effectively unused for this value on Android.
+
+---
+
+### Positive Security Findings
+
+1. **SQL injection remains clean.** All queries in the new sync-related database methods (`upsertFromRemote`, `upsertRelationshipFromRemote`, etc.) use parameterized queries with `?` placeholders. The dynamic `IN (...)` pattern continues to use the safe `taskIds.map((_) => '?').join(',')` idiom.
+
+2. **Firebase Auth token management is sound.** Token refresh is attempted before expiry (1-minute buffer at `auth_service.dart:59`). On permanent refresh failure (revoked token), the user is signed out (`auth_provider.dart:47`). Transient failures (network errors) don't sign out the user.
+
+3. **Sync queue provides reliable at-least-once delivery.** Queue entries are only deleted after successful remote operations (`sync_service.dart:305`), surviving partial push failures. This is a good distributed systems pattern.
+
+4. **OAuth uses list-based process arguments (no shell injection).** `Process.start('xdg-open', [url])` at `auth_service.dart:231` passes the URL as a list element, not via shell interpolation. Safe against command injection.
+
+5. **Firestore data isolation by user ID.** All Firestore paths are scoped to `/users/{uid}/...`, and the UID comes from Firebase Auth (not user input). Cross-user data access is prevented at the API path level (assuming correct Firestore Security Rules — see LOW-15).
+
+6. **All previous Round 1/2 fixes verified intact.** URL scheme validation, backup import validation, input length limits, `allowBackup="false"`, R8 shrinking, brain dump limits, pre-import backup — all still in place and working correctly.
+
+7. **Sync state uses server-authoritative timestamps.** `updated_at` fields use `DateTime.now().millisecondsSinceEpoch` at mutation time, and the pull query filters by `updated_at > lastSyncAt`. Last-write-wins with remote-preferred conflict resolution is a reasonable strategy for this app's single-user-multi-device model.
+
+### OWASP Mobile Top 10 Assessment (Round 3 Update)
+
+| Category | Status | Notes |
+|----------|--------|-------|
+| M1: Improper Credential Usage | **Action needed** | Firebase refresh token in plaintext SharedPreferences (HIGH-2) |
+| M2: Inadequate Supply Chain Security | **Pass** | `file_picker` updated to 10.3.10; all deps from pub.dev with SHA256 hashes |
+| M3: Insecure Authentication/Authorization | **Minor** | Auth implementation is sound, but Firestore rules not version-controlled (LOW-15) |
+| M4: Insufficient Input/Output Validation | **Action needed** | Remote sync data not validated for size or DAG integrity (MED-8, MED-9) |
+| M5: Insecure Communication | **Pass** | All API calls use HTTPS; no cleartext traffic |
+| M6: Inadequate Privacy Controls | **Minor** | User email/name stored in plaintext SharedPreferences on Linux (INFO-8) |
+| M7: Insufficient Binary Protections | **Pass** | R8/ProGuard now enabled |
+| M8: Security Misconfiguration | **Minor** | INTERNET permission present but not explicitly declared in main manifest (LOW-14) |
+| M9: Insecure Data Storage | **Action needed** | Refresh token in plaintext on Linux (HIGH-2) |
+| M10: Insufficient Cryptography | N/A | App does not use custom cryptography |
+
+### Remaining Priority Action Items
+
+| Priority | Finding | Effort | Status |
+|----------|---------|--------|--------|
+| **HIGH** | HIGH-2: Encrypt refresh token (use `flutter_secure_storage`) | Medium | **New** |
+| **MEDIUM** | MED-7: Gate `debugPrint` behind `kDebugMode` | Low | **New** |
+| **MEDIUM** | MED-8: Add cycle detection to remote sync pull | Medium | **New** |
+| **MEDIUM** | MED-9: Validate remote task field sizes | Low | **New** |
+| **MEDIUM** | MED-10: Sanitize sync error messages for UI | Low | **New** |
+| **LOW** | LOW-14: Explicitly declare INTERNET permission | Trivial | **New** |
+| **LOW** | LOW-15: Version-control Firestore Security Rules | Low | **New** |
+| **LOW** | LOW-16: Add HTTP request timeouts | Low | **New** |
+| **LOW** | LOW-17: Validate profile photo URL scheme | Trivial | **New** |
