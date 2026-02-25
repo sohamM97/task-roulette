@@ -1044,17 +1044,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             final isDone = _completedIds.contains(task.id);
             return _buildTaskCard(context, task, index, isDone);
           }),
-          if (_otherDoneToday.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Text(
-              'Also done today',
-              style: textTheme.titleSmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 8),
-            _buildOtherDoneSection(context),
-          ],
+          if (_otherDoneToday.isNotEmpty)
+            _buildOtherDoneBox(context, textTheme, colorScheme),
         ],
       );
     }
@@ -1085,17 +1076,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
           ),
         for (final i in rest)
           _buildTaskCard(context, _todaysTasks[i], i, _completedIds.contains(_todaysTasks[i].id)),
-        if (_otherDoneToday.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Text(
-            'Also done today',
-            style: textTheme.titleSmall?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 8),
-          _buildOtherDoneSection(context),
-        ],
+        if (_otherDoneToday.isNotEmpty)
+          _buildOtherDoneBox(context, textTheme, colorScheme),
       ],
     );
   }
@@ -1242,8 +1224,37 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     );
   }
 
-  Widget _buildOtherDoneSection(BuildContext context) {
+  Widget _buildOtherDoneBox(BuildContext context, TextTheme textTheme, ColorScheme colorScheme) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest.withAlpha(40),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outlineVariant.withAlpha(60)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Also done today',
+              style: textTheme.labelMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 8),
+            _buildOtherDoneChips(context),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOtherDoneChips(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+
     if (_otherDoneExpanded) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1284,12 +1295,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       builder: (context, constraints) {
         final maxWidth = constraints.maxWidth;
         const spacing = 6.0;
+        const maxChipWidth = 160.0;
         var usedWidth = 0.0;
         var visibleCount = 0;
 
-        // Measure chips to find how many fit in one row
         for (final task in _otherDoneToday) {
-          // Estimate chip width: icon(14) + gap(4) + text + padding(20) + border
           final textPainter = TextPainter(
             text: TextSpan(
               text: task.name,
@@ -1298,10 +1308,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             maxLines: 1,
             textDirection: TextDirection.ltr,
           )..layout();
-          final chipWidth = 14 + 4 + textPainter.width + 20 + 2; // icon + gap + text + padding + border
+          final rawChipWidth = 14 + 4 + textPainter.width + 20 + 2;
+          final chipWidth = rawChipWidth.clamp(0.0, maxChipWidth);
           final neededWidth = usedWidth > 0 ? chipWidth + spacing : chipWidth;
 
-          // Reserve space for "+N more" chip if not all will fit
           const moreChipWidth = 80.0;
           final isLast = visibleCount == _otherDoneToday.length - 1;
           final reserveForMore = isLast ? 0.0 : moreChipWidth + spacing;
@@ -1314,7 +1324,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
           }
         }
 
-        // Show at least 1 chip
         if (visibleCount == 0) visibleCount = 1;
         final remaining = _otherDoneToday.length - visibleCount;
 
@@ -1361,25 +1370,32 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     final chipColor = doneForGood ? Colors.green : Colors.lightGreen;
     final icon = doneForGood ? Icons.done_all : Icons.check;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: chipColor.withAlpha(40),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: chipColor.withAlpha(80)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: chipColor),
-          const SizedBox(width: 4),
-          Text(
-            task.name,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: chipColor,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 160),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: chipColor.withAlpha(40),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: chipColor.withAlpha(80)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: chipColor),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                task.name,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: chipColor,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
