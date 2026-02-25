@@ -3011,4 +3011,108 @@ void main() {
       expect(result, isNull);
     });
   });
+
+  group('getChildIds', () {
+    test('returns child IDs for a parent', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final child1 = await db.insertTask(Task(name: 'Child 1'));
+      final child2 = await db.insertTask(Task(name: 'Child 2'));
+      await db.addRelationship(parentId, child1);
+      await db.addRelationship(parentId, child2);
+
+      final childIds = await db.getChildIds(parentId);
+      expect(childIds, containsAll([child1, child2]));
+      expect(childIds.length, 2);
+    });
+
+    test('returns empty list for leaf task', () async {
+      final id = await db.insertTask(Task(name: 'Leaf'));
+      final childIds = await db.getChildIds(id);
+      expect(childIds, isEmpty);
+    });
+  });
+
+  group('deleteSyncQueueEntry', () {
+    test('removes specific entry by ID', () async {
+      final taskId = await db.insertTask(Task(name: 'T', syncId: 'sync-del'));
+      await db.deleteTaskSubtree(taskId);
+
+      // Should have sync_queue entries
+      final queue = await db.peekSyncQueue();
+      expect(queue.isNotEmpty, isTrue);
+
+      // Delete the first entry
+      final entryId = queue.first['id'] as int;
+      await db.deleteSyncQueueEntry(entryId);
+
+      // Entry should be gone
+      final remaining = await db.peekSyncQueue();
+      expect(remaining.any((e) => e['id'] == entryId), isFalse);
+    });
+  });
+
+  group('getTodaysFiveTaskIds', () {
+    test('returns empty set when no state saved', () async {
+      final ids = await db.getTodaysFiveTaskIds('2026-01-01');
+      expect(ids, isEmpty);
+    });
+
+    test('returns task IDs for saved date', () async {
+      final t1 = await db.insertTask(Task(name: 'T1'));
+      final t2 = await db.insertTask(Task(name: 'T2'));
+
+      await db.saveTodaysFiveState(
+        date: '2026-01-15',
+        taskIds: [t1, t2],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {},
+      );
+
+      final ids = await db.getTodaysFiveTaskIds('2026-01-15');
+      expect(ids, containsAll([t1, t2]));
+      expect(ids.length, 2);
+    });
+
+    test('returns empty for different date', () async {
+      final t1 = await db.insertTask(Task(name: 'T1'));
+      await db.saveTodaysFiveState(
+        date: '2026-01-15',
+        taskIds: [t1],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {},
+      );
+
+      final ids = await db.getTodaysFiveTaskIds('2026-01-16');
+      expect(ids, isEmpty);
+    });
+  });
+
+  group('getTodaysFiveTaskAndPinIds', () {
+    test('returns task IDs and pinned IDs', () async {
+      final t1 = await db.insertTask(Task(name: 'T1'));
+      final t2 = await db.insertTask(Task(name: 'T2'));
+      final t3 = await db.insertTask(Task(name: 'T3'));
+
+      await db.saveTodaysFiveState(
+        date: '2026-02-01',
+        taskIds: [t1, t2, t3],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {t1, t3},
+      );
+
+      final result = await db.getTodaysFiveTaskAndPinIds('2026-02-01');
+      expect(result.taskIds, containsAll([t1, t2, t3]));
+      expect(result.pinnedIds, containsAll([t1, t3]));
+      expect(result.pinnedIds.contains(t2), isFalse);
+    });
+
+    test('returns empty sets when no data', () async {
+      final result = await db.getTodaysFiveTaskAndPinIds('2026-03-01');
+      expect(result.taskIds, isEmpty);
+      expect(result.pinnedIds, isEmpty);
+    });
+  });
 }
