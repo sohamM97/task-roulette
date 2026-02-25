@@ -129,7 +129,11 @@ class FirestoreService {
   /// Deletes a task document from Firestore.
   Future<void> deleteTask(String uid, String idToken, String syncId) async {
     final url = Uri.parse('${_tasksPath(uid)}/$syncId');
-    await http.delete(url, headers: _headers(idToken));
+    final response = await http.delete(url, headers: _headers(idToken));
+    // 404 is OK — document may already be deleted
+    if (response.statusCode != 200 && response.statusCode != 404) {
+      throw FirestoreException('Delete task failed: ${response.statusCode} ${response.body}');
+    }
   }
 
   /// Deletes a relationship document from Firestore.
@@ -141,7 +145,10 @@ class FirestoreService {
   ) async {
     final docId = '${parentSyncId}_$childSyncId';
     final url = Uri.parse('${_relationshipsPath(uid)}/$docId');
-    await http.delete(url, headers: _headers(idToken));
+    final response = await http.delete(url, headers: _headers(idToken));
+    if (response.statusCode != 200 && response.statusCode != 404) {
+      throw FirestoreException('Delete relationship failed: ${response.statusCode} ${response.body}');
+    }
   }
 
   /// Deletes a dependency document from Firestore.
@@ -153,7 +160,10 @@ class FirestoreService {
   ) async {
     final docId = '${taskSyncId}_$dependsOnSyncId';
     final url = Uri.parse('${_dependenciesPath(uid)}/$docId');
-    await http.delete(url, headers: _headers(idToken));
+    final response = await http.delete(url, headers: _headers(idToken));
+    if (response.statusCode != 200 && response.statusCode != 404) {
+      throw FirestoreException('Delete dependency failed: ${response.statusCode} ${response.body}');
+    }
   }
 
   // --- Check ---

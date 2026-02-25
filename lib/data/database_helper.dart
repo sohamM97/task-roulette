@@ -1062,13 +1062,30 @@ class DatabaseHelper {
   }
 
   /// Removes all dependencies for a task (used before setting a new single dependency).
+  /// Enqueues sync removal events for each deleted dependency.
   Future<void> removeAllDependencies(int taskId) async {
     final db = await database;
-    await db.delete(
-      'task_dependencies',
-      where: 'task_id = ?',
-      whereArgs: [taskId],
-    );
+    await db.transaction((txn) async {
+      // Look up existing dependencies and their sync_ids before deleting
+      final rows = await txn.rawQuery('''
+        SELECT t1.sync_id AS task_sync_id, t2.sync_id AS depends_on_sync_id
+        FROM task_dependencies td
+        JOIN tasks t1 ON td.task_id = t1.id
+        JOIN tasks t2 ON td.depends_on_id = t2.id
+        WHERE td.task_id = ? AND t1.sync_id IS NOT NULL AND t2.sync_id IS NOT NULL
+      ''', [taskId]);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final row in rows) {
+        await txn.insert('sync_queue', {
+          'entity_type': 'dependency',
+          'action': 'remove',
+          'key1': row['task_sync_id'] as String,
+          'key2': row['depends_on_sync_id'] as String,
+          'created_at': now,
+        });
+      }
+      await txn.delete('task_dependencies', where: 'task_id = ?', whereArgs: [taskId]);
+    });
   }
 
   /// Returns true if there is a dependency path from [fromId] to [toId].
@@ -1135,6 +1152,57 @@ class DatabaseHelper {
         }
       }
 
+      // Enqueue sync events
+      final now = DateTime.now().millisecondsSinceEpoch;
+      // Look up sync_ids for all involved tasks
+      final allIds = <int>{taskId, ...parentIds, ...childIds, ...dependsOnIds, ...dependedByIds};
+      final idPlaceholders = allIds.map((_) => '?').join(',');
+      final syncRows = await txn.rawQuery(
+        'SELECT id, sync_id FROM tasks WHERE id IN ($idPlaceholders) AND sync_id IS NOT NULL',
+        allIds.toList());
+      final syncMap = <int, String>{};
+      for (final r in syncRows) {
+        syncMap[r['id'] as int] = r['sync_id'] as String;
+      }
+      // Enqueue task deletion
+      final taskSyncId = syncMap[taskId];
+      if (taskSyncId != null) {
+        await txn.insert('sync_queue', {
+          'entity_type': 'task', 'action': 'remove',
+          'key1': taskSyncId, 'key2': '', 'created_at': now,
+        });
+      }
+      // Enqueue new reparent relationship additions
+      for (final link in addedLinks) {
+        final pSyncId = syncMap[link.parentId];
+        final cSyncId = syncMap[link.childId];
+        if (pSyncId != null && cSyncId != null) {
+          await txn.insert('sync_queue', {
+            'entity_type': 'relationship', 'action': 'add',
+            'key1': pSyncId, 'key2': cSyncId, 'created_at': now,
+          });
+        }
+      }
+      // Enqueue removed relationships (task's own parent/child links)
+      for (final pid in parentIds) {
+        final pSyncId = syncMap[pid];
+        if (pSyncId != null && taskSyncId != null) {
+          await txn.insert('sync_queue', {
+            'entity_type': 'relationship', 'action': 'remove',
+            'key1': pSyncId, 'key2': taskSyncId, 'created_at': now,
+          });
+        }
+      }
+      for (final cid in childIds) {
+        final cSyncId = syncMap[cid];
+        if (taskSyncId != null && cSyncId != null) {
+          await txn.insert('sync_queue', {
+            'entity_type': 'relationship', 'action': 'remove',
+            'key1': taskSyncId, 'key2': cSyncId, 'created_at': now,
+          });
+        }
+      }
+
       // Delete the task and its relationships/dependencies
       await txn.delete('task_relationships',
           where: 'parent_id = ? OR child_id = ?', whereArgs: [taskId, taskId]);
@@ -1197,6 +1265,56 @@ class DatabaseHelper {
       final deletedDependencies = depRows
           .map((r) => (taskId: r['task_id'] as int, dependsOnId: r['depends_on_id'] as int))
           .toList();
+
+      // Enqueue sync events for each deleted task that has a sync_id
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final task in deletedTasks) {
+        if (task.syncId != null) {
+          await txn.insert('sync_queue', {
+            'entity_type': 'task',
+            'action': 'remove',
+            'key1': task.syncId!,
+            'key2': '',
+            'created_at': now,
+          });
+        }
+      }
+      // Enqueue sync events for deleted relationships
+      final relSyncRows = await txn.rawQuery('''
+        SELECT t1.sync_id AS parent_sync_id, t2.sync_id AS child_sync_id
+        FROM task_relationships tr
+        JOIN tasks t1 ON tr.parent_id = t1.id
+        JOIN tasks t2 ON tr.child_id = t2.id
+        WHERE (tr.parent_id IN ($placeholders) OR tr.child_id IN ($placeholders))
+          AND t1.sync_id IS NOT NULL AND t2.sync_id IS NOT NULL
+      ''', [...subtreeIds, ...subtreeIds]);
+      for (final row in relSyncRows) {
+        await txn.insert('sync_queue', {
+          'entity_type': 'relationship',
+          'action': 'remove',
+          'key1': row['parent_sync_id'] as String,
+          'key2': row['child_sync_id'] as String,
+          'created_at': now,
+        });
+      }
+      // Enqueue sync events for deleted dependencies
+      final depSyncRows = await txn.rawQuery('''
+        SELECT t1.sync_id AS task_sync_id, t2.sync_id AS depends_on_sync_id
+        FROM task_dependencies td
+        JOIN tasks t1 ON td.task_id = t1.id
+        JOIN tasks t2 ON td.depends_on_id = t2.id
+        WHERE (td.task_id IN ($placeholders) OR td.depends_on_id IN ($placeholders))
+          AND t1.sync_id IS NOT NULL AND t2.sync_id IS NOT NULL
+      ''', [...subtreeIds, ...subtreeIds]);
+      for (final row in depSyncRows) {
+        await txn.insert('sync_queue', {
+          'entity_type': 'dependency',
+          'action': 'remove',
+          'key1': row['task_sync_id'] as String,
+          'key2': row['depends_on_sync_id'] as String,
+          'created_at': now,
+        });
+      }
 
       // Delete everything
       await txn.rawDelete(

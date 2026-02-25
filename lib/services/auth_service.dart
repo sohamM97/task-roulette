@@ -253,6 +253,7 @@ class AuthService {
         'photoUrl': payload['picture'] as String? ?? '',
       };
     } catch (e) {
+      debugPrint('AuthService: desktop sign-in failed: $e');
       return null;
     }
   }

@@ -93,7 +93,10 @@ class SyncService {
 
     try {
       final idToken = await _getValidToken();
-      if (idToken == null) return;
+      if (idToken == null) {
+        _authProvider.setSyncStatus(SyncStatus.idle);
+        return;
+      }
 
       // Push all tasks
       final allTasks = await _db.getAllTasksWithSyncId();
@@ -132,7 +135,10 @@ class SyncService {
 
     try {
       final idToken = await _getValidToken();
-      if (idToken == null) return;
+      if (idToken == null) {
+        _authProvider.setSyncStatus(SyncStatus.idle);
+        return;
+      }
       final uid = _authProvider.uid!;
 
       // Wipe all local data
@@ -177,7 +183,10 @@ class SyncService {
 
     try {
       final idToken = await _getValidToken();
-      if (idToken == null) return;
+      if (idToken == null) {
+        _authProvider.setSyncStatus(SyncStatus.idle);
+        return;
+      }
       final uid = _authProvider.uid!;
 
       // Delete all existing cloud data first
@@ -243,7 +252,10 @@ class SyncService {
 
     try {
       final idToken = await _getValidToken();
-      if (idToken == null) return;
+      if (idToken == null) {
+        _authProvider.setSyncStatus(SyncStatus.idle);
+        return;
+      }
       final uid = _authProvider.uid!;
 
       // Push pending tasks
@@ -314,7 +326,10 @@ class SyncService {
 
     try {
       final idToken = await _getValidToken();
-      if (idToken == null) return;
+      if (idToken == null) {
+        _authProvider.setSyncStatus(SyncStatus.idle);
+        return;
+      }
       final uid = _authProvider.uid!;
 
       final prefs = await SharedPreferences.getInstance();
