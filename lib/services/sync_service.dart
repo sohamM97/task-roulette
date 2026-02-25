@@ -93,7 +93,10 @@ class SyncService {
 
     try {
       final idToken = await _getValidToken();
-      if (idToken == null) return;
+      if (idToken == null) {
+        _authProvider.setSyncStatus(SyncStatus.idle);
+        return;
+      }
 
       // Push all tasks
       final allTasks = await _db.getAllTasksWithSyncId();
@@ -132,7 +135,10 @@ class SyncService {
 
     try {
       final idToken = await _getValidToken();
-      if (idToken == null) return;
+      if (idToken == null) {
+        _authProvider.setSyncStatus(SyncStatus.idle);
+        return;
+      }
       final uid = _authProvider.uid!;
 
       // Wipe all local data
@@ -177,7 +183,10 @@ class SyncService {
 
     try {
       final idToken = await _getValidToken();
-      if (idToken == null) return;
+      if (idToken == null) {
+        _authProvider.setSyncStatus(SyncStatus.idle);
+        return;
+      }
       final uid = _authProvider.uid!;
 
       // Delete all existing cloud data first
@@ -243,7 +252,10 @@ class SyncService {
 
     try {
       final idToken = await _getValidToken();
-      if (idToken == null) return;
+      if (idToken == null) {
+        _authProvider.setSyncStatus(SyncStatus.idle);
+        return;
+      }
       final uid = _authProvider.uid!;
 
       // Push pending tasks
@@ -314,7 +326,10 @@ class SyncService {
 
     try {
       final idToken = await _getValidToken();
-      if (idToken == null) return;
+      if (idToken == null) {
+        _authProvider.setSyncStatus(SyncStatus.idle);
+        return;
+      }
       final uid = _authProvider.uid!;
 
       final prefs = await SharedPreferences.getInstance();
@@ -333,15 +348,43 @@ class SyncService {
         if (changed) anyChange = true;
       }
 
-      // Pull all relationships and dependencies (simpler than tracking deltas)
+      // Pull all relationships and dependencies, then reconcile with local
       final remoteRels = await _firestore.pullAllRelationships(uid, idToken);
       for (final rel in remoteRels) {
         await _db.upsertRelationshipFromRemote(rel.parentSyncId, rel.childSyncId);
       }
 
+      // Remove local synced relationships that no longer exist remotely
+      final remoteRelSet = remoteRels
+          .map((r) => '${r.parentSyncId}:${r.childSyncId}')
+          .toSet();
+      final localRels = await _db.getAllRelationshipsWithSyncIds();
+      for (final local in localRels) {
+        final key = '${local.parentSyncId}:${local.childSyncId}';
+        if (!remoteRelSet.contains(key)) {
+          await _db.removeRelationshipFromRemote(
+              local.parentSyncId, local.childSyncId);
+          anyChange = true;
+        }
+      }
+
       final remoteDeps = await _firestore.pullAllDependencies(uid, idToken);
       for (final dep in remoteDeps) {
         await _db.upsertDependencyFromRemote(dep.taskSyncId, dep.dependsOnSyncId);
+      }
+
+      // Remove local synced dependencies that no longer exist remotely
+      final remoteDepSet = remoteDeps
+          .map((d) => '${d.taskSyncId}:${d.dependsOnSyncId}')
+          .toSet();
+      final localDeps = await _db.getAllDependenciesWithSyncIds();
+      for (final local in localDeps) {
+        final key = '${local.taskSyncId}:${local.dependsOnSyncId}';
+        if (!remoteDepSet.contains(key)) {
+          await _db.removeDependencyFromRemote(
+              local.taskSyncId, local.dependsOnSyncId);
+          anyChange = true;
+        }
       }
 
       // Update last sync timestamp

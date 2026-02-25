@@ -188,6 +188,7 @@ class TaskProvider extends ChangeNotifier {
         : _tasks.firstWhere((t) => t.id == taskId,
             orElse: () => throw StateError('Task $taskId not found in current list'));
     await _db.completeTask(taskId);
+    onMutation?.call();
     await navigateBack();
     return task;
   }
@@ -200,6 +201,7 @@ class TaskProvider extends ChangeNotifier {
         : _tasks.firstWhere((t) => t.id == taskId,
             orElse: () => throw StateError('Task $taskId not found in current list'));
     await _db.skipTask(taskId);
+    onMutation?.call();
     await navigateBack();
     return task;
   }
@@ -514,6 +516,7 @@ class TaskProvider extends ChangeNotifier {
   Future<void> markWorkedOnAndNavigateBack(int taskId, {bool alsoStart = false}) async {
     await _db.markWorkedOn(taskId);
     if (alsoStart) await _db.startTask(taskId);
+    onMutation?.call();
     await navigateBack(); // single _refreshCurrentList()
   }
 

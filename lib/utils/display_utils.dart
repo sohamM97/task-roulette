@@ -64,7 +64,7 @@ class PinButton extends StatelessWidget {
         size: size,
         color: color,
       ),
-      onPressed: onToggle,
+      onPressed: disabled ? null : onToggle,
       tooltip: disabled ? 'Max pins reached' : isPinned ? 'Unpin' : 'Pin',
       visualDensity: VisualDensity.compact,
     );

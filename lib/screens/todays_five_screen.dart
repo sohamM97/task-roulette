@@ -29,6 +29,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   /// Tracks tasks that were auto-started by "Done today" (weren't started
   /// before). _handleUncomplete uses this to also call unstartTask.
   final Set<int> _autoStartedIds = {};
+  /// Tracks pre-mutation lastWorkedAt values for "Done today" tasks,
+  /// so _handleUncomplete can restore the original value.
+  final Map<int, int?> _preWorkedOnLastWorkedAt = {};
   /// Cached ancestor-path strings keyed by task ID (e.g. "Work > Project X").
   Map<int, String> _taskPaths = {};
   /// Other tasks completed/worked-on today, outside the Today's 5 set.
@@ -265,6 +268,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   Future<void> _generateNewSet() async {
+    // Clear stale per-session tracking sets from previous day
+    _workedOnIds.clear();
+    _autoStartedIds.clear();
+    _preWorkedOnLastWorkedAt.clear();
+
     final provider = context.read<TaskProvider>();
     final allLeaves = await provider.getAllLeafTasks();
 
@@ -526,6 +534,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     final provider = context.read<TaskProvider>();
     final wasStarted = task.isStarted;
     final previousLastWorkedAt = task.lastWorkedAt;
+    _preWorkedOnLastWorkedAt[task.id!] = previousLastWorkedAt;
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.markWorkedOn(task.id!);
@@ -542,6 +551,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () async {
+            _preWorkedOnLastWorkedAt.remove(task.id);
             await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
             if (!wasStarted) await provider.unstartTask(task.id!);
             if (!mounted) return;
@@ -625,13 +635,17 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     final wasWorkedOn = _workedOnIds.contains(task.id);
     final wasAutoStarted = _autoStartedIds.contains(task.id);
     if (wasWorkedOn && !task.isCompleted) {
-      // "Done today" only — revert worked-on state
-      await provider.unmarkWorkedOn(task.id!);
+      // "Done today" only — revert worked-on state, restore original lastWorkedAt
+      final restoreTo = _preWorkedOnLastWorkedAt.remove(task.id);
+      await provider.unmarkWorkedOn(task.id!, restoreTo: restoreTo);
       if (wasAutoStarted) await provider.unstartTask(task.id!);
     } else if (task.isCompleted) {
       // "Done for good!" (or externally completed) — revert completion
       await provider.uncompleteTask(task.id!);
-      if (wasWorkedOn) await provider.unmarkWorkedOn(task.id!);
+      if (wasWorkedOn) {
+        final restoreTo = _preWorkedOnLastWorkedAt.remove(task.id);
+        await provider.unmarkWorkedOn(task.id!, restoreTo: restoreTo);
+      }
     }
     if (!mounted) return;
 
@@ -833,6 +847,13 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     }
     _pinnedIds.clear();
     _pinnedIds.addAll(newPins);
+    // Load ancestor path for the new task's breadcrumb subtitle
+    final ancestors = await DatabaseHelper().getAncestorPath(picked.id!);
+    if (ancestors.isNotEmpty) {
+      _taskPaths[picked.id!] = ancestors.map((t) => t.name).join(' › ');
+    } else {
+      _taskPaths.remove(picked.id!);
+    }
     setState(() {
       _todaysTasks[index] = picked;
     });
@@ -863,15 +884,16 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
 
     final picked = provider.pickWeightedN(eligible, 1);
     if (picked.isNotEmpty) {
+      // Complete async work before mutating state
+      final ancestors = await DatabaseHelper().getAncestorPath(picked.first.id!);
+      if (!mounted) return;
       _pinnedIds.remove(_todaysTasks[index].id);
       _todaysTasks[index] = picked.first;
-      final ancestors = await DatabaseHelper().getAncestorPath(picked.first.id!);
       if (ancestors.isNotEmpty) {
         _taskPaths[picked.first.id!] = ancestors.map((t) => t.name).join(' › ');
       } else {
         _taskPaths.remove(picked.first.id!);
       }
-      if (!mounted) return;
       setState(() {});
       await _persist();
     }
@@ -1225,7 +1247,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   Widget _buildOtherDoneBox(BuildContext context, TextTheme textTheme, ColorScheme colorScheme) {
-    final hasOverflow = _otherDoneToday.length > 1;
     return Padding(
       padding: const EdgeInsets.only(top: 16),
       child: Container(
@@ -1236,37 +1257,68 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: colorScheme.outlineVariant.withAlpha(60)),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            GestureDetector(
-              onTap: hasOverflow ? () => setState(() => _otherDoneExpanded = !_otherDoneExpanded) : null,
-              behavior: HitTestBehavior.opaque,
-              child: Row(
-                children: [
-                  Text(
-                    'Also done today',
-                    style: textTheme.labelMedium?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final hasOverflow = _otherDoneExpanded || _chipsOverflow(context, constraints.maxWidth);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
+                  onTap: hasOverflow ? () => setState(() => _otherDoneExpanded = !_otherDoneExpanded) : null,
+                  behavior: HitTestBehavior.opaque,
+                  child: Row(
+                    children: [
+                      Text(
+                        'Also done today',
+                        style: textTheme.labelMedium?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      if (hasOverflow) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          _otherDoneExpanded ? Icons.expand_less : Icons.expand_more,
+                          size: 18,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ],
+                    ],
                   ),
-                  if (hasOverflow) ...[
-                    const SizedBox(width: 4),
-                    Icon(
-                      _otherDoneExpanded ? Icons.expand_less : Icons.expand_more,
-                      size: 18,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-            _buildOtherDoneChips(context),
-          ],
+                ),
+                const SizedBox(height: 8),
+                _buildOtherDoneChips(context),
+              ],
+            );
+          },
         ),
       ),
     );
+  }
+
+  /// Returns true if the chips won't all fit in a single row.
+  bool _chipsOverflow(BuildContext context, double maxWidth) {
+    const spacing = 6.0;
+    const maxChipWidth = 160.0;
+    var usedWidth = 0.0;
+
+    for (final task in _otherDoneToday) {
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: task.name,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        maxLines: 1,
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final rawChipWidth = 14 + 4 + textPainter.width + 20 + 2;
+      textPainter.dispose();
+      final chipWidth = rawChipWidth.clamp(0.0, maxChipWidth);
+      final neededWidth = usedWidth > 0 ? chipWidth + spacing : chipWidth;
+
+      if (usedWidth + neededWidth > maxWidth) return true;
+      usedWidth += neededWidth;
+    }
+    return false;
   }
 
   Widget _buildOtherDoneChips(BuildContext context) {
@@ -1299,6 +1351,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             textDirection: TextDirection.ltr,
           )..layout();
           final rawChipWidth = 14 + 4 + textPainter.width + 20 + 2;
+          textPainter.dispose();
           final chipWidth = rawChipWidth.clamp(0.0, maxChipWidth);
           final neededWidth = usedWidth > 0 ? chipWidth + spacing : chipWidth;
 

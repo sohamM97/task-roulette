@@ -120,10 +120,8 @@ void main() {
       expect(toggled, isTrue);
     });
 
-    testWidgets('onToggle is still callable when atMaxPins and unpinned '
-        '(button is not actually disabled)', (tester) async {
-      // The button is visually greyed out but still responds to taps.
-      // The caller is responsible for deciding what happens.
+    testWidgets('onToggle is NOT callable when atMaxPins and unpinned '
+        '(button is disabled)', (tester) async {
       bool toggled = false;
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
@@ -136,7 +134,7 @@ void main() {
       ));
 
       await tester.tap(find.byType(IconButton));
-      expect(toggled, isTrue);
+      expect(toggled, isFalse);
     });
   });
 }

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:graphview/GraphView.dart';
 import 'package:provider/provider.dart';
@@ -583,7 +584,7 @@ class _EdgePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_EdgePainter oldDelegate) {
-    return oldDelegate.isDark != isDark || oldDelegate.edgePaths != edgePaths;
+    return oldDelegate.isDark != isDark || !listEquals(oldDelegate.edgePaths, edgePaths);
   }
 }
 

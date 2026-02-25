@@ -40,13 +40,19 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<bool> refreshToken() async {
-    final success = await _authService.refreshToken();
-    if (!success) {
-      // Token refresh failed — user needs to sign in again
-      await _authService.signOut();
-      notifyListeners();
+    try {
+      final success = await _authService.refreshToken();
+      if (!success) {
+        // Permanent failure (invalid/revoked token) — user needs to sign in again
+        await _authService.signOut();
+        notifyListeners();
+      }
+      return success;
+    } catch (e) {
+      // Transient failure (network error, timeout) — don't sign out
+      debugPrint('AuthProvider: token refresh failed: $e');
+      return false;
     }
-    return success;
   }
 
   void setSyncStatus(SyncStatus status, {String? error}) {
