@@ -17,7 +17,7 @@ Flutter app — a DAG-based task manager where tasks can have multiple parents/c
 
 ```bash
 # Linux desktop deps (Ubuntu/Debian)
-sudo apt install -y clang ninja-build lld libsqlite3-dev inotify-tools
+sudo apt install -y clang ninja-build lld libsqlite3-dev libsecret-1-dev inotify-tools
 
 flutter pub get
 

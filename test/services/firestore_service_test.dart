@@ -291,4 +291,92 @@ void main() {
       expect(service.isConfigured, isFalse);
     });
   });
+
+  group('taskFromFirestoreDoc field size validation (MED-9)', () {
+    test('truncates oversized name to 500 characters', () {
+      final longName = 'A' * 1000;
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': longName},
+          'created_at': {'integerValue': '0'},
+          'priority': {'integerValue': '0'},
+          'difficulty': {'integerValue': '0'},
+        },
+      };
+
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.name.length, 500);
+    });
+
+    test('drops URL longer than 2048 characters', () {
+      final longUrl = 'https://example.com/${'x' * 2100}';
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'Task'},
+          'created_at': {'integerValue': '0'},
+          'priority': {'integerValue': '0'},
+          'difficulty': {'integerValue': '0'},
+          'url': {'stringValue': longUrl},
+        },
+      };
+
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.url, isNull);
+    });
+
+    test('accepts URL within 2048 characters', () {
+      final normalUrl = 'https://example.com/path';
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'Task'},
+          'created_at': {'integerValue': '0'},
+          'priority': {'integerValue': '0'},
+          'difficulty': {'integerValue': '0'},
+          'url': {'stringValue': normalUrl},
+        },
+      };
+
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.url, normalUrl);
+    });
+
+    test('drops repeat_interval longer than 50 characters', () {
+      final longInterval = 'x' * 60;
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'Task'},
+          'created_at': {'integerValue': '0'},
+          'priority': {'integerValue': '0'},
+          'difficulty': {'integerValue': '0'},
+          'repeat_interval': {'stringValue': longInterval},
+        },
+      };
+
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.repeatInterval, isNull);
+    });
+
+    test('preserves normal-length name and fields', () {
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'Normal task'},
+          'created_at': {'integerValue': '100'},
+          'priority': {'integerValue': '1'},
+          'difficulty': {'integerValue': '2'},
+          'url': {'stringValue': 'https://example.com'},
+          'repeat_interval': {'stringValue': 'daily'},
+        },
+      };
+
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.name, 'Normal task');
+      expect(task.url, 'https://example.com');
+      expect(task.repeatInterval, 'daily');
+    });
+  });
 }

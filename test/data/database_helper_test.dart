@@ -2073,6 +2073,71 @@ void main() {
     });
   });
 
+  group('Cycle detection by sync_id (MED-8)', () {
+    test('wouldRelationshipCreateCycle returns true for cycle', () async {
+      // A → B, check if B → A would create cycle
+      final aId = await db.insertTask(Task(name: 'A'));
+      final bId = await db.insertTask(Task(name: 'B'));
+      await db.addRelationship(aId, bId);
+
+      final aTask = await db.getTaskById(aId);
+      final bTask = await db.getTaskById(bId);
+
+      final wouldCycle = await db.wouldRelationshipCreateCycle(
+          bTask!.syncId!, aTask!.syncId!);
+      expect(wouldCycle, isTrue);
+    });
+
+    test('wouldRelationshipCreateCycle returns false for non-cycle', () async {
+      final aId = await db.insertTask(Task(name: 'A'));
+      final bId = await db.insertTask(Task(name: 'B'));
+      final cId = await db.insertTask(Task(name: 'C'));
+      await db.addRelationship(aId, bId);
+
+      final aTask = await db.getTaskById(aId);
+      final cTask = await db.getTaskById(cId);
+
+      // A → C would not create a cycle
+      final wouldCycle = await db.wouldRelationshipCreateCycle(
+          aTask!.syncId!, cTask!.syncId!);
+      expect(wouldCycle, isFalse);
+    });
+
+    test('wouldDependencyCreateCycle returns true for cycle', () async {
+      final aId = await db.insertTask(Task(name: 'A'));
+      final bId = await db.insertTask(Task(name: 'B'));
+      await db.addDependency(aId, bId); // A depends on B
+
+      final aTask = await db.getTaskById(aId);
+      final bTask = await db.getTaskById(bId);
+
+      // B depends on A would create cycle
+      final wouldCycle = await db.wouldDependencyCreateCycle(
+          bTask!.syncId!, aTask!.syncId!);
+      expect(wouldCycle, isTrue);
+    });
+
+    test('wouldDependencyCreateCycle returns false for non-cycle', () async {
+      final aId = await db.insertTask(Task(name: 'A'));
+      await db.insertTask(Task(name: 'B'));
+      final cId = await db.insertTask(Task(name: 'C'));
+
+      final aTask = await db.getTaskById(aId);
+      final cTask = await db.getTaskById(cId);
+
+      // A depends on C — no cycle
+      final wouldCycle = await db.wouldDependencyCreateCycle(
+          aTask!.syncId!, cTask!.syncId!);
+      expect(wouldCycle, isFalse);
+    });
+
+    test('wouldRelationshipCreateCycle returns false for unknown sync_id', () async {
+      final wouldCycle = await db.wouldRelationshipCreateCycle(
+          'nonexistent-1', 'nonexistent-2');
+      expect(wouldCycle, isFalse);
+    });
+  });
+
   group('Sync query methods', () {
     test('getPendingTasks returns tasks with pending status', () async {
       await db.insertTask(Task(name: 'Pending 1'));

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../services/sync_service.dart';
+import '../utils/display_utils.dart' show isAllowedUrl;
 
 /// Profile icon for the AppBar. Shows Google profile picture when signed in,
 /// generic account icon when not. Includes sync status badge.
@@ -34,10 +35,10 @@ class ProfileIcon extends StatelessWidget {
       children: [
         CircleAvatar(
           radius: 14,
-          backgroundImage: photoUrl != null && photoUrl.isNotEmpty
+          backgroundImage: photoUrl != null && photoUrl.isNotEmpty && isAllowedUrl(photoUrl)
               ? NetworkImage(photoUrl)
               : null,
-          child: photoUrl == null || photoUrl.isEmpty
+          child: photoUrl == null || photoUrl.isEmpty || !isAllowedUrl(photoUrl)
               ? const Icon(Icons.person, size: 18)
               : null,
         ),
@@ -289,10 +290,10 @@ class ProfileIcon extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 32,
-                backgroundImage: user?.photoUrl != null && user!.photoUrl!.isNotEmpty
+                backgroundImage: user?.photoUrl != null && user!.photoUrl!.isNotEmpty && isAllowedUrl(user.photoUrl!)
                     ? NetworkImage(user.photoUrl!)
                     : null,
-                child: user?.photoUrl == null || user!.photoUrl!.isEmpty
+                child: user?.photoUrl == null || user!.photoUrl!.isEmpty || !isAllowedUrl(user.photoUrl!)
                     ? const Icon(Icons.person, size: 32)
                     : null,
               ),

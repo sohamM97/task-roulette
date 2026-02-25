@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show SocketException;
 import 'dart:ui' show VoidCallback;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database_helper.dart';
@@ -123,7 +124,7 @@ class SyncService {
 
       _authProvider.setSyncStatus(SyncStatus.synced);
     } catch (e) {
-      _authProvider.setSyncStatus(SyncStatus.error, error: e.toString());
+      _authProvider.setSyncStatus(SyncStatus.error, error: _userFriendlyError(e));
     }
   }
 
@@ -171,7 +172,7 @@ class SyncService {
       _authProvider.setSyncStatus(SyncStatus.synced);
       _onDataChanged?.call();
     } catch (e) {
-      _authProvider.setSyncStatus(SyncStatus.error, error: e.toString());
+      _authProvider.setSyncStatus(SyncStatus.error, error: _userFriendlyError(e));
     }
   }
 
@@ -228,7 +229,7 @@ class SyncService {
 
       _authProvider.setSyncStatus(SyncStatus.synced);
     } catch (e) {
-      _authProvider.setSyncStatus(SyncStatus.error, error: e.toString());
+      _authProvider.setSyncStatus(SyncStatus.error, error: _userFriendlyError(e));
     }
   }
 
@@ -307,7 +308,7 @@ class SyncService {
 
       _authProvider.setSyncStatus(SyncStatus.synced);
     } catch (e) {
-      _authProvider.setSyncStatus(SyncStatus.error, error: e.toString());
+      _authProvider.setSyncStatus(SyncStatus.error, error: _userFriendlyError(e));
     } finally {
       _syncing = false;
       if (_pushPending) {
@@ -351,7 +352,12 @@ class SyncService {
       // Pull all relationships and dependencies, then reconcile with local
       final remoteRels = await _firestore.pullAllRelationships(uid, idToken);
       for (final rel in remoteRels) {
-        await _db.upsertRelationshipFromRemote(rel.parentSyncId, rel.childSyncId);
+        // Check for DAG cycle before inserting
+        final wouldCycle = await _db.wouldRelationshipCreateCycle(
+            rel.parentSyncId, rel.childSyncId);
+        if (!wouldCycle) {
+          await _db.upsertRelationshipFromRemote(rel.parentSyncId, rel.childSyncId);
+        }
       }
 
       // Remove local synced relationships that no longer exist remotely
@@ -370,7 +376,12 @@ class SyncService {
 
       final remoteDeps = await _firestore.pullAllDependencies(uid, idToken);
       for (final dep in remoteDeps) {
-        await _db.upsertDependencyFromRemote(dep.taskSyncId, dep.dependsOnSyncId);
+        // Check for dependency cycle before inserting
+        final wouldCycle = await _db.wouldDependencyCreateCycle(
+            dep.taskSyncId, dep.dependsOnSyncId);
+        if (!wouldCycle) {
+          await _db.upsertDependencyFromRemote(dep.taskSyncId, dep.dependsOnSyncId);
+        }
       }
 
       // Remove local synced dependencies that no longer exist remotely
@@ -397,7 +408,7 @@ class SyncService {
         _onDataChanged?.call();
       }
     } catch (e) {
-      _authProvider.setSyncStatus(SyncStatus.error, error: e.toString());
+      _authProvider.setSyncStatus(SyncStatus.error, error: _userFriendlyError(e));
     } finally {
       _syncing = false;
     }
@@ -412,6 +423,14 @@ class SyncService {
   /// Callback invoked when remote data changes local state.
   VoidCallback? _onDataChanged;
   set onDataChanged(VoidCallback? callback) => _onDataChanged = callback;
+
+  /// Maps exceptions to user-friendly messages (avoids leaking internal details).
+  String _userFriendlyError(Object e) {
+    if (e is SocketException) return 'Sync failed — check your connection';
+    if (e is FirestoreException) return 'Sync failed — please try again';
+    if (e is TimeoutException) return 'Sync timed out — try again later';
+    return 'Sync error — try again later';
+  }
 
   /// Get a valid token, refreshing if expired or missing.
   Future<String?> _getValidToken() async {

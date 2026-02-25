@@ -47,7 +47,7 @@ flutter test
 
 2. **Linux desktop dependencies** (Ubuntu/Debian)
    ```bash
-   sudo apt install -y clang ninja-build lld libsqlite3-dev inotify-tools
+   sudo apt install -y clang ninja-build lld libsqlite3-dev libsecret-1-dev inotify-tools
    ```
 
 3. **Android build dependencies** (optional, for APK builds)
