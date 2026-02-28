@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../data/database_helper.dart';
 import '../providers/auth_provider.dart';
 import '../services/sync_service.dart';
 import '../utils/display_utils.dart' show isAllowedUrl;
@@ -30,17 +31,15 @@ class ProfileIcon extends StatelessWidget {
     }
 
     final photoUrl = auth.user?.photoUrl;
+    final hasPhoto = photoUrl != null && photoUrl.isNotEmpty && isAllowedUrl(photoUrl);
     return Stack(
       clipBehavior: Clip.none,
       children: [
         CircleAvatar(
           radius: 14,
-          backgroundImage: photoUrl != null && photoUrl.isNotEmpty && isAllowedUrl(photoUrl)
-              ? NetworkImage(photoUrl)
-              : null,
-          child: photoUrl == null || photoUrl.isEmpty || !isAllowedUrl(photoUrl)
-              ? const Icon(Icons.person, size: 18)
-              : null,
+          foregroundImage: hasPhoto ? NetworkImage(photoUrl) : null,
+          onForegroundImageError: hasPhoto ? (error, stack) {} : null,
+          child: const Icon(Icons.person, size: 18),
         ),
         Positioned(
           right: -2,
@@ -121,9 +120,18 @@ class ProfileIcon extends StatelessWidget {
                 onPressed: () async {
                   Navigator.pop(ctx);
                   final success = await auth.signIn();
-                  if (success && context.mounted) {
+                  if (!context.mounted) return;
+                  if (success) {
                     final syncService = context.read<SyncService>();
                     await _handlePostSignIn(context, syncService);
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Sign-in failed. Please try again.'),
+                        showCloseIcon: true,
+                        persist: false,
+                      ),
+                    );
                   }
                 },
                 icon: const Icon(Icons.login),
@@ -147,6 +155,8 @@ class ProfileIcon extends StatelessWidget {
     }
 
     final hasCloud = await syncService.hasCloudData();
+    final hasLocal = (await DatabaseHelper().getRootTasks()).isNotEmpty;
+
     if (!hasCloud) {
       // No cloud data — just push local data up
       await syncService.initialMigration();
@@ -154,7 +164,14 @@ class ProfileIcon extends StatelessWidget {
       return;
     }
 
-    // Cloud already has data — ask the user what to do
+    if (!hasLocal) {
+      // No local data — just pull cloud data down
+      await syncService.replaceLocalWithCloud();
+      syncService.startPeriodicPull();
+      return;
+    }
+
+    // Both sides have data — ask the user what to do
     if (context.mounted) {
       _showMigrationChoiceDialog(context, syncService);
     }
@@ -215,40 +232,13 @@ class ProfileIcon extends StatelessWidget {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 12),
-              // Safe option — replace cloud with local (blue)
+              // Neutral option — merge both
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
                   style: FilledButton.styleFrom(
                     backgroundColor: colorScheme.primary,
                     foregroundColor: colorScheme.onPrimary,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  onPressed: () async {
-                    Navigator.pop(ctx);
-                    await syncService.replaceCloudWithLocal();
-                    syncService.startPeriodicPull();
-                  },
-                  icon: const Icon(Icons.cloud_upload),
-                  label: const Text('Use this device\'s data'),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Replaces cloud tasks with the tasks on this device.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 12),
-              // Risky option — merge both (amber)
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.orange.shade800,
-                    side: BorderSide(color: Colors.orange.shade800),
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                   onPressed: () async {
@@ -262,8 +252,35 @@ class ProfileIcon extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'Combines tasks from this device and the cloud. '
-                'Use with caution — test data may mix with real data.',
+                'Combines tasks from this device and the cloud.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              // Dangerous option — replace cloud with local (amber)
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.orange.shade800,
+                    side: BorderSide(color: Colors.orange.shade800),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await syncService.replaceCloudWithLocal();
+                    syncService.startPeriodicPull();
+                  },
+                  icon: const Icon(Icons.cloud_upload),
+                  label: const Text('Use this device\'s data'),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Replaces cloud tasks with the tasks on this device. '
+                'Use with caution — cloud data will be lost.',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Colors.orange.shade800,
                     ),
@@ -290,12 +307,11 @@ class ProfileIcon extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 32,
-                backgroundImage: user?.photoUrl != null && user!.photoUrl!.isNotEmpty && isAllowedUrl(user.photoUrl!)
+                foregroundImage: user?.photoUrl != null && user!.photoUrl!.isNotEmpty && isAllowedUrl(user.photoUrl!)
                     ? NetworkImage(user.photoUrl!)
                     : null,
-                child: user?.photoUrl == null || user!.photoUrl!.isEmpty || !isAllowedUrl(user.photoUrl!)
-                    ? const Icon(Icons.person, size: 32)
-                    : null,
+                onForegroundImageError: user?.photoUrl != null ? (error, stack) {} : null,
+                child: const Icon(Icons.person, size: 32),
               ),
               const SizedBox(height: 12),
               if (user?.displayName != null && user!.displayName!.isNotEmpty)

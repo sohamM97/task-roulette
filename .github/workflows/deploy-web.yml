@@ -1,0 +1,47 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+
+      - run: dart run sqflite_common_ffi_web:setup
+
+      - name: Build web
+        run: |
+          FIREBASE_API_KEY=$(jq -r '.client[0].api_key[0].current_key' android/app/google-services.json)
+          FIREBASE_PROJECT_ID=$(jq -r '.project_info.project_id' android/app/google-services.json)
+          flutter build web --release --base-href /task-roulette/ \
+            --dart-define=FIREBASE_API_KEY=$FIREBASE_API_KEY \
+            --dart-define=FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,16 +1,26 @@
-import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import '../data/database_helper.dart';
+import '../platform/platform_utils.dart'
+    if (dart.library.io) '../platform/platform_utils_native.dart' as platform;
 import '../providers/task_provider.dart';
 
 class BackupService {
   static Future<void> exportDatabase(BuildContext context) async {
-    final dbPath = await DatabaseHelper().getDatabasePath();
-    final dbFile = File(dbPath);
+    if (kIsWeb) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Backup is not available on web'), showCloseIcon: true, persist: false),
+        );
+      }
+      return;
+    }
 
-    if (!dbFile.existsSync()) {
+    final dbPath = await DatabaseHelper().getDatabasePath();
+
+    if (!platform.fileExistsSync(dbPath)) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No database to export'), showCloseIcon: true, persist: false),
@@ -22,9 +32,9 @@ class BackupService {
     final date = DateTime.now().toIso8601String().substring(0, 10);
     final fileName = 'task_roulette_backup_$date.db';
 
-    if (Platform.isAndroid) {
+    if (platform.isAndroidPlatform) {
       // Use SAF save dialog — direct file copy to Downloads fails on Android 11+.
-      final bytes = await dbFile.readAsBytes();
+      final bytes = await platform.readFileBytes(dbPath);
       final result = await FilePicker.platform.saveFile(
         dialogTitle: 'Save backup',
         fileName: fileName,
@@ -39,9 +49,9 @@ class BackupService {
       return;
     } else {
       // Linux desktop: copy to ~/Downloads
-      final home = Platform.environment['HOME'] ?? '.';
+      final home = platform.homeDirectory;
       final destPath = p.join(home, 'Downloads', fileName);
-      await dbFile.copy(destPath);
+      await platform.copyFile(dbPath, destPath);
       if (context.mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
@@ -55,6 +65,15 @@ class BackupService {
     BuildContext context,
     TaskProvider provider,
   ) async {
+    if (kIsWeb) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Restore is not available on web'), showCloseIcon: true, persist: false),
+        );
+      }
+      return;
+    }
+
     final result = await FilePicker.platform.pickFiles(
       type: FileType.any,
     );

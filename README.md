@@ -14,7 +14,8 @@
 
 ```bash
 flutter pub get
-./dev.sh
+./dev.sh            # Linux desktop (default)
+./dev.sh chrome     # Web
 flutter test
 ```
 
@@ -31,7 +32,7 @@ flutter test
 - **Cloud sync** — optional Google Sign-In to sync tasks across devices via Firestore
 - **Export / import** — back up your data anytime, restore on any device
 - **Dark mode** — easy on the eyes, with colorful task cards
-- **Supported platforms:** Android
+- **Supported platforms:** Android, Web
 
 ## Setup
 
@@ -98,13 +99,19 @@ Cloud sync lets you keep tasks in sync across your phone and desktop via Google 
   When prompted for the keystore password, use the one from `android/key.properties` (`storePassword` field).
   Copy the SHA-1 from the output → paste under **Project settings → Your apps → Android → SHA certificate fingerprints → Add fingerprint**
 
-#### 5. Create Desktop OAuth Client (for Linux)
+#### 5. Enable People API (required for web sign-in)
+
+- Go to [Google Cloud Console → People API](https://console.developers.google.com/apis/api/people.googleapis.com/overview) (same project)
+- Click **Enable**
+- The `google_sign_in` web plugin uses this API to fetch profile info during sign-in
+
+#### 6. Create Desktop OAuth Client (for Linux)
 
 - Go to [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials) (same project)
 - **Create Credentials** → **OAuth client ID** → Application type: **Desktop app**
 - **Important:** Note down the **Client ID** and **Client Secret** immediately — the secret is only shown once at creation time.
 
-#### 6. Set Firestore Security Rules
+#### 7. Set Firestore Security Rules
 
 - **Firestore Database** → **Rules** → replace with:
   ```
@@ -119,7 +126,7 @@ Cloud sync lets you keep tasks in sync across your phone and desktop via Google 
   ```
 - Publish
 
-#### 7. Create `.env` file
+#### 8. Create `.env` file
 
 Create a `.env` file in the project root (it's gitignored):
 
@@ -154,12 +161,19 @@ flutter pub get
 ./dev.sh
 ```
 
-This starts the app and watches `lib/` for `.dart` file changes, triggering hot reload automatically — no need to press anything. If a `.env` file exists, Firebase config is passed automatically.
+This starts the app on Linux desktop and watches `lib/` for `.dart` file changes, triggering hot reload automatically — no need to press anything. If a `.env` file exists, Firebase config is passed automatically.
+
+To run in Chrome:
+
+```bash
+./dev.sh chrome
+```
 
 To run without auto-reload:
 
 ```bash
-flutter run -d linux
+flutter run -d linux    # Linux desktop
+flutter run -d chrome   # Web
 ```
 
 Then press `r` for hot reload or `R` for hot restart manually.
@@ -201,6 +215,22 @@ To run a specific test file:
 flutter test test/models/task_test.dart
 ```
 
+### Web Deployment (GitHub Pages)
+
+The web version is auto-deployed to GitHub Pages on tag push via the `deploy-web.yml` workflow.
+
+**One-time setup:**
+
+1. Go to your repo's **Settings → Pages → Source** → select **GitHub Actions**
+2. Push a version tag: `git tag v1.2.0 && git push origin v1.2.0`
+3. The workflow builds the web app and deploys to `https://<username>.github.io/task-roulette/`
+
+Firebase config is read from `google-services.json` at build time — no secrets needed.
+
+**Web limitations:**
+- Backup export/import is not available (data lives in IndexedDB, not a file)
+- Today's 5 selection is per-device (not synced across devices yet)
+
 ## Project Structure
 
 ```
@@ -211,6 +241,9 @@ lib/
 │   └── task_relationship.dart # Parent-child relationship model
 ├── data/
 │   └── database_helper.dart  # SQLite database operations
+├── platform/
+│   ├── platform_utils.dart       # Web stubs (no dart:io)
+│   └── platform_utils_native.dart # Native implementations (dart:io)
 ├── providers/
 │   ├── task_provider.dart    # State management (ChangeNotifier)
 │   ├── auth_provider.dart    # Google auth state

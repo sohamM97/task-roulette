@@ -71,6 +71,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   Future<void> _loadTodaysTasks() async {
+    try {
+      await _loadTodaysTasksInner();
+    } catch (e) {
+      debugPrint('TodaysFiveScreen: _loadTodaysTasks failed: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadTodaysTasksInner() async {
     final provider = context.read<TaskProvider>();
     final db = DatabaseHelper();
     final today = _todayKey();
@@ -910,34 +919,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_todaysTasks.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.check_circle_outline, size: 64, color: colorScheme.primary),
-              const SizedBox(height: 16),
-              Text(
-                'No tasks for today!',
-                style: textTheme.headlineSmall,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Add some tasks in the All Tasks tab.',
-                style: textTheme.bodyMedium?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: Column(
@@ -994,7 +975,33 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
             ),
         ],
       ),
-      body: Padding(
+      body: _todaysTasks.isEmpty
+        ? Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.check_circle_outline, size: 64, color: colorScheme.primary),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No tasks for today!',
+                    style: textTheme.headlineSmall,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Add some tasks in the All Tasks tab.',
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          )
+        : Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

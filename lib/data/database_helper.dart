@@ -1,12 +1,12 @@
-import 'dart:io';
-import 'package:flutter/foundation.dart' show visibleForTesting;
-import 'package:path_provider/path_provider.dart';
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:uuid/uuid.dart';
 import '../models/task.dart';
 import '../models/task_relationship.dart';
+import '../platform/platform_utils.dart'
+    if (dart.library.io) '../platform/platform_utils_native.dart' as platform;
 
 /// Data holder for Today's 5 state loaded from / saved to the DB.
 class TodaysFiveData {
@@ -47,19 +47,21 @@ class DatabaseHelper {
     final String path;
     if (testDatabasePath != null) {
       path = testDatabasePath!;
+    } else if (kIsWeb) {
+      // On web, sqflite_ffi_web uses IndexedDB — just use a simple name.
+      path = 'task_roulette.db';
     } else {
-      final appDir = await getApplicationSupportDirectory();
-      path = join(appDir.path, 'task_roulette.db');
+      path = await platform.resolveDatabasePath();
 
       // Migrate from old location (.dart_tool/sqflite_common_ffi/databases/)
       // which gets wiped by flutter clean.
-      if (!File(path).existsSync()) {
+      if (!platform.fileExistsSync(path)) {
         final oldPath = join(
           await getDatabasesPath(),
           'task_roulette.db',
         );
-        if (File(oldPath).existsSync()) {
-          await File(oldPath).copy(path);
+        if (platform.fileExistsSync(oldPath)) {
+          await platform.copyFile(oldPath, path);
         }
       }
     }
@@ -249,8 +251,8 @@ class DatabaseHelper {
   /// Returns the path to the current database file.
   Future<String> getDatabasePath() async {
     if (testDatabasePath != null) return testDatabasePath!;
-    final appDir = await getApplicationSupportDirectory();
-    return join(appDir.path, 'task_roulette.db');
+    if (kIsWeb) return 'task_roulette.db';
+    return platform.resolveDatabasePath();
   }
 
   static const _maxBackupSizeBytes = 100 * 1024 * 1024; // 100 MB
@@ -261,7 +263,7 @@ class DatabaseHelper {
   /// Throws [FormatException] if validation fails.
   Future<void> _validateBackup(String sourcePath) async {
     // Check file size
-    final fileSize = await File(sourcePath).length();
+    final fileSize = await platform.fileSize(sourcePath);
     if (fileSize > _maxBackupSizeBytes) {
       throw const FormatException('Backup file is too large (max 100 MB)');
     }
@@ -311,16 +313,15 @@ class DatabaseHelper {
     await _validateBackup(sourcePath);
     final dbPath = await getDatabasePath();
     // Create safety backup before overwriting
-    final existingDb = File(dbPath);
-    if (await existingDb.exists()) {
-      await existingDb.copy('$dbPath.bak');
+    if (await platform.fileExists(dbPath)) {
+      await platform.copyFile(dbPath, '$dbPath.bak');
     }
     if (_dbFuture != null) {
       final db = await _dbFuture!;
       await db.close();
     }
     _dbFuture = null;
-    await File(sourcePath).copy(dbPath);
+    await platform.copyFile(sourcePath, dbPath);
   }
 
   @visibleForTesting

@@ -1,7 +1,8 @@
 import 'dart:convert';
-import 'dart:io' show Platform, Process;
 
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
+import '../platform/platform_utils.dart'
+    if (dart.library.io) '../platform/platform_utils_native.dart' as platform;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis_auth/auth_io.dart' as auth_io;
@@ -108,32 +109,34 @@ class AuthService {
   Future<AuthUser?> signIn() async {
     if (_firebaseApiKey.isEmpty) return null;
 
-    String? googleIdToken;
+    String? googleToken;
+    String tokenType = 'idToken';
     String? displayName;
     String? email;
     String? photoUrl;
 
-    if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
+    if (!kIsWeb && platform.isDesktopPlatform) {
       final result = await _signInDesktop();
       if (result == null) return null;
-      googleIdToken = result['idToken'];
+      googleToken = result['idToken'];
       displayName = result['displayName'];
       email = result['email'];
       photoUrl = result['photoUrl'];
     } else {
-      // Android / iOS — use google_sign_in plugin
-      final result = await _signInMobile();
+      // Android / iOS / Web — use google_sign_in plugin (has web support)
+      final result = await _signInWithPlugin();
       if (result == null) return null;
-      googleIdToken = result['idToken'];
+      googleToken = result['token'];
+      tokenType = result['tokenType'] ?? 'idToken';
       displayName = result['displayName'];
       email = result['email'];
       photoUrl = result['photoUrl'];
     }
 
-    if (googleIdToken == null) return null;
+    if (googleToken == null) return null;
 
-    // Exchange Google ID token for Firebase ID token
-    final firebaseResult = await _exchangeGoogleToken(googleIdToken);
+    // Exchange Google token for Firebase ID token
+    final firebaseResult = await _exchangeGoogleToken(googleToken, tokenType: tokenType);
     if (firebaseResult == null) return null;
 
     _firebaseIdToken = firebaseResult['idToken'] as String?;
@@ -144,11 +147,16 @@ class AuthService {
         : null;
     final uid = firebaseResult['localId'] as String? ?? '';
 
+    final resolvedPhoto = photoUrl ?? firebaseResult['photoUrl'] as String?;
+    if (kDebugMode) {
+      debugPrint('AuthService: photoUrl from plugin=$photoUrl, '
+          'from firebase=${firebaseResult['photoUrl']}, resolved=$resolvedPhoto');
+    }
     _user = AuthUser(
       uid: uid,
       displayName: displayName ?? firebaseResult['displayName'] as String?,
       email: email ?? firebaseResult['email'] as String?,
-      photoUrl: photoUrl ?? firebaseResult['photoUrl'] as String?,
+      photoUrl: resolvedPhoto,
     );
 
     await _persistTokens();
@@ -172,8 +180,8 @@ class AuthService {
     await prefs.remove(_prefsKeyEmail);
     await prefs.remove(_prefsKeyPhotoUrl);
 
-    // Sign out of Google on mobile
-    if (!kIsWeb && !Platform.isLinux && !Platform.isWindows) {
+    // Sign out of Google on mobile/web
+    if (!platform.isDesktopPlatform) {
       try {
         await GoogleSignIn().signOut();
       } catch (e) {
@@ -206,21 +214,27 @@ class AuthService {
 
   // --- Private helpers ---
 
-  Future<Map<String, String>?> _signInMobile() async {
+  Future<Map<String, String>?> _signInWithPlugin() async {
     final googleSignIn = GoogleSignIn(
       scopes: ['email'],
-      serverClientId: _webClientId,
+      serverClientId: kIsWeb ? null : _webClientId,
     );
     try {
       final account = await googleSignIn.signIn();
       if (account == null) return null;
       final auth = await account.authentication;
-      if (auth.idToken == null || auth.idToken!.isEmpty) {
-        if (kDebugMode) debugPrint('AuthService: Google sign-in succeeded but idToken is null');
+
+      // On web, the GIS SDK returns an access token but not an ID token.
+      // Both work with Firebase's signInWithIdp REST endpoint.
+      final token = auth.idToken ?? auth.accessToken;
+      final tokenType = auth.idToken != null ? 'idToken' : 'accessToken';
+      if (token == null || token.isEmpty) {
+        if (kDebugMode) debugPrint('AuthService: Google sign-in succeeded but no token available');
         return null;
       }
       return {
-        'idToken': auth.idToken!,
+        'token': token,
+        'tokenType': tokenType,
         'displayName': account.displayName ?? '',
         'email': account.email,
         'photoUrl': account.photoUrl ?? '',
@@ -243,7 +257,7 @@ class AuthService {
         scopes,
         (url) async {
           // Open browser for OAuth consent
-          await Process.start('xdg-open', [url]);
+          await platform.openUrlExternally(url);
         },
       );
 
@@ -273,16 +287,23 @@ class AuthService {
     }
   }
 
-  /// Exchange a Google ID token for a Firebase ID token via REST API.
-  Future<Map<String, dynamic>?> _exchangeGoogleToken(String googleIdToken) async {
+  /// Exchange a Google token for a Firebase ID token via REST API.
+  /// [tokenType] is 'idToken' or 'accessToken' — Firebase accepts both.
+  Future<Map<String, dynamic>?> _exchangeGoogleToken(
+    String googleToken, {
+    String tokenType = 'idToken',
+  }) async {
     final url = Uri.parse(
       'https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=$_firebaseApiKey',
     );
+    final postBodyParam = tokenType == 'accessToken'
+        ? 'access_token=$googleToken&providerId=google.com'
+        : 'id_token=$googleToken&providerId=google.com';
     final response = await http.post(
       url,
       headers: {'Content-Type': 'application/json'},
       body: json.encode({
-        'postBody': 'id_token=$googleIdToken&providerId=google.com',
+        'postBody': postBodyParam,
         'requestUri': 'http://localhost',
         'returnIdpCredential': true,
         'returnSecureToken': true,
