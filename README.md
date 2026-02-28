@@ -222,8 +222,14 @@ The web version is auto-deployed to GitHub Pages on tag push via the `deploy-web
 **One-time setup:**
 
 1. Go to your repo's **Settings → Pages → Source** → select **GitHub Actions**
-2. Push a version tag: `git tag v1.2.0 && git push origin v1.2.0`
-3. The workflow builds the web app and deploys to `https://<username>.github.io/task-roulette/`
+2. Add your GitHub Pages URL to the Google OAuth client:
+   - Go to [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials)
+   - Click on the **Web client** (auto created by Google Service)
+   - Under **Authorized JavaScript origins**, add: `https://<username>.github.io`
+   - Under **Authorized redirect URIs**, add: `https://<username>.github.io/task-roulette`
+   - Save (may take a few minutes to propagate)
+3. Push a version tag: `git tag v1.2.0 && git push origin v1.2.0`
+4. The workflow builds the web app and deploys to `https://<username>.github.io/task-roulette/`
 
 Firebase config is read from `google-services.json` at build time — no secrets needed.
 
