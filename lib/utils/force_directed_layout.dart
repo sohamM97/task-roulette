@@ -9,6 +9,10 @@ class LayoutNode {
   /// Cluster ID (typically the root task ID this node belongs to).
   /// Set externally before layout. Nodes in different clusters repel more.
   int cluster;
+  /// All clusters this node has affinity with (via parents in different
+  /// clusters). Set externally. Multi-parent nodes won't get extra
+  /// inter-cluster repulsion against any of these clusters.
+  Set<int> allClusters;
   double x;
   double y;
   double vx = 0;
@@ -21,11 +25,12 @@ class LayoutNode {
     required this.isRoot,
     this.depth = 0,
     this.cluster = -1,
+    Set<int>? allClusters,
     required this.x,
     required this.y,
     required this.width,
     required this.height,
-  });
+  }) : allClusters = allClusters ?? (cluster != -1 ? {cluster} : {});
 }
 
 /// An edge between two nodes.
@@ -82,14 +87,16 @@ class ForceDirectedLayout {
       );
     }
 
-    // Build adjacency for quick neighbor lookup.
+    // Build adjacency and parent lookup.
     final adjacency = <int, Set<int>>{};
+    final parentsOf = <int, List<int>>{};
     for (final id in nodes.keys) {
       adjacency[id] = {};
     }
     for (final edge in edges) {
       adjacency[edge.sourceId]?.add(edge.destId);
       adjacency[edge.destId]?.add(edge.sourceId);
+      parentsOf.putIfAbsent(edge.destId, () => []).add(edge.sourceId);
     }
 
     // Build child set for root identification verification.
@@ -151,9 +158,18 @@ class ForceDirectedLayout {
           final effectiveDist = math.max(centerDist - minSep + 60, 5.0);
 
           // Inter-cluster repulsion: nodes in different clusters push
-          // apart much harder, creating natural spatial grouping.
-          final diffCluster =
-              a.cluster != -1 && b.cluster != -1 && a.cluster != b.cluster;
+          // apart harder. But if either node has affinity with the other's
+          // cluster (multi-parent), skip the penalty so they can sit
+          // between their parent clusters.
+          final bool diffCluster;
+          if (a.cluster == -1 || b.cluster == -1 || a.cluster == b.cluster) {
+            diffCluster = false;
+          } else if (a.allClusters.contains(b.cluster) ||
+              b.allClusters.contains(a.cluster)) {
+            diffCluster = false; // multi-parent affinity
+          } else {
+            diffCluster = true;
+          }
           final clusterMultiplier = diffCluster ? 5.0 : 1.0;
 
           final force = (repulsionStrength * clusterMultiplier) /
@@ -189,9 +205,13 @@ class ForceDirectedLayout {
         b.vy -= fy;
       }
 
-      // Cluster forces: children pull toward root, root pulls toward
-      // cluster centroid. Keeps groups tight and root centered in group.
-      // Compute cluster centroids first.
+      // Cluster forces:
+      // - Roots pull toward their cluster centroid (stays central).
+      // - Non-root nodes pull toward centroid of ALL their parents
+      //   (not just one cluster root), so multi-parent nodes settle
+      //   between their parents.
+
+      // Compute cluster centroids for root centering.
       final clusterSumX = <int, double>{};
       final clusterSumY = <int, double>{};
       final clusterCount = <int, int>{};
@@ -207,8 +227,7 @@ class ForceDirectedLayout {
       }
 
       for (final node in nodeList) {
-        if (node.cluster == -1) continue;
-        if (node.isRoot) {
+        if (node.isRoot && node.cluster != -1) {
           // Pull root toward its cluster centroid so it stays central.
           final count = clusterCount[node.cluster] ?? 1;
           if (count > 1) {
@@ -217,12 +236,26 @@ class ForceDirectedLayout {
             node.vx += (cx - node.x) * 0.02;
             node.vy += (cy - node.y) * 0.02;
           }
-        } else {
-          // Non-root: pull toward cluster root.
-          final root = nodes[node.cluster];
-          if (root != null) {
-            node.vx += (root.x - node.x) * 0.015;
-            node.vy += (root.y - node.y) * 0.015;
+        } else if (!node.isRoot) {
+          // Non-root: pull toward centroid of all parents.
+          final parents = parentsOf[node.id];
+          if (parents != null && parents.isNotEmpty) {
+            var px = 0.0, py = 0.0;
+            var count = 0;
+            for (final pid in parents) {
+              final parent = nodes[pid];
+              if (parent != null) {
+                px += parent.x;
+                py += parent.y;
+                count++;
+              }
+            }
+            if (count > 0) {
+              px /= count;
+              py /= count;
+              node.vx += (px - node.x) * 0.015;
+              node.vy += (py - node.y) * 0.015;
+            }
           }
         }
       }
@@ -300,32 +333,37 @@ class ForceDirectedLayout {
       }
     }
 
-    // Place non-roots near their cluster root (not just any parent)
-    // with deterministic jitter, so clusters start cohesive.
+    // Place non-roots near the centroid of all their parents (not just
+    // one cluster root), so multi-parent nodes start between parents.
     for (final node in nonRoots) {
       final rng = math.Random(node.id);
-      // Prefer cluster root for initial placement.
+      final parents = parentOf[node.id];
+      if (parents != null && parents.isNotEmpty) {
+        var px = 0.0, py = 0.0;
+        var count = 0;
+        for (final pid in parents) {
+          final parent = nodes[pid];
+          if (parent != null) {
+            px += parent.x;
+            py += parent.y;
+            count++;
+          }
+        }
+        if (count > 0) {
+          node.x = px / count + (rng.nextDouble() - 0.5) * 150;
+          node.y = py / count + (rng.nextDouble() - 0.5) * 150;
+          continue;
+        }
+      }
+      // Fallback: near cluster root or random.
       final clusterRoot = node.cluster != -1 ? nodes[node.cluster] : null;
-      final target = clusterRoot ?? _firstParent(node, parentOf, nodes);
-      if (target != null) {
-        node.x = target.x + (rng.nextDouble() - 0.5) * 200;
-        node.y = target.y + (rng.nextDouble() - 0.5) * 200;
+      if (clusterRoot != null) {
+        node.x = clusterRoot.x + (rng.nextDouble() - 0.5) * 200;
+        node.y = clusterRoot.y + (rng.nextDouble() - 0.5) * 200;
       } else {
         node.x = (rng.nextDouble() - 0.5) * 300;
         node.y = (rng.nextDouble() - 0.5) * 300;
       }
     }
-  }
-
-  static LayoutNode? _firstParent(
-    LayoutNode node,
-    Map<int, List<int>> parentOf,
-    Map<int, LayoutNode> nodes,
-  ) {
-    final parents = parentOf[node.id];
-    if (parents != null && parents.isNotEmpty) {
-      return nodes[parents.first];
-    }
-    return null;
   }
 }

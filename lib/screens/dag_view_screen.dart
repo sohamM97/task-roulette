@@ -224,6 +224,26 @@ class _DagViewScreenState extends State<DagViewScreen> {
       depths.putIfAbsent(id, () => maxDepth);
     }
 
+    // Build parent→child reverse lookup for multi-parent cluster affinity.
+    final parentsOf = <int, List<int>>{};
+    for (final rel in _allRelationships) {
+      parentsOf.putIfAbsent(rel.childId, () => []).add(rel.parentId);
+    }
+
+    // Compute allClusters per node: the set of clusters of all parents.
+    // Multi-parent nodes get affinity with every parent's cluster.
+    final allClustersOf = <int, Set<int>>{};
+    for (final id in connectedTaskIds) {
+      final nodeCluster = clusters[id] ?? -1;
+      final parentClusters = <int>{};
+      if (nodeCluster != -1) parentClusters.add(nodeCluster);
+      for (final pid in parentsOf[id] ?? <int>[]) {
+        final pc = clusters[pid];
+        if (pc != null && pc != -1) parentClusters.add(pc);
+      }
+      allClustersOf[id] = parentClusters;
+    }
+
     // Create layout nodes with depth-scaled sizes.
     for (final id in connectedTaskIds) {
       final isRoot = _rootIds.contains(id);
@@ -242,6 +262,7 @@ class _DagViewScreenState extends State<DagViewScreen> {
         isRoot: isRoot,
         depth: depth,
         cluster: clusters[id] ?? -1,
+        allClusters: allClustersOf[id],
         x: 0,
         y: 0,
         width: nodeWidth + _nodeHPadding * 2,
