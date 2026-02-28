@@ -1,8 +1,10 @@
-import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
+import 'platform/platform_utils.dart'
+    if (dart.library.io) 'platform/platform_utils_native.dart' as platform;
 import 'providers/auth_provider.dart';
 import 'providers/task_provider.dart';
 import 'providers/theme_provider.dart';
@@ -11,7 +13,9 @@ import 'screens/todays_five_screen.dart';
 import 'services/sync_service.dart';
 
 void main() {
-  if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
+  if (kIsWeb) {
+    databaseFactory = databaseFactoryFfiWeb;
+  } else if (platform.isDesktopPlatform) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }

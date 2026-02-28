@@ -1,8 +1,10 @@
 #!/bin/bash
 # Auto-hot-reload dev script for TaskRoulette
+# Usage: ./dev.sh [chrome|linux]   (default: linux)
 # Watches lib/ for .dart file changes and triggers hot reload automatically.
 # Requires: inotify-tools (sudo apt install -y inotify-tools)
 
+DEVICE="${1:-linux}"
 PID_FILE="/tmp/flutter-taskroulette.pid"
 
 cleanup() {
@@ -36,8 +38,16 @@ if [ -f ".env" ]; then
   done < .env
 fi
 
+# Ensure sqflite web worker files exist for Chrome
+if [ "$DEVICE" = "chrome" ]; then
+  if [ ! -f "web/sqflite_sw.js" ] || [ ! -f "web/sqlite3.wasm" ]; then
+    echo "Setting up sqflite web worker files..."
+    dart run sqflite_common_ffi_web:setup
+  fi
+fi
+
 # Start Flutter in the background with a PID file
-flutter run -d linux --pid-file "$PID_FILE" $DART_DEFINES &
+flutter run -d "$DEVICE" --pid-file "$PID_FILE" $DART_DEFINES &
 FLUTTER_PID=$!
 
 # Wait for the PID file to appear (Flutter takes a moment to start)

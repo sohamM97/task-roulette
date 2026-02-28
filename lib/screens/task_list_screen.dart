@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -1002,14 +1003,16 @@ class TaskListScreenState extends State<TaskListScreen>
                       ),
                       const PopupMenuDivider(),
                     ],
-                    const PopupMenuItem(
-                      value: 'export',
-                      child: Text('Export backup'),
-                    ),
-                    const PopupMenuItem(
-                      value: 'import',
-                      child: Text('Import backup'),
-                    ),
+                    if (!kIsWeb) ...[
+                      const PopupMenuItem(
+                        value: 'export',
+                        child: Text('Export backup'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'import',
+                        child: Text('Import backup'),
+                      ),
+                    ],
                   ],
                 ),
               ],
