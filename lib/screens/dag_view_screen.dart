@@ -46,9 +46,6 @@ class _DagViewScreenState extends State<DagViewScreen> {
   // Key for the viewport to measure size for fit-to-screen.
   final GlobalKey _viewportKey = GlobalKey();
 
-  // Track pointer down position for tap detection (Listener-based).
-  Offset? _pointerDownPos;
-
   // Node dimensions — scaled to screen width in _rebuildGraph().
   double _rootNodeWidth = 160.0;
   double _rootNodeHeight = 56.0;
@@ -335,15 +332,8 @@ class _DagViewScreenState extends State<DagViewScreen> {
             ? 6.0
             : 12.0;
 
-    return Listener(
-      onPointerDown: (e) => _pointerDownPos = e.position,
-      onPointerUp: (e) {
-        if (_pointerDownPos != null &&
-            (e.position - _pointerDownPos!).distance < 20) {
-          _navigateToTask(task);
-        }
-        _pointerDownPos = null;
-      },
+    return GestureDetector(
+      onTap: () => _navigateToTask(task),
       child: Opacity(
         // Root=1.0, depth 1=0.95, depth 2=0.88, ... min 0.55. Unrelated=0.5.
         opacity: connected
