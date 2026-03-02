@@ -28,6 +28,12 @@ class SyncService {
 
   SyncService(this._authProvider);
 
+  /// Returns today's date as YYYY-MM-DD string for Firestore document key.
+  String _todayDateKey() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
+
   bool get _canSync =>
       _authProvider.isSignedIn &&
       _authProvider.uid != null &&
@@ -118,6 +124,16 @@ class SyncService {
       // Drain sync queue (anything enqueued during migration)
       await _db.drainSyncQueue();
 
+      // Push Today's 5 state
+      final dateKey = _todayDateKey();
+      final todaysFiveEntries = await _db.getTodaysFiveStateWithSyncIds(dateKey);
+      if (todaysFiveEntries.isNotEmpty) {
+        await _firestore.pushTodaysFive(
+          uid, idToken, dateKey, todaysFiveEntries,
+          DateTime.now().millisecondsSinceEpoch,
+        );
+      }
+
       // Mark migration done
       await prefs.setBool(key, true);
       await prefs.setInt(_prefsKeyLastSyncAt, DateTime.now().millisecondsSinceEpoch);
@@ -161,6 +177,13 @@ class SyncService {
       final deps = await _firestore.pullAllDependencies(uid, idToken);
       for (final dep in deps) {
         await _db.upsertDependencyFromRemote(dep.taskSyncId, dep.dependsOnSyncId);
+      }
+
+      // Pull Today's 5 state
+      final dateKey = _todayDateKey();
+      final remote5 = await _firestore.pullTodaysFive(uid, idToken, dateKey);
+      if (remote5 != null && remote5.entries.isNotEmpty) {
+        await _db.upsertTodaysFiveFromRemote(dateKey, remote5.entries);
       }
 
       // Mark migration done
@@ -220,6 +243,16 @@ class SyncService {
       final taskIds = allTasks.where((t) => t.id != null).map((t) => t.id!).toList();
       await _db.markTasksSynced(taskIds);
       await _db.drainSyncQueue();
+
+      // Push Today's 5 state
+      final dateKey = _todayDateKey();
+      final todaysFiveEntries = await _db.getTodaysFiveStateWithSyncIds(dateKey);
+      if (todaysFiveEntries.isNotEmpty) {
+        await _firestore.pushTodaysFive(
+          uid, idToken, dateKey, todaysFiveEntries,
+          DateTime.now().millisecondsSinceEpoch,
+        );
+      }
 
       // Mark migration done
       final prefs = await SharedPreferences.getInstance();
@@ -304,6 +337,16 @@ class SyncService {
             }
         }
         await _db.deleteSyncQueueEntry(entryId);
+      }
+
+      // Push Today's 5 state
+      final dateKey = _todayDateKey();
+      final todaysFiveEntries = await _db.getTodaysFiveStateWithSyncIds(dateKey);
+      if (todaysFiveEntries.isNotEmpty) {
+        await _firestore.pushTodaysFive(
+          uid, idToken, dateKey, todaysFiveEntries,
+          DateTime.now().millisecondsSinceEpoch,
+        );
       }
 
       _authProvider.setSyncStatus(SyncStatus.synced);
@@ -396,6 +439,14 @@ class SyncService {
               local.taskSyncId, local.dependsOnSyncId);
           anyChange = true;
         }
+      }
+
+      // Pull Today's 5 state
+      final dateKey = _todayDateKey();
+      final remote5 = await _firestore.pullTodaysFive(uid, idToken, dateKey);
+      if (remote5 != null && remote5.entries.isNotEmpty) {
+        await _db.upsertTodaysFiveFromRemote(dateKey, remote5.entries);
+        anyChange = true;
       }
 
       // Update last sync timestamp

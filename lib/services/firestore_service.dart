@@ -26,6 +26,7 @@ class FirestoreService {
   String _tasksPath(String uid) => '$_baseUrl/users/$uid/tasks';
   String _relationshipsPath(String uid) => '$_baseUrl/users/$uid/relationships';
   String _dependenciesPath(String uid) => '$_baseUrl/users/$uid/dependencies';
+  String _todaysFivePath(String uid) => '$_baseUrl/users/$uid/todays_five';
 
   // --- Push ---
 
@@ -253,6 +254,102 @@ class FirestoreService {
     return results;
   }
 
+  // --- Today's 5 ---
+
+  /// Pushes Today's 5 state for a given date to Firestore.
+  /// Each date is one document: users/{uid}/todays_five/{date}
+  Future<void> pushTodaysFive(
+    String uid,
+    String idToken,
+    String date,
+    List<Map<String, dynamic>> entries,
+    int updatedAt,
+  ) async {
+    final docPath =
+        'projects/$_projectId/databases/(default)/documents/users/$uid/todays_five/$date';
+    final commitUrl = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
+    );
+    final entryValues = entries.map((e) => {
+          'mapValue': {
+            'fields': {
+              'task_sync_id': {'stringValue': e['task_sync_id'] as String},
+              'is_completed': {'booleanValue': e['is_completed'] as bool},
+              'is_worked_on': {'booleanValue': e['is_worked_on'] as bool},
+              'is_pinned': {'booleanValue': e['is_pinned'] as bool},
+              'sort_order': {'integerValue': (e['sort_order'] as int).toString()},
+            },
+          },
+        }).toList();
+
+    final response = await http.post(
+      commitUrl,
+      headers: _headers(idToken),
+      body: json.encode({
+        'writes': [
+          {
+            'update': {
+              'name': docPath,
+              'fields': {
+                'entries': {
+                  'arrayValue': {'values': entryValues},
+                },
+                'updated_at': {'integerValue': updatedAt.toString()},
+              },
+            },
+          },
+        ],
+      }),
+    ).timeout(_httpTimeout);
+    if (response.statusCode != 200) {
+      throw FirestoreException(
+          'Push todays_five failed: ${response.statusCode} ${response.body}');
+    }
+  }
+
+  /// Pulls Today's 5 state for a given date from Firestore.
+  /// Returns null if no document exists (404).
+  Future<({List<Map<String, dynamic>> entries, int updatedAt})?> pullTodaysFive(
+    String uid,
+    String idToken,
+    String date,
+  ) async {
+    final url = Uri.parse('${_todaysFivePath(uid)}/$date');
+    final response =
+        await http.get(url, headers: _headers(idToken)).timeout(_httpTimeout);
+    if (response.statusCode == 404) return null;
+    if (response.statusCode != 200) {
+      throw FirestoreException(
+          'Pull todays_five failed: ${response.statusCode} ${response.body}');
+    }
+    final body = json.decode(response.body) as Map<String, dynamic>;
+    final fields = body['fields'] as Map<String, dynamic>?;
+    if (fields == null) return null;
+
+    final updatedAt = _intField(fields, 'updated_at');
+    final entriesField = fields['entries'] as Map<String, dynamic>?;
+    final arrayValues =
+        (entriesField?['arrayValue'] as Map<String, dynamic>?)?['values']
+            as List<dynamic>?;
+    if (arrayValues == null) return (entries: <Map<String, dynamic>>[], updatedAt: updatedAt);
+
+    final entries = <Map<String, dynamic>>[];
+    for (final v in arrayValues) {
+      final mapFields =
+          ((v as Map<String, dynamic>)['mapValue'] as Map<String, dynamic>?)?['fields']
+              as Map<String, dynamic>?;
+      if (mapFields == null) continue;
+      entries.add({
+        'task_sync_id': _stringField(mapFields, 'task_sync_id') ?? '',
+        'is_completed': _boolField(mapFields, 'is_completed'),
+        'is_worked_on': _boolField(mapFields, 'is_worked_on'),
+        'is_pinned': _boolField(mapFields, 'is_pinned'),
+        'sort_order': _intField(mapFields, 'sort_order'),
+      });
+    }
+    return (entries: entries, updatedAt: updatedAt);
+  }
+
   // --- Private helpers ---
 
   Future<List<Task>> _listAllTasks(String uid, String idToken) async {
@@ -390,6 +487,11 @@ class FirestoreService {
     if (val is int) return val;
     if (val is String) return int.tryParse(val) ?? 0;
     return 0;
+  }
+
+  bool _boolField(Map<String, dynamic> fields, String key) {
+    final field = fields[key] as Map<String, dynamic>?;
+    return field?['booleanValue'] as bool? ?? false;
   }
 
   int? _intFieldNullable(Map<String, dynamic> fields, String key) {

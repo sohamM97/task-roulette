@@ -3115,4 +3115,231 @@ void main() {
       expect(result.pinnedIds, isEmpty);
     });
   });
+
+  group('Today\'s 5 sync', () {
+    const date = '2026-03-02';
+
+    Future<int> insertTaskWithSyncId(String name, String syncId) async {
+      final id = await db.insertTask(Task(name: name, syncId: syncId));
+      return id;
+    }
+
+    test('getTodaysFiveStateWithSyncIds returns entries with sync_ids', () async {
+      final id1 = await insertTaskWithSyncId('Task A', 'sync-a');
+      final id2 = await insertTaskWithSyncId('Task B', 'sync-b');
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [id1, id2],
+        completedIds: {id1},
+        workedOnIds: {id1},
+        pinnedIds: {id2},
+      );
+
+      final entries = await db.getTodaysFiveStateWithSyncIds(date);
+      expect(entries, hasLength(2));
+      expect(entries[0]['task_sync_id'], 'sync-a');
+      expect(entries[0]['is_completed'], true);
+      expect(entries[0]['is_worked_on'], true);
+      expect(entries[0]['is_pinned'], false);
+      expect(entries[0]['sort_order'], 0);
+      expect(entries[1]['task_sync_id'], 'sync-b');
+      expect(entries[1]['is_completed'], false);
+      expect(entries[1]['is_pinned'], true);
+      expect(entries[1]['sort_order'], 1);
+    });
+
+    test('getTodaysFiveStateWithSyncIds skips tasks without sync_id', () async {
+      // Insert task without sync_id via raw SQL
+      final rawDb = await db.database;
+      final id1 = await rawDb.insert('tasks', {
+        'name': 'No Sync',
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+        'priority': 0,
+        'difficulty': 0,
+        'sync_status': 'synced',
+      });
+      final id2 = await insertTaskWithSyncId('Has Sync', 'sync-x');
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [id1, id2],
+        completedIds: {},
+        workedOnIds: {},
+      );
+
+      final entries = await db.getTodaysFiveStateWithSyncIds(date);
+      expect(entries, hasLength(1));
+      expect(entries[0]['task_sync_id'], 'sync-x');
+    });
+
+    test('upsertTodaysFiveFromRemote: no local state accepts remote fully', () async {
+      final id1 = await insertTaskWithSyncId('Task A', 'sync-a');
+      final id2 = await insertTaskWithSyncId('Task B', 'sync-b');
+
+      await db.upsertTodaysFiveFromRemote(date, [
+        {'task_sync_id': 'sync-a', 'is_completed': true, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 0},
+        {'task_sync_id': 'sync-b', 'is_completed': false, 'is_worked_on': false, 'is_pinned': true, 'sort_order': 1},
+      ]);
+
+      final state = await db.loadTodaysFiveState(date);
+      expect(state, isNotNull);
+      expect(state!.taskIds, [id1, id2]);
+      expect(state.completedIds, {id1});
+      expect(state.pinnedIds, {id2});
+    });
+
+    test('upsertTodaysFiveFromRemote: OR-merges status bits for shared tasks', () async {
+      final id1 = await insertTaskWithSyncId('Task A', 'sync-a');
+      final id2 = await insertTaskWithSyncId('Task B', 'sync-b');
+
+      // Local: task A completed, task B not
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [id1, id2],
+        completedIds: {id1},
+        workedOnIds: {},
+        pinnedIds: {},
+      );
+
+      // Remote: task A not completed, task B completed
+      await db.upsertTodaysFiveFromRemote(date, [
+        {'task_sync_id': 'sync-a', 'is_completed': false, 'is_worked_on': true, 'is_pinned': false, 'sort_order': 0},
+        {'task_sync_id': 'sync-b', 'is_completed': true, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 1},
+      ]);
+
+      final state = await db.loadTodaysFiveState(date);
+      expect(state, isNotNull);
+      // Both should be completed (OR-merge)
+      expect(state!.completedIds, {id1, id2});
+      // Task A should be worked_on (remote true OR local false)
+      expect(state.workedOnIds, {id1});
+    });
+
+    test('upsertTodaysFiveFromRemote: appends local-only pinned/completed tasks', () async {
+      final id1 = await insertTaskWithSyncId('Task A', 'sync-a');
+      final id2 = await insertTaskWithSyncId('Task B', 'sync-b');
+      final id3 = await insertTaskWithSyncId('Task C', 'sync-c');
+
+      // Local has 3 tasks: A, B (pinned), C (completed)
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [id1, id2, id3],
+        completedIds: {id3},
+        workedOnIds: {},
+        pinnedIds: {id2},
+      );
+
+      // Remote only has task A
+      await db.upsertTodaysFiveFromRemote(date, [
+        {'task_sync_id': 'sync-a', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 0},
+      ]);
+
+      final state = await db.loadTodaysFiveState(date);
+      expect(state, isNotNull);
+      // Remote task A + local-only pinned B + local-only completed C
+      expect(state!.taskIds, [id1, id2, id3]);
+      expect(state.pinnedIds, {id2});
+      expect(state.completedIds, {id3});
+    });
+
+    test('upsertTodaysFiveFromRemote: does not append unpinned uncompleted local-only tasks', () async {
+      final id1 = await insertTaskWithSyncId('Task A', 'sync-a');
+      final id2 = await insertTaskWithSyncId('Task B', 'sync-b');
+
+      // Local has 2 tasks: A, B (neither pinned nor completed)
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [id1, id2],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {},
+      );
+
+      // Remote only has task A
+      await db.upsertTodaysFiveFromRemote(date, [
+        {'task_sync_id': 'sync-a', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 0},
+      ]);
+
+      final state = await db.loadTodaysFiveState(date);
+      expect(state, isNotNull);
+      // Only remote task A — local-only B was neither pinned nor completed
+      expect(state!.taskIds, [id1]);
+    });
+
+    test('upsertTodaysFiveFromRemote: caps at 5 total tasks', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 7; i++) {
+        ids.add(await insertTaskWithSyncId('Task $i', 'sync-$i'));
+      }
+
+      // Local has 2 extra pinned tasks (ids 5, 6)
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [ids[5], ids[6]],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {ids[5], ids[6]},
+      );
+
+      // Remote has 5 tasks (ids 0-4)
+      final remoteEntries = List.generate(5, (i) => {
+        'task_sync_id': 'sync-$i',
+        'is_completed': false,
+        'is_worked_on': false,
+        'is_pinned': false,
+        'sort_order': i,
+      });
+      await db.upsertTodaysFiveFromRemote(date, remoteEntries);
+
+      final state = await db.loadTodaysFiveState(date);
+      expect(state, isNotNull);
+      // Should cap at 5 (the remote 5), no room for local-only pinned
+      expect(state!.taskIds, hasLength(5));
+      expect(state.taskIds, [ids[0], ids[1], ids[2], ids[3], ids[4]]);
+    });
+
+    test('upsertTodaysFiveFromRemote: skips unresolvable sync_ids', () async {
+      final id1 = await insertTaskWithSyncId('Task A', 'sync-a');
+
+      await db.upsertTodaysFiveFromRemote(date, [
+        {'task_sync_id': 'sync-a', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 0},
+        {'task_sync_id': 'sync-nonexistent', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 1},
+      ]);
+
+      final state = await db.loadTodaysFiveState(date);
+      expect(state, isNotNull);
+      expect(state!.taskIds, [id1]);
+    });
+
+    test('upsertTodaysFiveFromRemote: empty entries is no-op', () async {
+      final id1 = await insertTaskWithSyncId('Task A', 'sync-a');
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [id1],
+        completedIds: {},
+        workedOnIds: {},
+      );
+
+      await db.upsertTodaysFiveFromRemote(date, []);
+
+      // Local state should be unchanged
+      final state = await db.loadTodaysFiveState(date);
+      expect(state, isNotNull);
+      expect(state!.taskIds, [id1]);
+    });
+
+    test('deleteAllLocalData also deletes todays_five_state', () async {
+      final id1 = await insertTaskWithSyncId('Task A', 'sync-a');
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [id1],
+        completedIds: {},
+        workedOnIds: {},
+      );
+
+      await db.deleteAllLocalData();
+
+      final state = await db.loadTodaysFiveState(date);
+      expect(state, isNull);
+    });
+  });
 }
