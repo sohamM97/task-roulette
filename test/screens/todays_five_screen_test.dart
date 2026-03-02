@@ -9,6 +9,7 @@ import 'package:task_roulette/providers/auth_provider.dart';
 import 'package:task_roulette/providers/task_provider.dart';
 import 'package:task_roulette/providers/theme_provider.dart';
 import 'package:task_roulette/screens/todays_five_screen.dart';
+import 'package:task_roulette/services/sync_service.dart';
 
 String _todayKey() {
   final now = DateTime.now();
@@ -42,11 +43,16 @@ void main() {
   });
 
   Widget buildTestWidget({void Function(Task)? onNavigateToTask}) {
+    final authProvider = AuthProvider();
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: provider),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
-        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider.value(value: authProvider),
+        Provider<SyncService>(
+          create: (_) => SyncService(authProvider),
+          dispose: (_, sync) => sync.dispose(),
+        ),
       ],
       child: MaterialApp(
         home: Scaffold(

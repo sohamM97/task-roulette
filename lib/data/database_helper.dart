@@ -1509,6 +1509,7 @@ class DatabaseHelper {
     final db = await database;
     await db.transaction((txn) async {
       await txn.delete('sync_queue');
+      await txn.delete('todays_five_state');
       await txn.delete('task_dependencies');
       await txn.delete('task_relationships');
       await txn.delete('tasks');
@@ -1846,6 +1847,125 @@ class DatabaseHelper {
       if (row['is_pinned'] == 1) pinnedIds.add(id);
     }
     return (taskIds: taskIds, pinnedIds: pinnedIds);
+  }
+
+  /// Returns Today's 5 state for [date] with sync_ids instead of local IDs.
+  /// Used by SyncService to push state to Firestore.
+  Future<List<Map<String, dynamic>>> getTodaysFiveStateWithSyncIds(String date) async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT t.sync_id, s.is_completed, s.is_worked_on, s.is_pinned, s.sort_order
+      FROM todays_five_state s
+      JOIN tasks t ON t.id = s.task_id
+      WHERE s.date = ? AND t.sync_id IS NOT NULL
+      ORDER BY s.sort_order ASC
+    ''', [date]);
+    return rows.map((r) => {
+      'task_sync_id': r['sync_id'] as String,
+      'is_completed': (r['is_completed'] as int) == 1,
+      'is_worked_on': (r['is_worked_on'] as int) == 1,
+      'is_pinned': (r['is_pinned'] as int) == 1,
+      'sort_order': r['sort_order'] as int,
+    }).toList();
+  }
+
+  /// Merges remote Today's 5 state into the local DB.
+  /// - No local state: accept remote fully.
+  /// - Both exist: use remote task list + sort order; OR-merge status bits
+  ///   for tasks in both lists; append local-only pinned/completed tasks up
+  ///   to max 5 slots.
+  Future<void> upsertTodaysFiveFromRemote(
+    String date,
+    List<Map<String, dynamic>> remoteEntries,
+  ) async {
+    if (remoteEntries.isEmpty) return;
+    final db = await database;
+
+    // Resolve remote sync_ids to local task IDs
+    final resolved = <({int taskId, bool isCompleted, bool isWorkedOn, bool isPinned, int sortOrder})>[];
+    for (final entry in remoteEntries) {
+      final syncId = entry['task_sync_id'] as String;
+      final rows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [syncId]);
+      if (rows.isEmpty) continue;
+      final localId = rows.first['id'] as int;
+      resolved.add((
+        taskId: localId,
+        isCompleted: entry['is_completed'] as bool,
+        isWorkedOn: entry['is_worked_on'] as bool,
+        isPinned: entry['is_pinned'] as bool,
+        sortOrder: entry['sort_order'] as int,
+      ));
+    }
+    if (resolved.isEmpty) return;
+
+    // Load existing local state
+    final localState = await loadTodaysFiveState(date);
+    final remoteIdSet = resolved.map((r) => r.taskId).toSet();
+
+    if (localState == null) {
+      // No local state — accept remote fully
+      await db.transaction((txn) async {
+        await txn.delete('todays_five_state', where: 'date = ?', whereArgs: [date]);
+        for (final r in resolved) {
+          await txn.insert('todays_five_state', {
+            'date': date,
+            'task_id': r.taskId,
+            'is_completed': r.isCompleted ? 1 : 0,
+            'is_worked_on': r.isWorkedOn ? 1 : 0,
+            'is_pinned': r.isPinned ? 1 : 0,
+            'sort_order': r.sortOrder,
+          });
+        }
+      });
+      return;
+    }
+
+    // Both exist — merge
+    // Start with remote task list + sort order, OR-merge status bits
+    final mergedList = <({int taskId, bool isCompleted, bool isWorkedOn, bool isPinned, int sortOrder})>[];
+    for (final r in resolved) {
+      final localCompleted = localState.completedIds.contains(r.taskId);
+      final localWorkedOn = localState.workedOnIds.contains(r.taskId);
+      final localPinned = localState.pinnedIds.contains(r.taskId);
+      mergedList.add((
+        taskId: r.taskId,
+        isCompleted: r.isCompleted || localCompleted,
+        isWorkedOn: r.isWorkedOn || localWorkedOn,
+        isPinned: r.isPinned || localPinned,
+        sortOrder: r.sortOrder,
+      ));
+    }
+
+    // Append local-only tasks that are pinned or completed (up to 5 total)
+    var nextOrder = mergedList.length;
+    for (final localId in localState.taskIds) {
+      if (mergedList.length >= 5) break;
+      if (remoteIdSet.contains(localId)) continue;
+      final isPinned = localState.pinnedIds.contains(localId);
+      final isCompleted = localState.completedIds.contains(localId);
+      if (!isPinned && !isCompleted) continue;
+      mergedList.add((
+        taskId: localId,
+        isCompleted: isCompleted,
+        isWorkedOn: localState.workedOnIds.contains(localId),
+        isPinned: isPinned,
+        sortOrder: nextOrder++,
+      ));
+    }
+
+    await db.transaction((txn) async {
+      await txn.delete('todays_five_state', where: 'date = ?', whereArgs: [date]);
+      for (final m in mergedList) {
+        await txn.insert('todays_five_state', {
+          'date': date,
+          'task_id': m.taskId,
+          'is_completed': m.isCompleted ? 1 : 0,
+          'is_worked_on': m.isWorkedOn ? 1 : 0,
+          'is_pinned': m.isPinned ? 1 : 0,
+          'sort_order': m.sortOrder,
+        });
+      }
+    });
   }
 
   /// Migrates Today's 5 state from SharedPreferences to the DB (idempotent).

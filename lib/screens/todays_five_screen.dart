@@ -5,6 +5,7 @@ import '../data/todays_five_pin_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
+import '../services/sync_service.dart';
 import '../utils/display_utils.dart';
 import '../widgets/completion_animation.dart';
 import '../widgets/profile_icon.dart';
@@ -336,6 +337,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
       workedOnIds: _workedOnIds,
       pinnedIds: _pinnedIds,
     );
+    if (mounted) {
+      context.read<SyncService>().schedulePush();
+    }
   }
 
   /// Fetches ancestor paths for all tasks in [_todaysTasks] + [_otherDoneToday]
