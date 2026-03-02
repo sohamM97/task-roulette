@@ -73,5 +73,5 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 ## GitHub
 
 - Repo: sohamM97/task-roulette
-- **Releases:** Auto-created via GitHub Actions on tag push — just push the tag, don't use `gh release create`.
+- **Releases:** Auto-created via GitHub Actions on tag push. **Never tag or push a release unless the user runs `/release`.** Don't use `gh release create`.
 - **Never merge PRs without explicit user approval.** Creating PRs is fine, but always ask before running `gh pr merge`.

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../data/database_helper.dart';
 import '../data/todays_five_pin_helper.dart';
 import '../models/task.dart';
+import '../providers/auth_provider.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/sync_service.dart';
@@ -42,6 +43,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   final Set<int> _pinnedIds = {};
   bool _loading = true;
   TaskProvider? _provider;
+  AuthProvider? _authProvider;
 
   @override
   void initState() {
@@ -51,11 +53,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     // so _otherDoneToday stays in sync without requiring a tab switch.
     _provider = context.read<TaskProvider>();
     _provider!.addListener(_onProviderChanged);
+    // Listen for sync completion to reload Today's 5 from DB after pull.
+    _authProvider = context.read<AuthProvider>();
+    _authProvider!.addListener(_onSyncStatusChanged);
   }
 
   @override
   void dispose() {
     _provider?.removeListener(_onProviderChanged);
+    _authProvider?.removeListener(_onSyncStatusChanged);
     super.dispose();
   }
 
@@ -64,6 +70,13 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     _loadOtherDoneToday().then((_) {
       if (mounted) setState(() {});
     });
+  }
+
+  void _onSyncStatusChanged() {
+    if (!mounted || _loading) return;
+    if (_authProvider?.syncStatus == SyncStatus.synced) {
+      refreshSnapshots();
+    }
   }
 
   String _todayKey() {
