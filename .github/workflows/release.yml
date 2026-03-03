@@ -5,7 +5,11 @@ on:
     tags: ['v*']
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   build-and-release:
+    needs: [ci]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -31,12 +35,6 @@ jobs:
             echo "ERROR: Tag v$TAG does not match pubspec.yaml version $PUBSPEC_VERSION"
             exit 1
           fi
-
-      - name: Analyze
-        run: flutter analyze
-
-      - name: Test
-        run: flutter test
 
       # Signing: Android requires a consistent keystore across releases.
       # Without this, each CI run generates a random debug key, causing
