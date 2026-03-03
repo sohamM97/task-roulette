@@ -313,4 +313,122 @@ void main() {
       });
     });
   });
+
+  group('Sync reload', () {
+    testWidgets('reloads from DB when sync status changes to synced', (tester) async {
+      // Simulate: laptop opens, generates local set, then sync brings
+      // different tasks from phone. The screen should show phone's tasks.
+      late int idA, idB, idD, idE;
+      await tester.runAsync(() async {
+        // Create tasks that will be in both local and remote sets
+        idA = await db.insertTask(Task(name: 'Phone Task A', syncId: 'sync-a'));
+        idB = await db.insertTask(Task(name: 'Phone Task B', syncId: 'sync-b'));
+        // These will be the locally-generated set
+        await db.insertTask(Task(name: 'Laptop Task C', syncId: 'sync-c'));
+        idD = await db.insertTask(Task(name: 'Laptop Task D', syncId: 'sync-d'));
+        idE = await db.insertTask(Task(name: 'Laptop Task E', syncId: 'sync-e'));
+      });
+
+      final authProvider = AuthProvider();
+      final widget = MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => ThemeProvider()),
+          ChangeNotifierProvider.value(value: authProvider),
+          Provider<SyncService>(
+            create: (_) => SyncService(authProvider),
+            dispose: (_, sync) => sync.dispose(),
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: TodaysFiveScreen(),
+          ),
+        ),
+      );
+
+      // Load the widget — it generates a local set from all 5 leaf tasks
+      await pumpAndLoad(tester, widget);
+      expect(find.text('No tasks for today!'), findsNothing);
+
+      // Now simulate a sync pull: overwrite DB with phone's selections
+      await tester.runAsync(() async {
+        await db.upsertTodaysFiveFromRemote(_todayKey(), [
+          {'task_sync_id': 'sync-a', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 0},
+          {'task_sync_id': 'sync-b', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 1},
+        ]);
+      });
+
+      // Trigger _onSyncStatusChanged by setting syncStatus to synced
+      authProvider.setSyncStatus(SyncStatus.synced);
+
+      // Let the reload complete
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // Phone tasks should now be visible
+      expect(find.text('Phone Task A'), findsOneWidget);
+      expect(find.text('Phone Task B'), findsOneWidget);
+    });
+
+    testWidgets('reload after sync preserves completed status from remote', (tester) async {
+      late int idA, idB;
+      await tester.runAsync(() async {
+        idA = await db.insertTask(Task(name: 'Task Alpha', syncId: 'sync-alpha'));
+        idB = await db.insertTask(Task(name: 'Task Beta', syncId: 'sync-beta'));
+        // Pre-save as today's set so the widget loads them directly
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [idA, idB],
+          completedIds: {},
+          workedOnIds: {},
+        );
+      });
+
+      final authProvider = AuthProvider();
+      final widget = MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider(create: (_) => ThemeProvider()),
+          ChangeNotifierProvider.value(value: authProvider),
+          Provider<SyncService>(
+            create: (_) => SyncService(authProvider),
+            dispose: (_, sync) => sync.dispose(),
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: TodaysFiveScreen(),
+          ),
+        ),
+      );
+
+      await pumpAndLoad(tester, widget);
+
+      // Both tasks visible, neither completed
+      expect(find.text('Task Alpha'), findsOneWidget);
+      expect(find.text('Task Beta'), findsOneWidget);
+      expect(find.byIcon(Icons.check_circle), findsNothing);
+
+      // Simulate sync: remote says Alpha is completed
+      await tester.runAsync(() async {
+        await db.upsertTodaysFiveFromRemote(_todayKey(), [
+          {'task_sync_id': 'sync-alpha', 'is_completed': true, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 0},
+          {'task_sync_id': 'sync-beta', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 1},
+        ]);
+      });
+
+      // Trigger reload via sync status change
+      authProvider.setSyncStatus(SyncStatus.synced);
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // Alpha should now show completed (check_circle icon)
+      expect(find.byIcon(Icons.check_circle), findsOneWidget);
+    });
+  });
 }

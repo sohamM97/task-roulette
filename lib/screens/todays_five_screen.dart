@@ -75,8 +75,21 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   void _onSyncStatusChanged() {
     if (!mounted || _loading) return;
     if (_authProvider?.syncStatus == SyncStatus.synced) {
-      refreshSnapshots();
+      _reloadFromDb();
     }
+  }
+
+  /// Fully reloads Today's 5 from DB after a sync pull.
+  /// Unlike refreshSnapshots() which keeps the same task IDs,
+  /// this picks up any changes to the task list itself (e.g.
+  /// different selections synced from another device).
+  Future<void> _reloadFromDb() async {
+    _completedIds.clear();
+    _workedOnIds.clear();
+    _pinnedIds.clear();
+    _autoStartedIds.clear();
+    _preWorkedOnLastWorkedAt.clear();
+    await _loadTodaysTasks();
   }
 
   String _todayKey() {

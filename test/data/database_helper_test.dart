@@ -3327,6 +3327,71 @@ void main() {
       expect(state!.taskIds, [id1]);
     });
 
+    test('upsertTodaysFiveFromRemote: remote replaces entirely different local set', () async {
+      // Scenario: laptop generated tasks [A,B,C], phone synced [D,E,F].
+      // Since local tasks are neither pinned nor completed, remote wins fully.
+      final idA = await insertTaskWithSyncId('Task A', 'sync-a');
+      final idB = await insertTaskWithSyncId('Task B', 'sync-b');
+      final idC = await insertTaskWithSyncId('Task C', 'sync-c');
+      final idD = await insertTaskWithSyncId('Task D', 'sync-d');
+      final idE = await insertTaskWithSyncId('Task E', 'sync-e');
+
+      // Local state: tasks A, B, C (none pinned/completed)
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [idA, idB, idC],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {},
+      );
+
+      // Remote state: completely different tasks D, E
+      await db.upsertTodaysFiveFromRemote(date, [
+        {'task_sync_id': 'sync-d', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 0},
+        {'task_sync_id': 'sync-e', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 1},
+      ]);
+
+      final state = await db.loadTodaysFiveState(date);
+      expect(state, isNotNull);
+      // Only remote tasks remain — local A/B/C dropped (not pinned/completed)
+      expect(state!.taskIds, [idD, idE]);
+      expect(state.taskIds, isNot(contains(idA)));
+      expect(state.taskIds, isNot(contains(idB)));
+      expect(state.taskIds, isNot(contains(idC)));
+    });
+
+    test('upsertTodaysFiveFromRemote: remote replaces local but keeps local pinned', () async {
+      // Scenario: local has [A (pinned), B, C], remote has [D, E].
+      // Result: [D, E, A] — remote tasks first, then local-only pinned A appended.
+      final idA = await insertTaskWithSyncId('Task A', 'sync-a');
+      final idB = await insertTaskWithSyncId('Task B', 'sync-b');
+      final idC = await insertTaskWithSyncId('Task C', 'sync-c');
+      final idD = await insertTaskWithSyncId('Task D', 'sync-d');
+      final idE = await insertTaskWithSyncId('Task E', 'sync-e');
+
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [idA, idB, idC],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {idA},
+      );
+
+      await db.upsertTodaysFiveFromRemote(date, [
+        {'task_sync_id': 'sync-d', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 0},
+        {'task_sync_id': 'sync-e', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 1},
+      ]);
+
+      final state = await db.loadTodaysFiveState(date);
+      expect(state, isNotNull);
+      // Remote D, E + local-only pinned A
+      expect(state!.taskIds, [idD, idE, idA]);
+      expect(state.pinnedIds, {idA});
+      // B, C dropped (not pinned/completed)
+      expect(state.taskIds, isNot(contains(idB)));
+      expect(state.taskIds, isNot(contains(idC)));
+    });
+
     test('deleteAllLocalData also deletes todays_five_state', () async {
       final id1 = await insertTaskWithSyncId('Task A', 'sync-a');
       await db.saveTodaysFiveState(

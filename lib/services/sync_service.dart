@@ -40,12 +40,14 @@ class SyncService {
       _authProvider.firebaseIdToken != null &&
       _firestore.isConfigured;
 
-  /// Start periodic pull timer.
+  /// Start periodic pull timer, with an immediate pull to catch up.
   void startPeriodicPull() {
     _periodicPullTimer?.cancel();
     _periodicPullTimer = Timer.periodic(_pullInterval, (_) {
       if (_canSync) pull();
     });
+    // Immediate pull so we don't wait 5 minutes for the first sync.
+    if (_canSync) pull();
   }
 
   /// Stop all timers.

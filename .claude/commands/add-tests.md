@@ -1,6 +1,10 @@
-# Add Test Cases
+# Generate Tests
 
-Write and run test cases for the TaskRoulette Flutter app.
+Generate test cases for the TaskRoulette Flutter app.
+
+## Pre-flight: Consult Test Memory
+
+**Before reading any test files**, read `docs/TEST_COVERAGE.md`. It tracks what's already covered, what's not, and known caveats. Use it to skip redundant exploration and jump straight to writing tests. After writing tests, update the file to reflect new coverage.
 
 ## Arguments
 
@@ -12,29 +16,32 @@ If no argument is provided, ask the user which mode they want.
 
 ## Mode 1: Last Feature/Bug
 
-1. Run `git log --oneline -10` to identify the most recent feature or bug fix commits.
-2. Read the changed files (`git diff main~N..main --name-only` or similar) to understand what was added/changed.
-3. Read the existing test files to understand test patterns and conventions used in this project.
-4. Write tests for the new/changed code:
+1. Read `docs/TEST_COVERAGE.md` to understand existing coverage landscape.
+2. Run `git log --oneline -10` to identify the most recent feature or bug fix commits.
+3. Read the changed files (`git diff main~N..main --name-only` or similar) to understand what was added/changed.
+4. Only read existing test files if `TEST_COVERAGE.md` doesn't have enough detail for the area being tested.
+5. Write tests for the new/changed code:
    - Unit tests for new model fields, DB methods, or service logic
    - Provider tests for new state management behavior
    - Widget tests for new UI components (if testable without async issues — see Caveats)
-5. Run `flutter test` to verify all tests pass.
-6. Report what was added and the new test count.
+6. Run `flutter test` to verify all tests pass.
+7. Update `docs/TEST_COVERAGE.md` with the new tests added.
+8. Report what was added and the new test count.
 
 ## Mode 2: Coverage Gaps
 
-1. Run `flutter test --coverage` to generate `coverage/lcov.info`.
-2. Parse `coverage/lcov.info` directly to compute per-file line coverage. For each `SF:` section, count `DA:` lines where hits > 0 vs total `DA:` lines. Report files below 50% coverage. (Do NOT rely on `genhtml` or `lcov` — they may not be installed.)
-3. Focus on files under `lib/` that are below 50% coverage.
-4. Read those files and the existing tests to understand what's missing.
+1. Read `docs/TEST_COVERAGE.md` to understand existing coverage and known gaps.
+2. Run `flutter test --coverage` to generate `coverage/lcov.info`.
+3. Parse `coverage/lcov.info` directly to compute per-file line coverage. For each `SF:` section, count `DA:` lines where hits > 0 vs total `DA:` lines. Report files below 50% coverage. (Do NOT rely on `genhtml` or `lcov` — they may not be installed.)
+4. Cross-reference with `TEST_COVERAGE.md` — focus on gaps not already marked as "intentionally skipped".
 5. Write tests to improve coverage, prioritizing:
    - `lib/data/database_helper.dart` — DB operations
    - `lib/providers/task_provider.dart` — state management
    - `lib/models/task.dart` — model logic
    - `lib/services/` — sync and auth service logic (mock HTTP where needed)
 6. Run `flutter test --coverage` again and compare before/after.
-7. Report the coverage delta and remaining gaps.
+7. Update `docs/TEST_COVERAGE.md` with new coverage and remaining gaps.
+8. Report the coverage delta and remaining gaps.
 
 ## Test Conventions
 
