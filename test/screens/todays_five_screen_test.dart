@@ -318,15 +318,14 @@ void main() {
     testWidgets('reloads from DB when sync status changes to synced', (tester) async {
       // Simulate: laptop opens, generates local set, then sync brings
       // different tasks from phone. The screen should show phone's tasks.
-      late int idA, idB, idD, idE;
       await tester.runAsync(() async {
         // Create tasks that will be in both local and remote sets
-        idA = await db.insertTask(Task(name: 'Phone Task A', syncId: 'sync-a'));
-        idB = await db.insertTask(Task(name: 'Phone Task B', syncId: 'sync-b'));
+        await db.insertTask(Task(name: 'Phone Task A', syncId: 'sync-a'));
+        await db.insertTask(Task(name: 'Phone Task B', syncId: 'sync-b'));
         // These will be the locally-generated set
         await db.insertTask(Task(name: 'Laptop Task C', syncId: 'sync-c'));
-        idD = await db.insertTask(Task(name: 'Laptop Task D', syncId: 'sync-d'));
-        idE = await db.insertTask(Task(name: 'Laptop Task E', syncId: 'sync-e'));
+        await db.insertTask(Task(name: 'Laptop Task D', syncId: 'sync-d'));
+        await db.insertTask(Task(name: 'Laptop Task E', syncId: 'sync-e'));
       });
 
       final authProvider = AuthProvider();
