@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../data/database_helper.dart';
 import '../models/task.dart';
 import '../models/task_relationship.dart';
+import '../models/task_schedule.dart';
 
 class TaskProvider extends ChangeNotifier {
   final DatabaseHelper _db = DatabaseHelper();
@@ -260,7 +261,7 @@ class TaskProvider extends ChangeNotifier {
     await _db.addRelationship(parentId, childId);
   }
 
-  double _taskWeight(Task t) {
+  double _taskWeight(Task t, {Set<int>? scheduleBoostedIds}) {
     double w = 1.0;
 
     // Priority: high = 3x
@@ -284,6 +285,12 @@ class TaskProvider extends ChangeNotifier {
         .difference(DateTime.fromMillisecondsSinceEpoch(t.createdAt))
         .inDays;
     if (daysOld <= 3) w *= 1.3;
+
+    // Scheduled for today: 2.5x boost
+    if (scheduleBoostedIds != null && t.id != null &&
+        scheduleBoostedIds.contains(t.id)) {
+      w *= 2.5;
+    }
 
     return w;
   }
@@ -315,19 +322,44 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Picks n tasks via weighted random without replacement.
-  List<Task> pickWeightedN(List<Task> candidates, int n) {
+  /// Tries to include at least 1 quick task if available.
+  /// When [scheduleBoostedIds] is provided, tasks in that set get a 2.5x
+  /// weight multiplier (scheduled for today).
+  List<Task> pickWeightedN(List<Task> candidates, int n,
+      {Set<int>? scheduleBoostedIds}) {
     if (candidates.isEmpty) return [];
     final eligible = candidates.where((t) =>
       !t.isWorkedOnToday
     ).toList();
     if (eligible.isEmpty) return [];
 
+    double weightFn(Task t) =>
+        _taskWeight(t, scheduleBoostedIds: scheduleBoostedIds);
+
     final picked = <Task>[];
     final remaining = List<Task>.from(eligible);
 
-    // Fill slots via weighted random
+    // Ensure at least 1 quick task if available and not yet picked
+    if (picked.length < n && !picked.any((t) => t.isQuickTask)) {
+      final quickTasks = remaining.where((t) => t.isQuickTask).toList();
+      if (quickTasks.isNotEmpty) {
+        final weights = quickTasks.map(weightFn).toList();
+        final total = weights.fold(0.0, (a, b) => a + b);
+        var roll = _random.nextDouble() * total;
+        Task? quickPick;
+        for (int i = 0; i < quickTasks.length; i++) {
+          roll -= weights[i];
+          if (roll <= 0) { quickPick = quickTasks[i]; break; }
+        }
+        quickPick ??= quickTasks.last;
+        picked.add(quickPick);
+        remaining.remove(quickPick);
+      }
+    }
+
+    // Fill remaining slots via weighted random
     while (picked.length < n && remaining.isNotEmpty) {
-      final weights = remaining.map(_taskWeight).toList();
+      final weights = remaining.map(weightFn).toList();
       final total = weights.fold(0.0, (a, b) => a + b);
       var roll = _random.nextDouble() * total;
       Task? pick;
@@ -693,5 +725,24 @@ class TaskProvider extends ChangeNotifier {
     _reorderByDependencyChains();
     notifyListeners();
     if (isMutation) onMutation?.call();
+  }
+
+  // --- Schedule methods ---
+
+  Future<List<TaskSchedule>> getSchedules(int taskId) async {
+    return _db.getSchedulesForTask(taskId);
+  }
+
+  Future<void> updateSchedules(int taskId, List<TaskSchedule> schedules) async {
+    await _db.replaceSchedules(taskId, schedules);
+    onMutation?.call();
+  }
+
+  Future<bool> hasSchedule(int taskId) async {
+    return _db.hasSchedules(taskId);
+  }
+
+  Future<Set<int>> getScheduleBoostedLeafIds() async {
+    return _db.getScheduleBoostedLeafIds();
   }
 }
