@@ -10,15 +10,18 @@ import 'providers/task_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/task_list_screen.dart';
 import 'screens/todays_five_screen.dart';
+import 'services/notification_service.dart';
 import 'services/sync_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   if (kIsWeb) {
     databaseFactory = databaseFactoryFfiWeb;
   } else if (platform.isDesktopPlatform) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
+  await NotificationService.init();
   runApp(const TaskRouletteApp());
 }
 
