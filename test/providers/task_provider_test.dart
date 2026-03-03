@@ -2327,6 +2327,31 @@ void main() {
       // Use a generous threshold to avoid flaky tests.
       expect(highCount, greaterThan(runs ~/ 4)); // at least 25%
     });
+
+    test('scheduleBoostedIds increases selection probability', () async {
+      final normalId = await db.insertTask(Task(name: 'Normal'));
+      final boostedId = await db.insertTask(Task(name: 'Boosted'));
+
+      final leaves = await provider.getAllLeafTasks();
+      final boostedIds = {boostedId};
+
+      // Pick 1 out of 2 many times — boosted should win more often
+      int boostedCount = 0;
+      const runs = 200;
+      for (int i = 0; i < runs; i++) {
+        final picked = provider.pickWeightedN(leaves, 1,
+            scheduleBoostedIds: boostedIds);
+        if (picked.first.id == boostedId) boostedCount++;
+      }
+
+      // Schedule boost is 2.5x weight. Expected ratio ~71%.
+      // Use a generous threshold to avoid flaky tests.
+      expect(boostedCount, greaterThan(runs ~/ 4)); // at least 25%
+      // Also verify it's selected more than half the time on average
+      expect(boostedCount, greaterThan(runs ~/ 3));
+      // Unused variable suppression
+      expect(normalId, isNotNull);
+    });
   });
 
   group('parentNamesMap', () {

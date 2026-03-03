@@ -5,6 +5,7 @@ import 'package:path/path.dart';
 import 'package:uuid/uuid.dart';
 import '../models/task.dart';
 import '../models/task_relationship.dart';
+import '../models/task_schedule.dart';
 import '../platform/platform_utils.dart'
     if (dart.library.io) '../platform/platform_utils_native.dart' as platform;
 
@@ -68,7 +69,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 14,
+      version: 15,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -138,6 +139,21 @@ class DatabaseHelper {
           )
         ''');
         await db.execute('CREATE INDEX idx_todays_five_state_date ON todays_five_state(date)');
+        await db.execute('''
+          CREATE TABLE task_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            schedule_type TEXT NOT NULL,
+            day_of_week INTEGER,
+            specific_date TEXT,
+            sync_id TEXT,
+            updated_at INTEGER,
+            FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+          )
+        ''');
+        await db.execute('CREATE INDEX idx_task_schedules_task_id ON task_schedules(task_id)');
+        await db.execute('CREATE INDEX idx_task_schedules_specific_date ON task_schedules(specific_date)');
+        await db.execute('CREATE UNIQUE INDEX idx_task_schedules_sync_id ON task_schedules(sync_id)');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -244,6 +260,23 @@ class DatabaseHelper {
         if (oldVersion < 14) {
           await db.execute('ALTER TABLE todays_five_state ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0');
         }
+        if (oldVersion < 15) {
+          await db.execute('''
+            CREATE TABLE task_schedules (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              task_id INTEGER NOT NULL,
+              schedule_type TEXT NOT NULL,
+              day_of_week INTEGER,
+              specific_date TEXT,
+              sync_id TEXT,
+              updated_at INTEGER,
+              FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            )
+          ''');
+          await db.execute('CREATE INDEX idx_task_schedules_task_id ON task_schedules(task_id)');
+          await db.execute('CREATE INDEX idx_task_schedules_specific_date ON task_schedules(specific_date)');
+          await db.execute('CREATE UNIQUE INDEX idx_task_schedules_sync_id ON task_schedules(sync_id)');
+        }
       },
     );
   }
@@ -286,9 +319,9 @@ class DatabaseHelper {
       // Check schema version is compatible
       final versionResult = await testDb.rawQuery('PRAGMA user_version');
       final version = versionResult.first.values.first as int;
-      if (version < 1 || version > 14) {
+      if (version < 1 || version > 15) {
         throw FormatException(
-          'Incompatible backup version ($version). This app supports versions 1-14.',
+          'Incompatible backup version ($version). This app supports versions 1-15.',
         );
       }
 
@@ -1510,6 +1543,7 @@ class DatabaseHelper {
     await db.transaction((txn) async {
       await txn.delete('sync_queue');
       await txn.delete('todays_five_state');
+      await txn.delete('task_schedules');
       await txn.delete('task_dependencies');
       await txn.delete('task_relationships');
       await txn.delete('tasks');
@@ -2047,4 +2081,212 @@ class DatabaseHelper {
     return tasks.where((t) => !excludeIds.contains(t.id)).toList();
   }
 
+  // --- Schedule methods ---
+
+  /// Returns all schedules for a given task.
+  Future<List<TaskSchedule>> getSchedulesForTask(int taskId) async {
+    final db = await database;
+    final maps = await db.query('task_schedules',
+      where: 'task_id = ?', whereArgs: [taskId],
+      orderBy: 'schedule_type ASC, day_of_week ASC, specific_date ASC');
+    return maps.map((m) => TaskSchedule.fromMap(m)).toList();
+  }
+
+  /// Replaces all schedules for a task atomically.
+  /// Deletes existing schedules, inserts new ones, and enqueues sync entries.
+  Future<void> replaceSchedules(int taskId, List<TaskSchedule> schedules) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final now = DateTime.now().millisecondsSinceEpoch;
+
+      // Look up the task's sync_id for sync queue entries
+      final taskRows = await txn.query('tasks',
+        columns: ['sync_id'], where: 'id = ?', whereArgs: [taskId]);
+      final taskSyncId = taskRows.isNotEmpty
+          ? taskRows.first['sync_id'] as String? : null;
+
+      // Enqueue removals for old schedules
+      final oldRows = await txn.query('task_schedules',
+        where: 'task_id = ?', whereArgs: [taskId]);
+      for (final row in oldRows) {
+        final oldSyncId = row['sync_id'] as String?;
+        if (oldSyncId != null && taskSyncId != null) {
+          await txn.insert('sync_queue', {
+            'entity_type': 'schedule', 'action': 'remove',
+            'key1': oldSyncId, 'key2': taskSyncId, 'created_at': now,
+          });
+        }
+      }
+      await txn.delete('task_schedules',
+        where: 'task_id = ?', whereArgs: [taskId]);
+
+      // Insert new schedules
+      for (final s in schedules) {
+        final newSyncId = _uuid.v4();
+        await txn.insert('task_schedules', {
+          'task_id': taskId,
+          'schedule_type': s.scheduleType,
+          'day_of_week': s.dayOfWeek,
+          'specific_date': s.specificDate,
+          'sync_id': newSyncId,
+          'updated_at': now,
+        });
+        if (taskSyncId != null) {
+          await txn.insert('sync_queue', {
+            'entity_type': 'schedule', 'action': 'add',
+            'key1': newSyncId, 'key2': taskSyncId, 'created_at': now,
+          });
+        }
+      }
+    });
+  }
+
+  /// Returns the set of leaf task IDs that are schedule-boosted today.
+  /// Includes both directly scheduled leaves and leaf descendants of
+  /// scheduled non-leaf tasks (ancestor propagation).
+  Future<Set<int>> getScheduleBoostedLeafIds({DateTime? now}) async {
+    final db = await database;
+    final date = now ?? DateTime.now();
+    final dayOfWeek = date.weekday; // 1=Mon..7=Sun (ISO 8601)
+    final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+    final rows = await db.rawQuery('''
+      WITH
+        scheduled_today(task_id) AS (
+          SELECT task_id FROM task_schedules
+          WHERE schedule_type = 'weekly' AND day_of_week = ?
+          UNION
+          SELECT task_id FROM task_schedules
+          WHERE schedule_type = 'oneoff' AND specific_date = ?
+        ),
+        all_descendants(id) AS (
+          SELECT task_id FROM scheduled_today
+          UNION
+          SELECT tr.child_id FROM task_relationships tr
+          INNER JOIN all_descendants d ON tr.parent_id = d.id
+        )
+      SELECT DISTINCT d.id FROM all_descendants d
+      INNER JOIN tasks t ON d.id = t.id
+      WHERE t.completed_at IS NULL
+      AND t.skipped_at IS NULL
+      AND t.id NOT IN (
+        SELECT DISTINCT tr2.parent_id FROM task_relationships tr2
+        INNER JOIN tasks c ON tr2.child_id = c.id
+        WHERE c.completed_at IS NULL AND c.skipped_at IS NULL
+      )
+    ''', [dayOfWeek, dateStr]);
+
+    return rows.map((r) => r['id'] as int).toSet();
+  }
+
+  /// Deletes expired one-off schedules (specific_date before today).
+  /// Enqueues sync removals for each deleted schedule.
+  /// Returns the number of deleted rows.
+  Future<int> cleanupExpiredSchedules() async {
+    final db = await database;
+    final now = DateTime.now();
+    final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
+    final expired = await db.query('task_schedules',
+      where: "schedule_type = 'oneoff' AND specific_date < ?",
+      whereArgs: [todayStr]);
+
+    for (final row in expired) {
+      final syncId = row['sync_id'] as String?;
+      final taskId = row['task_id'] as int;
+      if (syncId != null) {
+        final taskRows = await db.query('tasks',
+          columns: ['sync_id'], where: 'id = ?', whereArgs: [taskId]);
+        final taskSyncId = taskRows.isNotEmpty
+            ? taskRows.first['sync_id'] as String? : null;
+        await db.insert('sync_queue', {
+          'entity_type': 'schedule', 'action': 'remove',
+          'key1': syncId, 'key2': taskSyncId ?? '', 'created_at': now.millisecondsSinceEpoch,
+        });
+      }
+    }
+
+    return db.delete('task_schedules',
+      where: "schedule_type = 'oneoff' AND specific_date < ?",
+      whereArgs: [todayStr]);
+  }
+
+  /// Returns schedule data by sync_id (for pushing to Firestore).
+  Future<Map<String, dynamic>?> getScheduleBySyncId(String syncId) async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT ts.*, t.sync_id AS task_sync_id
+      FROM task_schedules ts
+      INNER JOIN tasks t ON ts.task_id = t.id
+      WHERE ts.sync_id = ?
+    ''', [syncId]);
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  /// Upserts a schedule from remote Firestore data.
+  Future<void> upsertScheduleFromRemote(Map<String, dynamic> data) async {
+    final db = await database;
+    final syncId = data['sync_id'] as String;
+    final taskSyncId = data['task_sync_id'] as String;
+
+    // Resolve task sync_id to local ID
+    final taskRows = await db.query('tasks',
+      columns: ['id'], where: 'sync_id = ?', whereArgs: [taskSyncId]);
+    if (taskRows.isEmpty) return; // task doesn't exist locally
+    final taskId = taskRows.first['id'] as int;
+
+    final existing = await db.query('task_schedules',
+      where: 'sync_id = ?', whereArgs: [syncId]);
+
+    final values = {
+      'task_id': taskId,
+      'schedule_type': data['schedule_type'],
+      'day_of_week': data['day_of_week'],
+      'specific_date': data['specific_date'],
+      'sync_id': syncId,
+      'updated_at': data['updated_at'],
+    };
+
+    if (existing.isEmpty) {
+      await db.insert('task_schedules', values);
+    } else {
+      await db.update('task_schedules', values,
+        where: 'sync_id = ?', whereArgs: [syncId]);
+    }
+  }
+
+  /// Deletes a schedule by its sync_id (used during pull reconciliation).
+  Future<void> deleteScheduleBySyncId(String syncId) async {
+    final db = await database;
+    await db.delete('task_schedules', where: 'sync_id = ?', whereArgs: [syncId]);
+  }
+
+  /// Returns all schedule sync_ids (for pull reconciliation).
+  Future<List<String>> getAllScheduleSyncIds() async {
+    final db = await database;
+    final rows = await db.query('task_schedules',
+      columns: ['sync_id'], where: 'sync_id IS NOT NULL');
+    return rows.map((r) => r['sync_id'] as String).toList();
+  }
+
+  /// Returns all schedules with task sync_ids (for initial migration push).
+  Future<List<Map<String, dynamic>>> getAllSchedulesWithTaskSyncIds() async {
+    final db = await database;
+    return db.rawQuery('''
+      SELECT ts.*, t.sync_id AS task_sync_id
+      FROM task_schedules ts
+      INNER JOIN tasks t ON ts.task_id = t.id
+      WHERE ts.sync_id IS NOT NULL AND t.sync_id IS NOT NULL
+    ''');
+  }
+
+  /// Returns true if the given task has any schedules.
+  Future<bool> hasSchedules(int taskId) async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT 1 FROM task_schedules WHERE task_id = ? LIMIT 1',
+      [taskId]);
+    return result.isNotEmpty;
+  }
 }

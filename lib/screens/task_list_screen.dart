@@ -17,6 +17,7 @@ import '../widgets/random_result_dialog.dart';
 import '../widgets/task_card.dart';
 import '../utils/display_utils.dart';
 import '../widgets/delete_task_dialog.dart';
+import '../widgets/schedule_dialog.dart';
 import '../widgets/task_picker_dialog.dart';
 import '../services/backup_service.dart';
 import '../widgets/profile_icon.dart';
@@ -36,6 +37,7 @@ class TaskListScreenState extends State<TaskListScreen>
   // Consumer rebuild. Invalidated when dependency mutations occur.
   int? _leafDepsTaskId;
   Future<List<Task>>? _leafDepsFuture;
+
 
   // Pre-mutation lastWorkedAt values, keyed by task ID.
   // Used by the leaf detail's "Worked on today" undo button.
@@ -829,6 +831,23 @@ class TaskListScreenState extends State<TaskListScreen>
     }
   }
 
+  Future<void> _editSchedule(Task task) async {
+    final provider = context.read<TaskProvider>();
+    final current = await provider.getSchedules(task.id!);
+    if (!mounted) return;
+
+    final result = await ScheduleDialog.show(
+      context,
+      taskId: task.id!,
+      currentSchedules: current,
+    );
+    if (result == null || !mounted) return;
+
+    await provider.updateSchedules(task.id!, result);
+    // Invalidate cached schedule state so leaf detail refreshes
+    if (mounted) setState(() {});
+  }
+
   int _crossAxisCount(double width) {
     if (width >= 900) return 3;
     if (width >= 600) return 2;
@@ -959,6 +978,8 @@ class TaskListScreenState extends State<TaskListScreen>
                         }
                       case 'do_after':
                         if (task != null) _addDependencyToTask(task);
+                      case 'schedule':
+                        if (task != null) _editSchedule(task);
                       case 'delete':
                         if (task != null) _deleteTaskWithUndo(task);
                       case 'export':
@@ -996,6 +1017,10 @@ class TaskListScreenState extends State<TaskListScreen>
                       ),
                     ],
                     if (!provider.isRoot) ...[
+                      const PopupMenuItem(
+                        value: 'schedule',
+                        child: Text('Schedule'),
+                      ),
                       const PopupMenuDivider(),
                       const PopupMenuItem(
                         value: 'delete',
@@ -1056,6 +1081,7 @@ class TaskListScreenState extends State<TaskListScreen>
                                 : () => _moveTask(task),
                             onRename: () => _renameTask(task),
                             onAddDependency: () => _addDependencyToTask(task),
+                            onSchedule: () => _editSchedule(task),
                             onStopWorking: task.isStarted
                                 ? () => _toggleStarted(task)
                                 : null,

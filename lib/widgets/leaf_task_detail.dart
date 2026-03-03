@@ -21,7 +21,6 @@ class LeafTaskDetail extends StatelessWidget {
   final bool isPinnedInTodays5;
   final bool atMaxPins;
   final VoidCallback? onTogglePin;
-
   const LeafTaskDetail({
     super.key,
     required this.task,
