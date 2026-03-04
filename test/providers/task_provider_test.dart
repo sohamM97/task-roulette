@@ -2696,7 +2696,7 @@ void main() {
 
   group('refreshCurrentView', () {
     test('refreshes at root without resetting navigation', () async {
-      final id = await db.insertTask(Task(name: 'Root Task'));
+      await db.insertTask(Task(name: 'Root Task'));
       await provider.loadRootTasks();
       expect(provider.tasks.length, 1);
 

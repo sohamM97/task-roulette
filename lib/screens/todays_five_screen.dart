@@ -42,6 +42,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   /// Tracks manually pinned tasks — protected from refresh until explicitly swapped.
   final Set<int> _pinnedIds = {};
   bool _loading = true;
+  /// The date key that was last loaded, used to detect midnight rollover.
+  String _loadedDateKey = '';
   TaskProvider? _provider;
   AuthProvider? _authProvider;
 
@@ -67,6 +69,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
 
   void _onProviderChanged() {
     if (!mounted || _loading) return;
+    if (_todayKey() != _loadedDateKey) {
+      _reloadFromDb();
+      return;
+    }
     _loadOtherDoneToday().then((_) {
       if (mounted) setState(() {});
     });
@@ -110,6 +116,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     final provider = context.read<TaskProvider>();
     final db = DatabaseHelper();
     final today = _todayKey();
+    _loadedDateKey = today;
 
     // Migrate SharedPreferences → DB (idempotent, safe to call every time)
     await db.migrateTodaysFiveFromPrefs();
@@ -214,6 +221,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   /// If the current set is empty, generates a new set instead (handles
   /// the case where the app started with no tasks and user added some).
   Future<void> refreshSnapshots() async {
+    // Midnight rollover: date changed since last load → generate fresh set
+    if (_todayKey() != _loadedDateKey) {
+      await _reloadFromDb();
+      return;
+    }
     if (_todaysTasks.isEmpty) {
       await _generateNewSet();
       return;
