@@ -41,13 +41,12 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 
 ## Slash Commands
 
+- Each command in `.claude/commands/` is self-documenting — read the file for details.
 - `/code-review` and `/sec-review` — **always run in a fresh session**, not the current one.
 - `/code-review-fix` and `/sec-review-fix` — can run in any session **except** the one where the corresponding review was run.
 
 ## Development Preferences
 
-- **Always run `flutter analyze` before committing** — fix all issues including `info`-level. Exits non-zero on any issue.
-- **Always update `version:` in `pubspec.yaml`** to match the tag version before tagging a release.
 - **Before exiting plan mode**, ask the user if they want to create a feature branch first (via `/feature`).
 - Ask user about committing and pushing occasionally — don't wait until asked. Remind them to review changes and test on Linux (via `./dev.sh`) first.
 - After completing a new feature, ask the user if they want to add test cases for it.
@@ -60,8 +59,7 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 ## Mobile Debugging & Testing
 
 - **Don't jump to fixes** when something fails on phone — ask user if they want to troubleshoot with ADB/logcat first.
-- **`flutter run` on Android is blocked by a hook** — use `flutter build apk --debug` + `adb install` instead.
-- **`--dart-define` flags are auto-injected by a hook** when running `flutter build apk` (reads from `google-services.json` and `.env`).
+- **Use `/debug-build`** to build a debug APK and sideload it on the phone.
 - Before pushing a new version, remind user to **test on phone** and **export their data** first.
 
 ## Android Signing
