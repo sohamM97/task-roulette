@@ -258,6 +258,47 @@ void main() {
       expect(result, isA<SwitchToBrainDump>());
     });
 
+    testWidgets('"Add multiple" preserves typed text in SwitchToBrainDump',
+        (tester) async {
+      AddTaskResult? result;
+      await openAddTaskDialog(tester, onResult: (r) => result = r);
+
+      await tester.enterText(find.byType(TextField), 'My task name');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Add multiple'));
+      await tester.pumpAndSettle();
+
+      expect(result, isA<SwitchToBrainDump>());
+      expect((result as SwitchToBrainDump).initialText, 'My task name');
+    });
+
+    testWidgets('"Add multiple" trims whitespace in initialText',
+        (tester) async {
+      AddTaskResult? result;
+      await openAddTaskDialog(tester, onResult: (r) => result = r);
+
+      await tester.enterText(find.byType(TextField), '  spaced out  ');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Add multiple'));
+      await tester.pumpAndSettle();
+
+      expect((result as SwitchToBrainDump).initialText, 'spaced out');
+    });
+
+    testWidgets('"Add multiple" with empty text passes empty initialText',
+        (tester) async {
+      AddTaskResult? result;
+      await openAddTaskDialog(tester, onResult: (r) => result = r);
+
+      // Don't type anything
+      await tester.tap(find.text('Add multiple'));
+      await tester.pumpAndSettle();
+
+      expect((result as SwitchToBrainDump).initialText, '');
+    });
+
     // -------------------------------------------------------------------------
     // Pin option in AddTaskDialog
     // -------------------------------------------------------------------------
@@ -451,6 +492,35 @@ void main() {
 
       // With no text entered, the button should show just "Add" and be disabled
       expect(find.text('Add'), findsOneWidget);
+    });
+
+    testWidgets('pre-fills with initialText', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  await showDialog<List<String>>(
+                    context: context,
+                    builder: (_) =>
+                        const BrainDumpDialog(initialText: 'Carried over'),
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      // The text field should contain the initial text
+      final textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.controller!.text, 'Carried over');
+      // Line count should reflect the pre-filled text
+      expect(find.text('1 task'), findsOneWidget);
     });
   });
 }

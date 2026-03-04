@@ -33,7 +33,7 @@ Last updated: 2026-03-04
 - **test/widgets/task_picker_dialog_test.dart** (~15 tests) — Priority sorting (tiers), preserved relative order, search filtering, parent context, search ranking (name matches before context-only matches, stable order within tiers, interaction with priority tiers).
 - **test/widgets/leaf_task_detail_test.dart** (~30 tests) — Name display, rename, URL icon states, Done/Skip buttons, Start/Stop buttons, priority/quick indicators.
 - **test/widgets/pin_button_test.dart** (~15 tests) — Pin/unpin icons, tooltips, max-pins disabled, muted alpha, callbacks.
-- **test/widgets/small_widgets_test.dart** (~30 tests) — `EmptyState` (root/non-root), `DeleteTaskDialog` (cancel/keep-subtrees/delete-everything), `AddTaskDialog` (partial), `BrainDumpDialog` (partial).
+- **test/widgets/small_widgets_test.dart** (~27 tests) — `EmptyState` (root/non-root), `DeleteTaskDialog` (cancel/keep-subtrees/delete-everything), `AddTaskDialog` (submit, empty/whitespace rejection, "Add multiple" with text preservation and trimming, pin toggle), `BrainDumpDialog` (line counting, whitespace trimming, submit, disabled state, initialText pre-fill).
 - **test/widgets/task_card_icons_test.dart** (~12 tests) — Pin vs fire icon, color/size.
 - **test/widgets/task_card_test.dart** (~20 tests) — In-progress icon, long-press menu, parent tags, pin+priority coexistence.
 - **test/widgets/completion_animation_test.dart** (3 tests) — Overlay render, checkmark, IgnorePointer.

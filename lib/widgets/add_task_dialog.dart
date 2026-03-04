@@ -10,7 +10,10 @@ class SingleTask extends AddTaskResult {
   SingleTask(this.name, {this.pinInTodays5 = false});
 }
 
-class SwitchToBrainDump extends AddTaskResult {}
+class SwitchToBrainDump extends AddTaskResult {
+  final String initialText;
+  SwitchToBrainDump({this.initialText = ''});
+}
 
 class AddTaskDialog extends StatefulWidget {
   /// Whether to show the "Pin in Today's 5" toggle.
@@ -64,7 +67,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
           Row(
             children: [
               TextButton(
-                onPressed: () => Navigator.pop(context, SwitchToBrainDump()),
+                onPressed: () => Navigator.pop(context, SwitchToBrainDump(initialText: _controller.text.trim())),
                 style: TextButton.styleFrom(
                   foregroundColor: colorScheme.onSurfaceVariant,
                   textStyle: Theme.of(context).textTheme.bodySmall,

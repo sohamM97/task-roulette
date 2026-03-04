@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 /// Dialog for rapid multi-task entry. Each line becomes a separate task.
 /// Returns a list of task names (non-empty, trimmed).
 class BrainDumpDialog extends StatefulWidget {
-  const BrainDumpDialog({super.key});
+  final String initialText;
+
+  const BrainDumpDialog({super.key, this.initialText = ''});
 
   @override
   State<BrainDumpDialog> createState() => _BrainDumpDialogState();
@@ -16,6 +18,9 @@ class _BrainDumpDialogState extends State<BrainDumpDialog> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialText.isNotEmpty) {
+      _controller.text = widget.initialText;
+    }
     _controller.addListener(_updateLineCount);
   }
 

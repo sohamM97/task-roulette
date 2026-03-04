@@ -153,7 +153,7 @@ class TaskListScreenState extends State<TaskListScreen>
         await _pinNewTaskInTodays5(taskId);
       }
     } else if (result is SwitchToBrainDump) {
-      await _brainDump();
+      await _brainDump(initialText: result.initialText);
     }
   }
 
@@ -192,12 +192,12 @@ class TaskListScreenState extends State<TaskListScreen>
     }
   }
 
-  Future<void> _brainDump() async {
+  Future<void> _brainDump({String initialText = ''}) async {
     if (!await _warnIfPinned()) return;
     if (!mounted) return;
     final names = await showDialog<List<String>>(
       context: context,
-      builder: (_) => const BrainDumpDialog(),
+      builder: (_) => BrainDumpDialog(initialText: initialText),
     );
     if (names != null && names.isNotEmpty && mounted) {
       final provider = context.read<TaskProvider>();
