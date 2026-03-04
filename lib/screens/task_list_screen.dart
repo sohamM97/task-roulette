@@ -688,12 +688,32 @@ class TaskListScreenState extends State<TaskListScreen>
     await _showRandomResult(picked);
   }
 
-  Future<void> _showRandomResult(Task task) async {
+  Future<void> _showRandomResult(
+    Task task, {
+    Set<int>? excluded,
+    /// The pool of siblings for Pick Another. When null, uses provider.tasks.
+    /// Set by Go Deeper so Pick Another picks from the parent's children.
+    List<Task>? siblingPool,
+    /// The task to navigate into for Go to Task. When null, navigates into
+    /// [task] itself. Set by Go Deeper so Go to Task enters the parent.
+    Task? navigateTarget,
+  }) async {
     final provider = context.read<TaskProvider>();
     final children = await provider.getChildren(task.id!);
     final childIds = children.map((c) => c.id!).toList();
     final blockedIds = await provider.getBlockedChildIds(childIds);
     final eligible = children.where((c) => !blockedIds.contains(c.id)).toList();
+
+    // Use explicit sibling pool (from Go Deeper) or current view's tasks
+    final siblings = siblingPool ?? provider.tasks;
+    final siblingIds = siblings.map((s) => s.id!).toList();
+    final blockedSiblingIds = await provider.getBlockedChildIds(siblingIds);
+    final allEligibleSiblings = siblings.where(
+      (s) => s.id != task.id && !blockedSiblingIds.contains(s.id),
+    ).toList();
+    final eligibleSiblings = allEligibleSiblings.where(
+      (s) => !(excluded?.contains(s.id) ?? false),
+    ).toList();
 
     if (!mounted) return;
 
@@ -702,6 +722,8 @@ class TaskListScreenState extends State<TaskListScreen>
       builder: (_) => RandomResultDialog(
         task: task,
         hasChildren: eligible.isNotEmpty,
+        // Show button if there are other siblings at all (pool replenishes)
+        canPickAnother: allEligibleSiblings.isNotEmpty,
       ),
     );
 
@@ -709,15 +731,39 @@ class TaskListScreenState extends State<TaskListScreen>
 
     switch (action) {
       case RandomResultAction.goDeeper:
-        // Pick random from this task's non-blocked children
+        // Pick random from this task's children, pass children as sibling pool
         if (eligible.isNotEmpty) {
           final picked = provider.pickWeightedN(eligible, 1);
           if (picked.isNotEmpty) {
-            await _showRandomResult(picked.first);
+            await _showRandomResult(
+              picked.first,
+              siblingPool: eligible,
+              navigateTarget: task,
+            );
           }
         }
       case RandomResultAction.goToTask:
-        await provider.navigateInto(task);
+        await provider.navigateInto(navigateTarget ?? task);
+      case RandomResultAction.pickAnother:
+        var newExcluded = {...?excluded, task.id!};
+        var pool = eligibleSiblings;
+        if (pool.isEmpty) {
+          newExcluded = {task.id!};
+          pool = siblings.where(
+            (s) => s.id != task.id && !blockedSiblingIds.contains(s.id),
+          ).toList();
+        }
+        if (pool.isNotEmpty) {
+          final picked = provider.pickWeightedN(pool, 1);
+          if (picked.isNotEmpty) {
+            await _showRandomResult(
+              picked.first,
+              excluded: newExcluded,
+              siblingPool: siblingPool,
+              navigateTarget: navigateTarget,
+            );
+          }
+        }
       case null:
         break;
     }

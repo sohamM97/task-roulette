@@ -9,6 +9,7 @@ void main() {
       WidgetTester tester, {
       required Task task,
       required bool hasChildren,
+      bool canPickAnother = true,
     }) async {
       RandomResultAction? result;
       await tester.pumpWidget(
@@ -22,6 +23,7 @@ void main() {
                     builder: (_) => RandomResultDialog(
                       task: task,
                       hasChildren: hasChildren,
+                      canPickAnother: canPickAnother,
                     ),
                   );
                 },
@@ -36,7 +38,7 @@ void main() {
       return result;
     }
 
-    testWidgets('shows "Random Pick" title and task name', (tester) async {
+    testWidgets('shows title and task name', (tester) async {
       await showRandomDialog(
         tester,
         task: Task(name: 'My Task'),
@@ -47,14 +49,13 @@ void main() {
       expect(find.text('My Task'), findsOneWidget);
     });
 
-    testWidgets('shows Close and Go to Task buttons', (tester) async {
+    testWidgets('shows Go to Task button', (tester) async {
       await showRandomDialog(
         tester,
         task: Task(name: 'Test'),
         hasChildren: false,
       );
 
-      expect(find.text('Close'), findsOneWidget);
       expect(find.text('Go to Task'), findsOneWidget);
     });
 
@@ -66,7 +67,7 @@ void main() {
         hasChildren: false,
       );
 
-      expect(find.text('Go Deeper'), findsNothing);
+      expect(find.byTooltip('Go Deeper'), findsNothing);
     });
 
     testWidgets('shows Go Deeper when hasChildren is true', (tester) async {
@@ -76,38 +77,7 @@ void main() {
         hasChildren: true,
       );
 
-      expect(find.text('Go Deeper'), findsOneWidget);
-    });
-
-    testWidgets('Close returns null', (tester) async {
-      RandomResultAction? result;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: Builder(
-              builder: (context) => ElevatedButton(
-                onPressed: () async {
-                  result = await showDialog<RandomResultAction>(
-                    context: context,
-                    builder: (_) => RandomResultDialog(
-                      task: Task(name: 'Test'),
-                      hasChildren: false,
-                    ),
-                  );
-                },
-                child: const Text('Open'),
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.tap(find.text('Open'));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('Close'));
-      await tester.pumpAndSettle();
-
-      expect(result, isNull);
+      expect(find.byTooltip('Go Deeper'), findsOneWidget);
     });
 
     testWidgets('Go to Task returns goToTask', (tester) async {
@@ -141,6 +111,59 @@ void main() {
       expect(result, RandomResultAction.goToTask);
     });
 
+    testWidgets('shows Pick Another by default', (tester) async {
+      await showRandomDialog(
+        tester,
+        task: Task(name: 'Test'),
+        hasChildren: false,
+      );
+
+      expect(find.byTooltip('Pick Another'), findsOneWidget);
+    });
+
+    testWidgets('hides Pick Another when canPickAnother is false',
+        (tester) async {
+      await showRandomDialog(
+        tester,
+        task: Task(name: 'Test'),
+        hasChildren: false,
+        canPickAnother: false,
+      );
+
+      expect(find.byTooltip('Pick Another'), findsNothing);
+    });
+
+    testWidgets('Pick Another returns pickAnother', (tester) async {
+      RandomResultAction? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  result = await showDialog<RandomResultAction>(
+                    context: context,
+                    builder: (_) => RandomResultDialog(
+                      task: Task(name: 'Test'),
+                      hasChildren: false,
+                    ),
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Pick Another'));
+      await tester.pumpAndSettle();
+
+      expect(result, RandomResultAction.pickAnother);
+    });
+
     testWidgets('Go Deeper returns goDeeper', (tester) async {
       RandomResultAction? result;
       await tester.pumpWidget(
@@ -166,10 +189,23 @@ void main() {
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Go Deeper'));
+      await tester.tap(find.byTooltip('Go Deeper'));
       await tester.pumpAndSettle();
 
       expect(result, RandomResultAction.goDeeper);
+    });
+
+    testWidgets('tap outside dismisses dialog', (tester) async {
+      await showRandomDialog(
+        tester,
+        task: Task(name: 'Test'),
+        hasChildren: false,
+      );
+
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Random Pick'), findsNothing);
     });
   });
 
@@ -178,6 +214,7 @@ void main() {
       expect(RandomResultAction.values, containsAll([
         RandomResultAction.goDeeper,
         RandomResultAction.goToTask,
+        RandomResultAction.pickAnother,
       ]));
     });
   });

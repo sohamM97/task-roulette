@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
 import '../models/task.dart';
 
-enum RandomResultAction { goDeeper, goToTask }
+enum RandomResultAction { goDeeper, goToTask, pickAnother }
 
 class RandomResultDialog extends StatelessWidget {
   final Task task;
   final bool hasChildren;
+  final bool canPickAnother;
 
   const RandomResultDialog({
     super.key,
     required this.task,
     required this.hasChildren,
+    this.canPickAnother = true,
   });
 
   @override
@@ -21,21 +23,29 @@ class RandomResultDialog extends StatelessWidget {
         task.name,
         style: Theme.of(context).textTheme.headlineSmall,
       ),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Close'),
-        ),
-        if (hasChildren)
-          OutlinedButton.icon(
-            onPressed: () => Navigator.pop(context, RandomResultAction.goDeeper),
-            icon: const Icon(Icons.shuffle),
-            label: const Text('Go Deeper'),
-          ),
-        FilledButton.icon(
-          onPressed: () => Navigator.pop(context, RandomResultAction.goToTask),
-          icon: const Icon(Icons.arrow_forward),
-          label: const Text('Go to Task'),
+        Row(
+          children: [
+            if (canPickAnother)
+              IconButton(
+                onPressed: () => Navigator.pop(context, RandomResultAction.pickAnother),
+                icon: const Icon(Icons.shuffle),
+                tooltip: 'Pick Another',
+              ),
+            if (hasChildren)
+              IconButton(
+                onPressed: () => Navigator.pop(context, RandomResultAction.goDeeper),
+                icon: const Icon(Icons.keyboard_double_arrow_down),
+                tooltip: 'Go Deeper',
+              ),
+            const Spacer(),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(context, RandomResultAction.goToTask),
+              icon: const Icon(Icons.arrow_forward, size: 18),
+              label: const Text('Go to Task'),
+            ),
+          ],
         ),
       ],
     );
