@@ -107,6 +107,7 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
               deleted.childIds,
               dependsOnIds: deleted.dependsOnIds,
               dependedByIds: deleted.dependedByIds,
+              schedules: deleted.schedules,
             );
             // task.toMap() already includes the original completedAt/skippedAt.
             // No need to re-complete or re-skip.

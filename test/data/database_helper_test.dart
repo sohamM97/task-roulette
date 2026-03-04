@@ -528,8 +528,8 @@ void main() {
       await db.addDependency(c, b); // C depends on B
 
       final rels = await db.deleteTaskWithRelationships(b);
-      expect(rels['dependsOnIds'], contains(a));
-      expect(rels['dependedByIds'], contains(c));
+      expect(rels.dependsOnIds, contains(a));
+      expect(rels.dependedByIds, contains(c));
     });
 
     test('restoreTask restores dependencies', () async {
@@ -546,8 +546,8 @@ void main() {
       // Restore B with dependencies
       await db.restoreTask(
         taskB, [], [],
-        dependsOnIds: rels['dependsOnIds']!,
-        dependedByIds: rels['dependedByIds']!,
+        dependsOnIds: rels.dependsOnIds,
+        dependedByIds: rels.dependedByIds,
       );
 
       // B should still depend on A
@@ -3760,6 +3760,127 @@ void main() {
       // so we can't query by task ID. Just verify no crash.
       final all = await db.getAllScheduleSyncIds();
       expect(all, isEmpty);
+    });
+
+    test('deleteTaskWithRelationships captures schedules', () async {
+      final id = await db.insertTask(Task(name: 'Scheduled'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 5),
+      ]);
+
+      final rels = await db.deleteTaskWithRelationships(id);
+      expect(rels.schedules.length, 2);
+      expect(rels.schedules.map((s) => s.dayOfWeek).toSet(), {1, 5});
+      // Schedules should be gone from DB (CASCADE delete)
+      expect(await db.hasSchedules(id), isFalse);
+    });
+
+    test('restoreTask restores schedules', () async {
+      final id = await db.insertTask(Task(name: 'Restore'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 3),
+      ]);
+
+      // Capture task before deletion
+      final task = (await db.getTaskById(id))!;
+      final rels = await db.deleteTaskWithRelationships(id);
+
+      // Restore with schedules
+      await db.restoreTask(task, [], [],
+        schedules: rels.schedules,
+      );
+
+      final restored = await db.getSchedulesForTask(id);
+      expect(restored.length, 1);
+      expect(restored.first.dayOfWeek, 3);
+    });
+
+    test('deleteTaskAndReparentChildren captures schedules', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 2),
+      ]);
+
+      final result = await db.deleteTaskAndReparentChildren(parent);
+      expect(result.schedules.length, 1);
+      expect(result.schedules.first.dayOfWeek, 2);
+    });
+
+    test('deleteTaskSubtree captures schedules for all subtree tasks', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(root, child);
+      await db.replaceSchedules(root, [
+        TaskSchedule(taskId: root, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(child, [
+        TaskSchedule(taskId: child, dayOfWeek: 4),
+      ]);
+
+      final result = await db.deleteTaskSubtree(root);
+      expect(result.deletedSchedules.length, 2);
+      expect(result.deletedSchedules.map((s) => s.dayOfWeek).toSet(), {1, 4});
+    });
+
+    test('restoreTaskSubtree restores schedules', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(root, child);
+      await db.replaceSchedules(root, [
+        TaskSchedule(taskId: root, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(child, [
+        TaskSchedule(taskId: child, dayOfWeek: 4),
+      ]);
+
+      final result = await db.deleteTaskSubtree(root);
+
+      await db.restoreTaskSubtree(
+        tasks: result.deletedTasks,
+        relationships: result.deletedRelationships,
+        dependencies: result.deletedDependencies,
+        schedules: result.deletedSchedules,
+      );
+
+      final rootScheds = await db.getSchedulesForTask(root);
+      final childScheds = await db.getSchedulesForTask(child);
+      expect(rootScheds.length, 1);
+      expect(rootScheds.first.dayOfWeek, 1);
+      expect(childScheds.length, 1);
+      expect(childScheds.first.dayOfWeek, 4);
+    });
+  });
+
+  group('getPendingSyncAddKeys', () {
+    test('returns pending relationship adds', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      await db.addRelationship(a, b);
+
+      // addRelationship enqueues a relationship add in sync_queue
+      final keys = await db.getPendingSyncAddKeys('relationship');
+      expect(keys, isNotEmpty);
+      // Each key should be parentSyncId:childSyncId format
+      for (final key in keys) {
+        expect(key.contains(':'), isTrue);
+      }
+    });
+
+    test('returns pending schedule adds', () async {
+      final id = await db.insertTask(Task(name: 'Sched'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+      ]);
+
+      final keys = await db.getPendingSyncAddKeys('schedule');
+      expect(keys, isNotEmpty);
+      // Schedule keys are just the schedule sync_id (no colon)
+      for (final key in keys) {
+        expect(key.contains(':'), isFalse);
+      }
     });
   });
 }

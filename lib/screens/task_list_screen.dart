@@ -510,6 +510,7 @@ class TaskListScreenState extends State<TaskListScreen>
           deleted.task, deleted.parentIds, deleted.childIds,
           dependsOnIds: deleted.dependsOnIds,
           dependedByIds: deleted.dependedByIds,
+          schedules: deleted.schedules,
         );
       });
       return;
@@ -534,6 +535,7 @@ class TaskListScreenState extends State<TaskListScreen>
             dependsOnIds: result.dependsOnIds,
             dependedByIds: result.dependedByIds,
             removeReparentLinks: result.addedReparentLinks,
+            schedules: result.schedules,
           );
         });
       case DeleteChoice.deleteAll:
@@ -549,6 +551,7 @@ class TaskListScreenState extends State<TaskListScreen>
             tasks: result.deletedTasks,
             relationships: result.deletedRelationships,
             dependencies: result.deletedDependencies,
+            schedules: result.deletedSchedules,
           );
         });
     }

@@ -107,8 +107,7 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Deletes a task and returns info needed for undo.
-  /// Returns a record of (task, parentIds, childIds, dependsOnIds, dependedByIds).
-  Future<({Task task, List<int> parentIds, List<int> childIds, List<int> dependsOnIds, List<int> dependedByIds})> deleteTask(int taskId) async {
+  Future<({Task task, List<int> parentIds, List<int> childIds, List<int> dependsOnIds, List<int> dependedByIds, List<TaskSchedule> schedules})> deleteTask(int taskId) async {
     final task = _currentParent?.id == taskId
         ? _currentParent!
         : _tasks.firstWhere((t) => t.id == taskId,
@@ -117,10 +116,11 @@ class TaskProvider extends ChangeNotifier {
     await _refreshCurrentList();
     return (
       task: task,
-      parentIds: rels['parentIds']!,
-      childIds: rels['childIds']!,
-      dependsOnIds: rels['dependsOnIds']!,
-      dependedByIds: rels['dependedByIds']!,
+      parentIds: rels.parentIds,
+      childIds: rels.childIds,
+      dependsOnIds: rels.dependsOnIds,
+      dependedByIds: rels.dependedByIds,
+      schedules: rels.schedules,
     );
   }
 
@@ -131,11 +131,13 @@ class TaskProvider extends ChangeNotifier {
     List<int> dependsOnIds = const [],
     List<int> dependedByIds = const [],
     List<({int parentId, int childId})> removeReparentLinks = const [],
+    List<TaskSchedule> schedules = const [],
   }) async {
     await _db.restoreTask(task, parentIds, childIds,
         dependsOnIds: dependsOnIds,
         dependedByIds: dependedByIds,
-        removeReparentLinks: removeReparentLinks);
+        removeReparentLinks: removeReparentLinks,
+        schedules: schedules);
     await _refreshCurrentList();
   }
 
@@ -153,6 +155,7 @@ class TaskProvider extends ChangeNotifier {
     List<int> dependsOnIds,
     List<int> dependedByIds,
     List<({int parentId, int childId})> addedReparentLinks,
+    List<TaskSchedule> schedules,
   })> deleteTaskAndReparent(int taskId) async {
     final result = await _db.deleteTaskAndReparentChildren(taskId);
     await _refreshCurrentList();
@@ -164,6 +167,7 @@ class TaskProvider extends ChangeNotifier {
     List<Task> deletedTasks,
     List<({int parentId, int childId})> deletedRelationships,
     List<({int taskId, int dependsOnId})> deletedDependencies,
+    List<TaskSchedule> deletedSchedules,
   })> deleteTaskSubtree(int taskId) async {
     final result = await _db.deleteTaskSubtree(taskId);
     await _refreshCurrentList();
@@ -175,11 +179,13 @@ class TaskProvider extends ChangeNotifier {
     required List<Task> tasks,
     required List<({int parentId, int childId})> relationships,
     required List<({int taskId, int dependsOnId})> dependencies,
+    List<TaskSchedule> schedules = const [],
   }) async {
     await _db.restoreTaskSubtree(
       tasks: tasks,
       relationships: relationships,
       dependencies: dependencies,
+      schedules: schedules,
     );
     await _refreshCurrentList();
   }
@@ -398,15 +404,16 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Permanently deletes a completed task. Returns info needed for undo.
-  Future<({Task task, List<int> parentIds, List<int> childIds, List<int> dependsOnIds, List<int> dependedByIds})> permanentlyDeleteTask(int taskId, Task task) async {
+  Future<({Task task, List<int> parentIds, List<int> childIds, List<int> dependsOnIds, List<int> dependedByIds, List<TaskSchedule> schedules})> permanentlyDeleteTask(int taskId, Task task) async {
     final rels = await _db.deleteTaskWithRelationships(taskId);
     await _refreshCurrentList();
     return (
       task: task,
-      parentIds: rels['parentIds']!,
-      childIds: rels['childIds']!,
-      dependsOnIds: rels['dependsOnIds']!,
-      dependedByIds: rels['dependedByIds']!,
+      parentIds: rels.parentIds,
+      childIds: rels.childIds,
+      dependsOnIds: rels.dependsOnIds,
+      dependedByIds: rels.dependedByIds,
+      schedules: rels.schedules,
     );
   }
 

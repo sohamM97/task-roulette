@@ -848,10 +848,15 @@ class DatabaseHelper {
     );
   }
 
-  /// Deletes a task and returns its relationships for undo support.
-  /// Returns a map with 'parentIds', 'childIds', 'dependsOnIds', 'dependedByIds'.
+  /// Deletes a task and returns its relationships and schedules for undo support.
   // PERFORMANCE: transaction batches reads + deletes into a single DB round-trip
-  Future<Map<String, List<int>>> deleteTaskWithRelationships(int taskId) async {
+  Future<({
+    List<int> parentIds,
+    List<int> childIds,
+    List<int> dependsOnIds,
+    List<int> dependedByIds,
+    List<TaskSchedule> schedules,
+  })> deleteTaskWithRelationships(int taskId) async {
     final db = await database;
     return db.transaction((txn) async {
       // Capture sync_id before deletion for sync queue
@@ -882,6 +887,12 @@ class DatabaseHelper {
         where: 'depends_on_id = ?',
         whereArgs: [taskId],
       );
+
+      // Capture schedules before CASCADE delete wipes them
+      final scheduleMaps = await txn.query('task_schedules',
+        where: 'task_id = ?', whereArgs: [taskId]);
+      final schedules = scheduleMaps.map((m) => TaskSchedule.fromMap(m)).toList();
+
       await txn.delete('task_relationships',
           where: 'parent_id = ? OR child_id = ?',
           whereArgs: [taskId, taskId]);
@@ -901,12 +912,13 @@ class DatabaseHelper {
         });
       }
 
-      return {
-        'parentIds': parentMaps.map((m) => m['parent_id'] as int).toList(),
-        'childIds': childMaps.map((m) => m['child_id'] as int).toList(),
-        'dependsOnIds': dependsOnMaps.map((m) => m['depends_on_id'] as int).toList(),
-        'dependedByIds': dependedByMaps.map((m) => m['task_id'] as int).toList(),
-      };
+      return (
+        parentIds: parentMaps.map((m) => m['parent_id'] as int).toList(),
+        childIds: childMaps.map((m) => m['child_id'] as int).toList(),
+        dependsOnIds: dependsOnMaps.map((m) => m['depends_on_id'] as int).toList(),
+        dependedByIds: dependedByMaps.map((m) => m['task_id'] as int).toList(),
+        schedules: schedules,
+      );
     });
   }
 
@@ -921,6 +933,7 @@ class DatabaseHelper {
     List<int> dependsOnIds = const [],
     List<int> dependedByIds = const [],
     List<({int parentId, int childId})> removeReparentLinks = const [],
+    List<TaskSchedule> schedules = const [],
   }) async {
     final db = await database;
     await db.transaction((txn) async {
@@ -1034,7 +1047,38 @@ class DatabaseHelper {
           }
         }
       }
+
+      // Restore schedules that were captured before CASCADE delete
+      if (schedules.isNotEmpty) {
+        await _restoreSchedulesInTxn(txn, schedules, task.syncId);
+      }
     });
+  }
+
+  /// Shared helper: re-inserts schedules and manages sync queue entries.
+  /// [taskSyncId] is the sync_id of the owning task (needed for sync queue key2).
+  Future<void> _restoreSchedulesInTxn(
+    Transaction txn,
+    List<TaskSchedule> schedules,
+    String? taskSyncId,
+  ) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    for (final s in schedules) {
+      await txn.insert('task_schedules', s.toMap());
+      if (s.syncId != null) {
+        // Cancel any pending sync removal for this schedule
+        await txn.delete('sync_queue',
+          where: "entity_type = 'schedule' AND action = 'remove' AND key1 = ?",
+          whereArgs: [s.syncId]);
+        // Enqueue sync addition
+        if (taskSyncId != null) {
+          await txn.insert('sync_queue', {
+            'entity_type': 'schedule', 'action': 'add',
+            'key1': s.syncId!, 'key2': taskSyncId, 'created_at': now,
+          });
+        }
+      }
+    }
   }
 
   /// Marks a task as started by setting started_at to now.
@@ -1250,6 +1294,7 @@ class DatabaseHelper {
     List<int> dependsOnIds,
     List<int> dependedByIds,
     List<({int parentId, int childId})> addedReparentLinks,
+    List<TaskSchedule> schedules,
   })> deleteTaskAndReparentChildren(int taskId) async {
     final db = await database;
     // Load task data before deleting
@@ -1340,6 +1385,11 @@ class DatabaseHelper {
         }
       }
 
+      // Capture schedules before CASCADE delete wipes them
+      final scheduleMaps = await txn.query('task_schedules',
+        where: 'task_id = ?', whereArgs: [taskId]);
+      final schedules = scheduleMaps.map((m) => TaskSchedule.fromMap(m)).toList();
+
       // Delete the task and its relationships/dependencies
       await txn.delete('task_relationships',
           where: 'parent_id = ? OR child_id = ?', whereArgs: [taskId, taskId]);
@@ -1354,6 +1404,7 @@ class DatabaseHelper {
         dependsOnIds: dependsOnIds,
         dependedByIds: dependedByIds,
         addedReparentLinks: addedLinks,
+        schedules: schedules,
       );
     });
   }
@@ -1364,6 +1415,7 @@ class DatabaseHelper {
     List<Task> deletedTasks,
     List<({int parentId, int childId})> deletedRelationships,
     List<({int taskId, int dependsOnId})> deletedDependencies,
+    List<TaskSchedule> deletedSchedules,
   })> deleteTaskSubtree(int taskId) async {
     final db = await database;
     return db.transaction((txn) async {
@@ -1453,6 +1505,12 @@ class DatabaseHelper {
         });
       }
 
+      // Capture schedules for all subtree tasks before CASCADE delete
+      final scheduleRows = await txn.rawQuery(
+        'SELECT * FROM task_schedules WHERE task_id IN ($placeholders)',
+        subtreeIds.toList());
+      final deletedSchedules = scheduleRows.map((m) => TaskSchedule.fromMap(m)).toList();
+
       // Delete everything
       await txn.rawDelete(
         'DELETE FROM task_relationships WHERE parent_id IN ($placeholders) OR child_id IN ($placeholders)',
@@ -1467,6 +1525,7 @@ class DatabaseHelper {
         deletedTasks: deletedTasks,
         deletedRelationships: deletedRelationships,
         deletedDependencies: deletedDependencies,
+        deletedSchedules: deletedSchedules,
       );
     });
   }
@@ -1476,6 +1535,7 @@ class DatabaseHelper {
     required List<Task> tasks,
     required List<({int parentId, int childId})> relationships,
     required List<({int taskId, int dependsOnId})> dependencies,
+    List<TaskSchedule> schedules = const [],
   }) async {
     final db = await database;
     await db.transaction((txn) async {
@@ -1557,6 +1617,12 @@ class DatabaseHelper {
           });
         }
       }
+
+      // Restore schedules for all subtree tasks
+      for (final s in schedules) {
+        final taskSyncId = syncMap[s.taskId];
+        await _restoreSchedulesInTxn(txn, [s], taskSyncId);
+      }
     });
   }
 
@@ -1629,6 +1695,26 @@ class DatabaseHelper {
       }
       return rows;
     });
+  }
+
+  /// Returns the set of composite keys for pending 'add' entries in sync_queue
+  /// for the given entity type. Used during pull reconciliation to avoid
+  /// deleting locally-queued entities that haven't been pushed yet.
+  ///
+  /// Key format depends on entity type:
+  /// - 'relationship': 'parentSyncId:childSyncId' (key1:key2)
+  /// - 'dependency': 'taskSyncId:dependsOnSyncId' (key1:key2)
+  /// - 'schedule': 'scheduleSyncId' (key1 only)
+  Future<Set<String>> getPendingSyncAddKeys(String entityType) async {
+    final db = await database;
+    final rows = await db.query('sync_queue',
+      columns: ['key1', 'key2'],
+      where: "entity_type = ? AND action = 'add'",
+      whereArgs: [entityType]);
+    if (entityType == 'schedule') {
+      return rows.map((r) => r['key1'] as String).toSet();
+    }
+    return rows.map((r) => '${r['key1']}:${r['key2']}').toSet();
   }
 
   /// Finds a task by its sync_id. Returns null if not found.
