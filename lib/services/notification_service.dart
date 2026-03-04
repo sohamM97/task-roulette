@@ -20,9 +20,26 @@ class NotificationService {
 
   static final _plugin = FlutterLocalNotificationsPlugin();
 
+  /// Whether a notification tap arrived before the UI callback was registered.
+  @visibleForTesting
+  static bool pendingTap = false;
+
   /// Callback invoked when user taps the notification.
   /// Set by AppShell to navigate to Today's 5 tab.
-  static void Function()? onNotificationTap;
+  ///
+  /// If a tap arrived during init (cold start from notification), the setter
+  /// invokes the callback immediately so the navigate intent isn't lost.
+  static void Function()? _onNotificationTap;
+
+  static void Function()? get onNotificationTap => _onNotificationTap;
+
+  static set onNotificationTap(void Function()? cb) {
+    _onNotificationTap = cb;
+    if (cb != null && pendingTap) {
+      pendingTap = false;
+      cb();
+    }
+  }
 
   /// Initialize notification scheduling. Android-only; no-op elsewhere.
   static Future<void> init() async {
@@ -39,7 +56,13 @@ class NotificationService {
     const initSettings = InitializationSettings(android: androidSettings);
     await _plugin.initialize(
       initSettings,
-      onDidReceiveNotificationResponse: (_) => onNotificationTap?.call(),
+      onDidReceiveNotificationResponse: (_) {
+        if (_onNotificationTap != null) {
+          _onNotificationTap!();
+        } else {
+          pendingTap = true;
+        }
+      },
     );
 
     // Request POST_NOTIFICATIONS permission (Android 13+; auto-granted on older)

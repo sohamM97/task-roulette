@@ -106,6 +106,11 @@ void main() {
   });
 
   group('onNotificationTap callback', () {
+    tearDown(() {
+      NotificationService.onNotificationTap = null;
+      NotificationService.pendingTap = false;
+    });
+
     test('starts as null', () {
       expect(NotificationService.onNotificationTap, isNull);
     });
@@ -116,9 +121,26 @@ void main() {
 
       NotificationService.onNotificationTap!();
       expect(called, isTrue);
+    });
 
-      // Clean up
-      NotificationService.onNotificationTap = null;
+    test('drains pendingTap when callback is registered', () {
+      // Simulate a notification tap arriving before UI is ready
+      NotificationService.pendingTap = true;
+
+      var called = false;
+      // Setting the callback should immediately invoke it and clear the flag
+      NotificationService.onNotificationTap = () => called = true;
+
+      expect(called, isTrue);
+      expect(NotificationService.pendingTap, isFalse);
+    });
+
+    test('does not invoke callback when no pendingTap', () {
+      var called = false;
+      NotificationService.onNotificationTap = () => called = true;
+
+      // No pending tap → callback should NOT have been invoked by the setter
+      expect(called, isFalse);
     });
   });
 }
