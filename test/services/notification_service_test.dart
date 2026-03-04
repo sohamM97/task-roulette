@@ -67,5 +67,58 @@ void main() {
       expect(result.hour, 8);
       expect(result.minute, 0);
     });
+
+    test('at midnight returns today at 8:00 AM', () {
+      final now = tz.TZDateTime(tz.local, 2026, 3, 3, 0, 0); // exactly midnight
+      final result = NotificationService.nextEightAM(now: now);
+
+      expect(result.day, 3); // today, not tomorrow
+      expect(result.hour, 8);
+    });
+
+    test('just before midnight returns tomorrow at 8:00 AM', () {
+      final now = tz.TZDateTime(tz.local, 2026, 3, 3, 23, 59); // 11:59 PM
+      final result = NotificationService.nextEightAM(now: now);
+
+      expect(result.day, 4); // tomorrow
+      expect(result.hour, 8);
+    });
+
+    test('handles DST spring-forward correctly', () {
+      // US Eastern: clocks spring forward on March 8, 2026 (2 AM → 3 AM)
+      final now = tz.TZDateTime(tz.local, 2026, 3, 8, 1, 30); // 1:30 AM on spring-forward day
+      final result = NotificationService.nextEightAM(now: now);
+
+      expect(result.day, 8); // same day
+      expect(result.hour, 8);
+      expect(result.minute, 0);
+    });
+
+    test('preserves timezone location from input', () {
+      final chicago = tz.getLocation('America/Chicago');
+      final now = tz.TZDateTime(chicago, 2026, 6, 15, 10, 0);
+      final result = NotificationService.nextEightAM(now: now);
+
+      expect(result.location, chicago);
+      expect(result.day, 16); // tomorrow (past 8 AM)
+      expect(result.hour, 8);
+    });
+  });
+
+  group('onNotificationTap callback', () {
+    test('starts as null', () {
+      expect(NotificationService.onNotificationTap, isNull);
+    });
+
+    test('can be set and invoked', () {
+      var called = false;
+      NotificationService.onNotificationTap = () => called = true;
+
+      NotificationService.onNotificationTap!();
+      expect(called, isTrue);
+
+      // Clean up
+      NotificationService.onNotificationTap = null;
+    });
   });
 }

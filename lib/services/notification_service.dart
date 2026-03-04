@@ -20,6 +20,10 @@ class NotificationService {
 
   static final _plugin = FlutterLocalNotificationsPlugin();
 
+  /// Callback invoked when user taps the notification.
+  /// Set by AppShell to navigate to Today's 5 tab.
+  static void Function()? onNotificationTap;
+
   /// Initialize notification scheduling. Android-only; no-op elsewhere.
   static Future<void> init() async {
     if (kIsWeb || !platform.isAndroidPlatform) return;
@@ -33,7 +37,10 @@ class NotificationService {
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
     const initSettings = InitializationSettings(android: androidSettings);
-    await _plugin.initialize(initSettings);
+    await _plugin.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: (_) => onNotificationTap?.call(),
+    );
 
     // Request POST_NOTIFICATIONS permission (Android 13+; auto-granted on older)
     final androidPlugin =
@@ -43,7 +50,11 @@ class NotificationService {
         await androidPlugin?.requestNotificationsPermission() ?? false;
 
     if (granted) {
-      await _scheduleDailyNotification();
+      try {
+        await _scheduleDailyNotification();
+      } catch (_) {
+        // Non-fatal — app works fine without notifications
+      }
     }
   }
 
@@ -63,7 +74,7 @@ class NotificationService {
       '5 tasks are lined up for your day. Tap to see them.',
       nextEightAM(),
       details,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       matchDateTimeComponents: DateTimeComponents.time,
     );
   }

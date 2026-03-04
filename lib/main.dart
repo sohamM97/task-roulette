@@ -99,7 +99,18 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    NotificationService.onNotificationTap = _navigateToToday;
     _initAuth();
+  }
+
+  void _navigateToToday() {
+    if (!mounted) return;
+    _todaysFiveKey.currentState?.refreshSnapshots();
+    _pageController.animateToPage(
+      0,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
   }
 
   Future<void> _initAuth() async {
@@ -131,6 +142,7 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    NotificationService.onNotificationTap = null;
     _pageController.dispose();
     super.dispose();
   }
