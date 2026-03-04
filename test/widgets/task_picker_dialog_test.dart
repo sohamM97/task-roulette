@@ -214,4 +214,117 @@ void main() {
       expect(getDisplayedTaskNames(tester), ['Buy eggs', 'Buy bread', 'Buy milk']);
     });
   });
+
+  group('TaskPickerDialog search ranking', () {
+    testWidgets('name matches appear before context-only matches',
+        (tester) async {
+      // Task "1.2" plus children that match via parent context
+      final tasks = makeTasks(['Child A', 'Child B', '1.2', 'Child C']);
+      final parentNamesMap = {
+        1: ['1.2'], // Child A is under 1.2
+        2: ['1.2'], // Child B is under 1.2
+        4: ['1.2'], // Child C is under 1.2
+      };
+
+      await tester.pumpWidget(buildDialog(
+        candidates: tasks,
+        parentNamesMap: parentNamesMap,
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), '1.2');
+      await tester.pumpAndSettle();
+
+      final names = getDisplayedTaskNames(tester);
+      // "1.2" matches by name — should be first
+      expect(names.first, '1.2');
+      // Children match only via parent context — should come after
+      expect(names.sublist(1), containsAll(['Child A', 'Child B', 'Child C']));
+    });
+
+    testWidgets('context-only matches preserve relative order',
+        (tester) async {
+      final tasks = makeTasks(['Alpha', 'Beta', 'Gamma', 'Target']);
+      final parentNamesMap = {
+        1: ['Target'], // Alpha under Target
+        2: ['Target'], // Beta under Target
+        3: ['Target'], // Gamma under Target
+      };
+
+      await tester.pumpWidget(buildDialog(
+        candidates: tasks,
+        parentNamesMap: parentNamesMap,
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'Target');
+      await tester.pumpAndSettle();
+
+      final names = getDisplayedTaskNames(tester);
+      expect(names, ['Target', 'Alpha', 'Beta', 'Gamma']);
+    });
+
+    testWidgets('multiple name matches preserve relative order',
+        (tester) async {
+      final tasks = makeTasks(['Buy milk', 'Sell car', 'Buy eggs']);
+
+      await tester.pumpWidget(buildDialog(candidates: tasks));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'buy');
+      await tester.pumpAndSettle();
+
+      // Both match by name — should keep original order
+      expect(getDisplayedTaskNames(tester), ['Buy milk', 'Buy eggs']);
+    });
+
+    testWidgets('name match ranking combined with priority tiers',
+        (tester) async {
+      // "Project" matches by name; children match via context
+      final tasks = makeTasks(['Child X', 'Project', 'Child Y']);
+      final parentNamesMap = {
+        1: ['Project'], // Child X under Project
+        3: ['Project'], // Child Y under Project
+      };
+      // Child Y (id=3) is in priority tier
+      final priorityIds = {3};
+
+      await tester.pumpWidget(buildDialog(
+        candidates: tasks,
+        priorityIds: priorityIds,
+        parentNamesMap: parentNamesMap,
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'Project');
+      await tester.pumpAndSettle();
+
+      final names = getDisplayedTaskNames(tester);
+      // Priority tier sorts first (Child Y), then name-match (Project),
+      // then context-only (Child X)
+      expect(names, ['Child Y', 'Project', 'Child X']);
+    });
+
+    testWidgets('no filter shows original order without ranking',
+        (tester) async {
+      final tasks = makeTasks(['Zebra', 'Apple', 'Mango']);
+      final parentNamesMap = {
+        1: ['Apple'], // Zebra under Apple
+      };
+
+      await tester.pumpWidget(buildDialog(
+        candidates: tasks,
+        parentNamesMap: parentNamesMap,
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      // No filter typed — should be original order, no ranking applied
+      expect(getDisplayedTaskNames(tester), ['Zebra', 'Apple', 'Mango']);
+    });
+  });
 }

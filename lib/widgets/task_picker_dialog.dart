@@ -35,6 +35,17 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
                 t.name.toLowerCase().contains(_filter.toLowerCase()) ||
                 (_contextFor(t.id!)?.toLowerCase().contains(_filter.toLowerCase()) ?? false))
             .toList();
+    // When filtering, rank name matches above context-only matches.
+    if (_filter.isNotEmpty) {
+      final lowerFilter = _filter.toLowerCase();
+      base.sort((a, b) {
+        final aName = a.name.toLowerCase().contains(lowerFilter);
+        final bName = b.name.toLowerCase().contains(lowerFilter);
+        if (aName && !bName) return -1;
+        if (!aName && bName) return 1;
+        return 0;
+      });
+    }
     if (widget.priorityIds.isEmpty && widget.secondaryPriorityIds.isEmpty) return base;
     final priority = <Task>[];
     final secondary = <Task>[];

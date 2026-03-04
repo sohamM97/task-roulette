@@ -30,7 +30,7 @@ Last updated: 2026-03-04
 - **test/services/firestore_service_test.dart** (~20 tests) — `taskToFirestoreFields` (all fields), `taskFromFirestoreDoc` (parsing, sync_id extraction), relationship doc parsing.
 
 ### Widgets (good)
-- **test/widgets/task_picker_dialog_test.dart** (~30 tests) — Priority sorting (tiers), preserved relative order, search filtering, parent context.
+- **test/widgets/task_picker_dialog_test.dart** (~15 tests) — Priority sorting (tiers), preserved relative order, search filtering, parent context, search ranking (name matches before context-only matches, stable order within tiers, interaction with priority tiers).
 - **test/widgets/leaf_task_detail_test.dart** (~30 tests) — Name display, rename, URL icon states, Done/Skip buttons, Start/Stop buttons, priority/quick indicators.
 - **test/widgets/pin_button_test.dart** (~15 tests) — Pin/unpin icons, tooltips, max-pins disabled, muted alpha, callbacks.
 - **test/widgets/small_widgets_test.dart** (~30 tests) — `EmptyState` (root/non-root), `DeleteTaskDialog` (cancel/keep-subtrees/delete-everything), `AddTaskDialog` (partial), `BrainDumpDialog` (partial).
