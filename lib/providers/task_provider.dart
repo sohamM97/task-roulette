@@ -41,6 +41,11 @@ class TaskProvider extends ChangeNotifier {
     await _refreshCurrentList(isMutation: false);
   }
 
+  /// Reload the current view (root or children) without resetting navigation.
+  Future<void> refreshCurrentView() async {
+    await _refreshCurrentList(isMutation: false);
+  }
+
   Future<void> navigateInto(Task task) async {
     _parentStack.add(_currentParent);
     _currentParent = task;

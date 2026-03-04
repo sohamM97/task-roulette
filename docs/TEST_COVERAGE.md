@@ -17,7 +17,7 @@ Last updated: 2026-03-04
 - **test/data/todays_five_pin_helper_test.dart** (~80 tests) — `togglePin`, `pinNewTask`, `togglePinInPlace`, `trimExcess`, bottom sheet and add dialog gates, max constraints.
 
 ### Providers (good)
-- **test/providers/task_provider_test.dart** (~100+ tests) — Navigation (load/into/back/toTask), completion (with nav, without nav, leaf handling), start/unstart with `_currentParent` freshness, dependencies (add/remove/cycle prevention), random pick, deletion (single/with-relationships/subtree/restore), rename, field updates (URL/priority/quickTask) all with `_currentParent` freshness, worked-on, multi-parent DAG (link/unlink), Today's 5 leaf filtering (`getAllLeafTasks`, `pickWeightedN`), undo/restore.
+- **test/providers/task_provider_test.dart** (~136 tests) — Navigation (load/into/back/toTask), completion (with nav, without nav, leaf handling), start/unstart with `_currentParent` freshness, dependencies (add/remove/cycle prevention), random pick, deletion (single/with-relationships/subtree/restore), rename, field updates (URL/priority/quickTask) all with `_currentParent` freshness, worked-on, multi-parent DAG (link/unlink), Today's 5 leaf filtering (`getAllLeafTasks`, `pickWeightedN`), undo/restore, `refreshCurrentView` (root refresh, non-root preserves position, stack depth preserved, no mutation trigger).
 - **test/providers/theme_provider_test.dart** (8 tests) — Toggle, persistence, icons, listener notifications.
 - **test/providers/auth_provider_test.dart** (6 tests) — `setSyncStatus` updates/notifications, `isConfigured`, initial state.
 

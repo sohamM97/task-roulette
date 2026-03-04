@@ -127,7 +127,7 @@ class _AppShellState extends State<AppShell> {
 
     // Wire up data-changed callback so UI refreshes on remote changes
     syncService.onDataChanged = () {
-      if (mounted) taskProvider.loadRootTasks();
+      if (mounted) taskProvider.refreshCurrentView();
     };
 
     await authProvider.init();

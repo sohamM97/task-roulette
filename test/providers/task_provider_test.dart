@@ -2693,4 +2693,79 @@ void main() {
       await provider.completeTask(childId);
     });
   });
+
+  group('refreshCurrentView', () {
+    test('refreshes at root without resetting navigation', () async {
+      final id = await db.insertTask(Task(name: 'Root Task'));
+      await provider.loadRootTasks();
+      expect(provider.tasks.length, 1);
+
+      // Insert another task behind the scenes (simulates sync)
+      await db.insertTask(Task(name: 'Synced Task'));
+      await provider.refreshCurrentView();
+
+      expect(provider.isRoot, isTrue);
+      expect(provider.tasks.length, 2);
+    });
+
+    test('refreshes at non-root without navigating back to root', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+      await provider.loadRootTasks();
+
+      final parent = provider.tasks.first;
+      await provider.navigateInto(parent);
+      expect(provider.isRoot, isFalse);
+      expect(provider.currentParent?.id, parentId);
+      expect(provider.tasks.length, 1);
+
+      // Insert another child behind the scenes (simulates sync)
+      final syncedChildId = await db.insertTask(Task(name: 'Synced Child'));
+      await db.addRelationship(parentId, syncedChildId);
+      await provider.refreshCurrentView();
+
+      // Should still be inside parent, not reset to root
+      expect(provider.isRoot, isFalse);
+      expect(provider.currentParent?.id, parentId);
+      expect(provider.tasks.length, 2);
+    });
+
+    test('preserves navigation stack depth', () async {
+      final grandparentId = await db.insertTask(Task(name: 'Grandparent'));
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      await db.addRelationship(grandparentId, parentId);
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+      await provider.loadRootTasks();
+
+      // Navigate two levels deep
+      final grandparent = provider.tasks.first;
+      await provider.navigateInto(grandparent);
+      final parent = provider.tasks.first;
+      await provider.navigateInto(parent);
+      expect(provider.currentParent?.id, parentId);
+
+      await provider.refreshCurrentView();
+
+      // Still at same depth, can navigate back twice
+      expect(provider.currentParent?.id, parentId);
+      await provider.navigateBack();
+      expect(provider.currentParent?.id, grandparentId);
+      await provider.navigateBack();
+      expect(provider.isRoot, isTrue);
+    });
+
+    test('does not trigger onMutation callback', () async {
+      await db.insertTask(Task(name: 'Task'));
+      await provider.loadRootTasks();
+
+      var mutationCalled = false;
+      provider.onMutation = () => mutationCalled = true;
+
+      await provider.refreshCurrentView();
+
+      expect(mutationCalled, isFalse);
+    });
+  });
 }
