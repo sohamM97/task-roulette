@@ -1,6 +1,6 @@
 # Test Coverage Inventory
 
-Last updated: 2026-03-03
+Last updated: 2026-03-04
 
 ## Summary
 
@@ -26,6 +26,7 @@ Last updated: 2026-03-03
 - **test/screens/completed_tasks_screen_test.dart** (~15 tests) — Empty state, completed/skipped display, today/older labels, restore/delete buttons, parent context, AppBar title.
 
 ### Services (minimal)
+- **test/services/notification_service_test.dart** (13 tests) — `nextEightAM` (before/after/at 8 AM, midnight, month/year rollover, DST spring-forward, timezone preservation), `onNotificationTap` callback (null default, set and invoke, pendingTap drain on register, no spurious invoke without pending).
 - **test/services/firestore_service_test.dart** (~20 tests) — `taskToFirestoreFields` (all fields), `taskFromFirestoreDoc` (parsing, sync_id extraction), relationship doc parsing.
 
 ### Widgets (good)

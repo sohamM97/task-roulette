@@ -46,6 +46,9 @@ dependencies:
   googleapis_auth: ^1.0.0
   http: ^1.0.0
   flutter_secure_storage: ^10.0.0
+  flutter_local_notifications: ^19.0.0
+  timezone: ^0.10.0
+  flutter_timezone: ^3.0.1
 
 dev_dependencies:
   flutter_test:

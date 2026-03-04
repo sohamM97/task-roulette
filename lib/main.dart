@@ -10,15 +10,18 @@ import 'providers/task_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/task_list_screen.dart';
 import 'screens/todays_five_screen.dart';
+import 'services/notification_service.dart';
 import 'services/sync_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   if (kIsWeb) {
     databaseFactory = databaseFactoryFfiWeb;
   } else if (platform.isDesktopPlatform) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
+  await NotificationService.init();
   runApp(const TaskRouletteApp());
 }
 
@@ -96,7 +99,18 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    NotificationService.onNotificationTap = _navigateToToday;
     _initAuth();
+  }
+
+  void _navigateToToday() {
+    if (!mounted) return;
+    _todaysFiveKey.currentState?.refreshSnapshots();
+    _pageController.animateToPage(
+      0,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
   }
 
   Future<void> _initAuth() async {
@@ -128,6 +142,7 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    NotificationService.onNotificationTap = null;
     _pageController.dispose();
     super.dispose();
   }
