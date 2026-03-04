@@ -281,9 +281,37 @@ void main() {
       expect(getDisplayedTaskNames(tester), ['Buy milk', 'Buy eggs']);
     });
 
-    testWidgets('name match ranking combined with priority tiers',
+    testWidgets('exact name match jumps above all priority tiers',
         (tester) async {
-      // "Project" matches by name; children match via context
+      // "1.2" is the exact match; e1, e2 are siblings (priority) that match via context
+      final tasks = makeTasks(['e1', 'e2', '1.2', 'e3']);
+      final parentNamesMap = {
+        1: ['1.2'], // e1 under 1.2
+        2: ['1.2'], // e2 under 1.2
+      };
+      // e1 (id=1), e2 (id=2) are in priority tier (siblings)
+      final priorityIds = {1, 2};
+
+      await tester.pumpWidget(buildDialog(
+        candidates: tasks,
+        priorityIds: priorityIds,
+        parentNamesMap: parentNamesMap,
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), '1.2');
+      await tester.pumpAndSettle();
+
+      final names = getDisplayedTaskNames(tester);
+      // Exact name match "1.2" jumps to top, then priority siblings e1, e2
+      expect(names.first, '1.2');
+      expect(names.sublist(1), ['e1', 'e2']);
+    });
+
+    testWidgets('partial name match also ranks above context-only in priority tier',
+        (tester) async {
+      // "Project" contains "proj"; Child Y is priority but only context match
       final tasks = makeTasks(['Child X', 'Project', 'Child Y']);
       final parentNamesMap = {
         1: ['Project'], // Child X under Project
@@ -300,13 +328,13 @@ void main() {
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField), 'Project');
+      await tester.enterText(find.byType(TextField), 'proj');
       await tester.pumpAndSettle();
 
       final names = getDisplayedTaskNames(tester);
-      // Priority tier sorts first (Child Y), then name-match (Project),
-      // then context-only (Child X)
-      expect(names, ['Child Y', 'Project', 'Child X']);
+      // Name match (Project) first, then context-only by tier
+      // (Child Y is priority, Child X is rest)
+      expect(names, ['Project', 'Child Y', 'Child X']);
     });
 
     testWidgets('no filter shows original order without ranking',

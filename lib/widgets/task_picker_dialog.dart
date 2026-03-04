@@ -35,16 +35,38 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
                 t.name.toLowerCase().contains(_filter.toLowerCase()) ||
                 (_contextFor(t.id!)?.toLowerCase().contains(_filter.toLowerCase()) ?? false))
             .toList();
-    // When filtering, rank name matches above context-only matches.
+    // Name matches always rank above context-only matches, regardless of tier.
+    // Within each group, priority tiers still apply.
     if (_filter.isNotEmpty) {
       final lowerFilter = _filter.toLowerCase();
-      base.sort((a, b) {
-        final aName = a.name.toLowerCase().contains(lowerFilter);
-        final bName = b.name.toLowerCase().contains(lowerFilter);
-        if (aName && !bName) return -1;
-        if (!aName && bName) return 1;
-        return 0;
-      });
+      final nameMatches = <Task>[];
+      final contextOnly = <Task>[];
+      for (final t in base) {
+        if (t.name.toLowerCase().contains(lowerFilter)) {
+          nameMatches.add(t);
+        } else {
+          contextOnly.add(t);
+        }
+      }
+      if (widget.priorityIds.isEmpty && widget.secondaryPriorityIds.isEmpty) {
+        return [...nameMatches, ...contextOnly];
+      }
+      List<Task> sortByTier(List<Task> tasks) {
+        final priority = <Task>[];
+        final secondary = <Task>[];
+        final rest = <Task>[];
+        for (final t in tasks) {
+          if (widget.priorityIds.contains(t.id)) {
+            priority.add(t);
+          } else if (widget.secondaryPriorityIds.contains(t.id)) {
+            secondary.add(t);
+          } else {
+            rest.add(t);
+          }
+        }
+        return [...priority, ...secondary, ...rest];
+      }
+      return [...sortByTier(nameMatches), ...sortByTier(contextOnly)];
     }
     if (widget.priorityIds.isEmpty && widget.secondaryPriorityIds.isEmpty) return base;
     final priority = <Task>[];
