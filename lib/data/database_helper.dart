@@ -2088,7 +2088,7 @@ class DatabaseHelper {
     final db = await database;
     final maps = await db.query('task_schedules',
       where: 'task_id = ?', whereArgs: [taskId],
-      orderBy: 'schedule_type ASC, day_of_week ASC, specific_date ASC');
+      orderBy: 'day_of_week ASC');
     return maps.map((m) => TaskSchedule.fromMap(m)).toList();
   }
 
@@ -2125,9 +2125,8 @@ class DatabaseHelper {
         final newSyncId = _uuid.v4();
         await txn.insert('task_schedules', {
           'task_id': taskId,
-          'schedule_type': s.scheduleType,
+          'schedule_type': 'weekly',
           'day_of_week': s.dayOfWeek,
-          'specific_date': s.specificDate,
           'sync_id': newSyncId,
           'updated_at': now,
         });
@@ -2148,16 +2147,12 @@ class DatabaseHelper {
     final db = await database;
     final date = now ?? DateTime.now();
     final dayOfWeek = date.weekday; // 1=Mon..7=Sun (ISO 8601)
-    final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 
     final rows = await db.rawQuery('''
       WITH
         scheduled_today(task_id) AS (
           SELECT task_id FROM task_schedules
           WHERE schedule_type = 'weekly' AND day_of_week = ?
-          UNION
-          SELECT task_id FROM task_schedules
-          WHERE schedule_type = 'oneoff' AND specific_date = ?
         ),
         all_descendants(id) AS (
           SELECT task_id FROM scheduled_today
@@ -2174,41 +2169,9 @@ class DatabaseHelper {
         INNER JOIN tasks c ON tr2.child_id = c.id
         WHERE c.completed_at IS NULL AND c.skipped_at IS NULL
       )
-    ''', [dayOfWeek, dateStr]);
+    ''', [dayOfWeek]);
 
     return rows.map((r) => r['id'] as int).toSet();
-  }
-
-  /// Deletes expired one-off schedules (specific_date before today).
-  /// Enqueues sync removals for each deleted schedule.
-  /// Returns the number of deleted rows.
-  Future<int> cleanupExpiredSchedules() async {
-    final db = await database;
-    final now = DateTime.now();
-    final todayStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-
-    final expired = await db.query('task_schedules',
-      where: "schedule_type = 'oneoff' AND specific_date < ?",
-      whereArgs: [todayStr]);
-
-    for (final row in expired) {
-      final syncId = row['sync_id'] as String?;
-      final taskId = row['task_id'] as int;
-      if (syncId != null) {
-        final taskRows = await db.query('tasks',
-          columns: ['sync_id'], where: 'id = ?', whereArgs: [taskId]);
-        final taskSyncId = taskRows.isNotEmpty
-            ? taskRows.first['sync_id'] as String? : null;
-        await db.insert('sync_queue', {
-          'entity_type': 'schedule', 'action': 'remove',
-          'key1': syncId, 'key2': taskSyncId ?? '', 'created_at': now.millisecondsSinceEpoch,
-        });
-      }
-    }
-
-    return db.delete('task_schedules',
-      where: "schedule_type = 'oneoff' AND specific_date < ?",
-      whereArgs: [todayStr]);
   }
 
   /// Returns schedule data by sync_id (for pushing to Firestore).
@@ -2241,9 +2204,8 @@ class DatabaseHelper {
 
     final values = {
       'task_id': taskId,
-      'schedule_type': data['schedule_type'],
+      'schedule_type': 'weekly',
       'day_of_week': data['day_of_week'],
-      'specific_date': data['specific_date'],
       'sync_id': syncId,
       'updated_at': data['updated_at'],
     };

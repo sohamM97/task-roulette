@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/task_schedule.dart';
 
-/// Bottom sheet for editing a task's schedule (weekly days + one-off dates).
+/// Bottom sheet for editing a task's weekly schedule (day-of-week chips).
 /// Returns the new list of schedules, or null if cancelled.
 class ScheduleDialog extends StatefulWidget {
   final int taskId;
@@ -35,7 +35,6 @@ class ScheduleDialog extends StatefulWidget {
 
 class _ScheduleDialogState extends State<ScheduleDialog> {
   final Set<int> _selectedDays = {}; // 1=Mon..7=Sun
-  final List<String> _oneOffDates = []; // 'YYYY-MM-DD'
 
   static const _dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -43,78 +42,30 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
   void initState() {
     super.initState();
     for (final s in widget.currentSchedules) {
-      if (s.isWeekly && s.dayOfWeek != null) {
-        _selectedDays.add(s.dayOfWeek!);
-      } else if (s.isOneOff && s.specificDate != null) {
-        _oneOffDates.add(s.specificDate!);
-      }
+      _selectedDays.add(s.dayOfWeek);
     }
   }
 
   bool get _hasChanges {
     final oldDays = widget.currentSchedules
-        .where((s) => s.isWeekly && s.dayOfWeek != null)
-        .map((s) => s.dayOfWeek!)
+        .map((s) => s.dayOfWeek)
         .toSet();
-    final oldDates = widget.currentSchedules
-        .where((s) => s.isOneOff && s.specificDate != null)
-        .map((s) => s.specificDate!)
-        .toList()..sort();
-    final newDates = List<String>.from(_oneOffDates)..sort();
-    return !_setsEqual(oldDays, _selectedDays) ||
-        !_listsEqual(oldDates, newDates);
+    return !_setsEqual(oldDays, _selectedDays);
   }
 
   bool _setsEqual(Set<int> a, Set<int> b) =>
       a.length == b.length && a.containsAll(b);
 
-  bool _listsEqual(List<String> a, List<String> b) {
-    if (a.length != b.length) return false;
-    for (int i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
-
   List<TaskSchedule> _buildSchedules() {
-    final schedules = <TaskSchedule>[];
-    for (final day in _selectedDays) {
-      schedules.add(TaskSchedule(
-        taskId: widget.taskId,
-        scheduleType: 'weekly',
-        dayOfWeek: day,
-      ));
-    }
-    for (final date in _oneOffDates) {
-      schedules.add(TaskSchedule(
-        taskId: widget.taskId,
-        scheduleType: 'oneoff',
-        specificDate: date,
-      ));
-    }
-    return schedules;
-  }
-
-  Future<void> _pickDate() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: now,
-      firstDate: now,
-      lastDate: now.add(const Duration(days: 365)),
-    );
-    if (picked != null) {
-      final dateStr = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
-      if (!_oneOffDates.contains(dateStr)) {
-        setState(() => _oneOffDates.add(dateStr));
-      }
-    }
+    return _selectedDays.map((day) => TaskSchedule(
+      taskId: widget.taskId,
+      dayOfWeek: day,
+    )).toList();
   }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isEmpty = _selectedDays.isEmpty && _oneOffDates.isEmpty;
 
     return Padding(
       padding: EdgeInsets.only(
@@ -133,12 +84,9 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
               Text('Schedule',
                 style: Theme.of(context).textTheme.titleMedium),
               const Spacer(),
-              if (!isEmpty)
+              if (_selectedDays.isNotEmpty)
                 TextButton(
-                  onPressed: () => setState(() {
-                    _selectedDays.clear();
-                    _oneOffDates.clear();
-                  }),
+                  onPressed: () => setState(() => _selectedDays.clear()),
                   child: const Text('Clear all'),
                 ),
             ],
@@ -175,45 +123,13 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
               );
             }),
           ),
-          const SizedBox(height: 16),
-
-          // One-off dates
-          Row(
-            children: [
-              Text('Specific dates',
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: colorScheme.onSurfaceVariant)),
-              const Spacer(),
-              TextButton.icon(
-                onPressed: _pickDate,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Add date'),
-              ),
-            ],
-          ),
-          if (_oneOffDates.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              children: _oneOffDates.map((date) {
-                final parsed = DateTime.parse(date);
-                final label = '${parsed.day}/${parsed.month}/${parsed.year}';
-                return Chip(
-                  label: Text(label),
-                  onDeleted: () => setState(() => _oneOffDates.remove(date)),
-                  deleteIconColor: colorScheme.error,
-                );
-              }).toList(),
-            ),
-          ],
           const SizedBox(height: 20),
 
           // Save button
           SizedBox(
             width: double.infinity,
             child: FilledButton(
-              onPressed: _hasChanges || isEmpty != (widget.currentSchedules.isEmpty)
+              onPressed: _hasChanges || _selectedDays.isEmpty != widget.currentSchedules.isEmpty
                   ? () => Navigator.pop(context, _buildSchedules())
                   : null,
               child: const Text('Save'),

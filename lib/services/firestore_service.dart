@@ -275,9 +275,6 @@ class FirestoreService {
         if (s['day_of_week'] != null) {
           fields['day_of_week'] = {'integerValue': (s['day_of_week'] as int).toString()};
         }
-        if (s['specific_date'] != null) {
-          fields['specific_date'] = {'stringValue': s['specific_date'] as String};
-        }
         if (s['updated_at'] != null) {
           fields['updated_at'] = {'integerValue': (s['updated_at'] as int).toString()};
         }
@@ -340,7 +337,6 @@ class FirestoreService {
           'task_sync_id': _stringField(fields, 'task_sync_id') ?? '',
           'schedule_type': _stringField(fields, 'schedule_type') ?? 'weekly',
           'day_of_week': _intFieldNullable(fields, 'day_of_week'),
-          'specific_date': _stringField(fields, 'specific_date'),
           'updated_at': _intFieldNullable(fields, 'updated_at'),
         });
       }

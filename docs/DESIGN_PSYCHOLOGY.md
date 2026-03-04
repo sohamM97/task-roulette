@@ -101,7 +101,6 @@ ADHD = impaired executive function = the brain's "manager" is overloaded. Every 
 | Day chips, not intervals | "Every Monday" is one tap. "Every 3 days" requires mental arithmetic. |
 | Weight boost (×2.5), not guarantee | Keeps the roulette spirit — scheduled tasks *float up*, not dominate. No broken promise if they don't appear. |
 | No time-of-day | Time estimation is the hardest ADHD skill (Barkley, 2012). Days are coarse enough to be safe. |
-| One-off dates auto-expire | Zero cleanup. Past dates silently disappear. |
 | Propagation through parent tasks | Schedule a project, all its leaf tasks get boosted. One decision covers many tasks. |
 | No "missed schedule" feedback | Missing a Tuesday schedule has zero consequence. No streak, no badge, no guilt. |
 

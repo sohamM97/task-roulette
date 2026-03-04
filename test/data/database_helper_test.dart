@@ -3417,15 +3417,12 @@ void main() {
       final id = await db.insertTask(Task(name: 'Scheduled'));
 
       await db.replaceSchedules(id, [
-        TaskSchedule(taskId: id, scheduleType: 'weekly', dayOfWeek: 1),
-        TaskSchedule(taskId: id, scheduleType: 'weekly', dayOfWeek: 3),
-        TaskSchedule(taskId: id, scheduleType: 'oneoff', specificDate: '2026-06-15'),
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 3),
       ]);
 
       final schedules = await db.getSchedulesForTask(id);
-      expect(schedules.length, 3);
-      expect(schedules.where((s) => s.isWeekly).length, 2);
-      expect(schedules.where((s) => s.isOneOff).length, 1);
+      expect(schedules.length, 2);
       expect(schedules.every((s) => s.syncId != null), isTrue);
     });
 
@@ -3433,14 +3430,14 @@ void main() {
       final id = await db.insertTask(Task(name: 'Replace'));
 
       await db.replaceSchedules(id, [
-        TaskSchedule(taskId: id, scheduleType: 'weekly', dayOfWeek: 1),
-        TaskSchedule(taskId: id, scheduleType: 'weekly', dayOfWeek: 2),
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 2),
       ]);
       expect((await db.getSchedulesForTask(id)).length, 2);
 
       // Replace with different set
       await db.replaceSchedules(id, [
-        TaskSchedule(taskId: id, scheduleType: 'weekly', dayOfWeek: 5),
+        TaskSchedule(taskId: id, dayOfWeek: 5),
       ]);
       final schedules = await db.getSchedulesForTask(id);
       expect(schedules.length, 1);
@@ -3451,7 +3448,7 @@ void main() {
       final id = await db.insertTask(Task(name: 'Clear'));
 
       await db.replaceSchedules(id, [
-        TaskSchedule(taskId: id, scheduleType: 'weekly', dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 1),
       ]);
       expect((await db.getSchedulesForTask(id)).length, 1);
 
@@ -3465,7 +3462,7 @@ void main() {
       expect(await db.hasSchedules(id), isFalse);
 
       await db.replaceSchedules(id, [
-        TaskSchedule(taskId: id, scheduleType: 'weekly', dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 1),
       ]);
       expect(await db.hasSchedules(id), isTrue);
     });
@@ -3473,7 +3470,7 @@ void main() {
     test('cascade delete removes schedules when task deleted', () async {
       final id = await db.insertTask(Task(name: 'Cascade'));
       await db.replaceSchedules(id, [
-        TaskSchedule(taskId: id, scheduleType: 'weekly', dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 1),
       ]);
       expect(await db.hasSchedules(id), isTrue);
 
@@ -3485,7 +3482,7 @@ void main() {
       final id = await db.insertTask(Task(name: 'Leaf'));
       // Monday = weekday 1
       await db.replaceSchedules(id, [
-        TaskSchedule(taskId: id, scheduleType: 'weekly', dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 1),
       ]);
 
       // Check on a Monday (2026-03-02)
@@ -3499,22 +3496,6 @@ void main() {
       expect(notBoosted, isNot(contains(id)));
     });
 
-    test('getScheduleBoostedLeafIds with one-off date', () async {
-      final id = await db.insertTask(Task(name: 'OneOff'));
-      await db.replaceSchedules(id, [
-        TaskSchedule(taskId: id, scheduleType: 'oneoff',
-          specificDate: '2026-06-15'),
-      ]);
-
-      final boosted = await db.getScheduleBoostedLeafIds(
-        now: DateTime(2026, 6, 15));
-      expect(boosted, contains(id));
-
-      final notBoosted = await db.getScheduleBoostedLeafIds(
-        now: DateTime(2026, 6, 16));
-      expect(notBoosted, isNot(contains(id)));
-    });
-
     test('getScheduleBoostedLeafIds propagates from parent to leaf descendants', () async {
       // Create: Parent → Child (leaf)
       final parent = await db.insertTask(Task(name: 'Parent'));
@@ -3523,7 +3504,7 @@ void main() {
 
       // Schedule the parent on Wednesdays (weekday 3)
       await db.replaceSchedules(parent, [
-        TaskSchedule(taskId: parent, scheduleType: 'weekly', dayOfWeek: 3),
+        TaskSchedule(taskId: parent, dayOfWeek: 3),
       ]);
 
       // 2026-03-04 is a Wednesday
@@ -3544,7 +3525,7 @@ void main() {
 
       // Schedule grandparent on Fridays (weekday 5)
       await db.replaceSchedules(gp, [
-        TaskSchedule(taskId: gp, scheduleType: 'weekly', dayOfWeek: 5),
+        TaskSchedule(taskId: gp, dayOfWeek: 5),
       ]);
 
       // 2026-03-06 is a Friday
@@ -3558,7 +3539,7 @@ void main() {
     test('getScheduleBoostedLeafIds excludes completed tasks', () async {
       final id = await db.insertTask(Task(name: 'Done'));
       await db.replaceSchedules(id, [
-        TaskSchedule(taskId: id, scheduleType: 'weekly', dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 1),
       ]);
       await db.completeTask(id);
 
@@ -3567,28 +3548,10 @@ void main() {
       expect(boosted, isNot(contains(id)));
     });
 
-    test('cleanupExpiredSchedules removes past one-off schedules', () async {
-      final id = await db.insertTask(Task(name: 'Cleanup'));
-      await db.replaceSchedules(id, [
-        TaskSchedule(taskId: id, scheduleType: 'oneoff',
-          specificDate: '2020-01-01'), // expired
-        TaskSchedule(taskId: id, scheduleType: 'weekly', dayOfWeek: 1),
-        TaskSchedule(taskId: id, scheduleType: 'oneoff',
-          specificDate: '2099-12-31'), // future
-      ]);
-
-      final deleted = await db.cleanupExpiredSchedules();
-      expect(deleted, 1);
-
-      final remaining = await db.getSchedulesForTask(id);
-      expect(remaining.length, 2);
-      expect(remaining.any((s) => s.specificDate == '2020-01-01'), isFalse);
-    });
-
     test('deleteAllLocalData clears schedules', () async {
       final id = await db.insertTask(Task(name: 'LocalData'));
       await db.replaceSchedules(id, [
-        TaskSchedule(taskId: id, scheduleType: 'weekly', dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 1),
       ]);
 
       await db.deleteAllLocalData();

@@ -311,9 +311,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
 
     final provider = context.read<TaskProvider>();
 
-    // Clean up expired one-off schedules on new day
-    await DatabaseHelper().cleanupExpiredSchedules();
-
     final allLeaves = await provider.getAllLeafTasks();
 
     final leafIds = allLeaves.map((t) => t.id!).toList();
