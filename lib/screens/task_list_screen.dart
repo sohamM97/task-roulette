@@ -148,7 +148,7 @@ class TaskListScreenState extends State<TaskListScreen>
     );
     if (!mounted || result == null) return;
     if (result is SingleTask) {
-      final taskId = await context.read<TaskProvider>().addTask(result.name);
+      final taskId = await context.read<TaskProvider>().addTask(result.name, url: result.url);
       if (result.pinInTodays5 && mounted) {
         await _pinNewTaskInTodays5(taskId);
       }
