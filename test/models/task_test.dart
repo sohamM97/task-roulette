@@ -497,4 +497,59 @@ void main() {
       expect(restored.syncStatus, original.syncStatus);
     });
   });
+
+  group('Someday field', () {
+    test('defaults to false', () {
+      final task = Task(name: 'T');
+      expect(task.isSomeday, isFalse);
+    });
+
+    test('creates with isSomeday true', () {
+      final task = Task(name: 'T', isSomeday: true);
+      expect(task.isSomeday, isTrue);
+    });
+
+    test('toMap stores isSomeday as integer', () {
+      final task = Task(id: 1, name: 'T', createdAt: 100, isSomeday: true);
+      expect(task.toMap()['is_someday'], 1);
+
+      final task2 = Task(id: 2, name: 'T2', createdAt: 100, isSomeday: false);
+      expect(task2.toMap()['is_someday'], 0);
+    });
+
+    test('fromMap parses is_someday', () {
+      final task = Task.fromMap({
+        'id': 1, 'name': 'T', 'created_at': 100, 'is_someday': 1,
+      });
+      expect(task.isSomeday, isTrue);
+
+      final task2 = Task.fromMap({
+        'id': 2, 'name': 'T2', 'created_at': 100, 'is_someday': 0,
+      });
+      expect(task2.isSomeday, isFalse);
+    });
+
+    test('fromMap defaults is_someday to false when missing', () {
+      final task = Task.fromMap({'id': 1, 'name': 'T', 'created_at': 100});
+      expect(task.isSomeday, isFalse);
+    });
+
+    test('copyWith updates isSomeday', () {
+      final task = Task(name: 'T', isSomeday: false);
+      final updated = task.copyWith(isSomeday: true);
+      expect(updated.isSomeday, isTrue);
+    });
+
+    test('copyWith preserves isSomeday when not specified', () {
+      final task = Task(name: 'T', isSomeday: true);
+      final updated = task.copyWith(name: 'New');
+      expect(updated.isSomeday, isTrue);
+    });
+
+    test('toMap/fromMap round-trip preserves isSomeday', () {
+      final original = Task(id: 1, name: 'T', createdAt: 100, isSomeday: true);
+      final restored = Task.fromMap(original.toMap());
+      expect(restored.isSomeday, original.isSomeday);
+    });
+  });
 }

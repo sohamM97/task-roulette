@@ -45,10 +45,14 @@ ADHD = impaired executive function = the brain's "manager" is overloaded. Every 
 | Factor | Weight | Why |
 |--------|--------|-----|
 | High priority | 3x | User said it matters |
-| Quick task | 1.5x | Easy win = momentum |
 | Started | 2x | Commitment consistency (Cialdini, 2006) |
-| Stale (per day untouched) | +10%, max 4x | Gentle rescue from neglect |
+| Stale (logarithmic) | 1x → 2x cap | Gentle rescue from neglect (see below) |
 | New (< 3 days) | 1.3x | Capitalize on initial enthusiasm |
+| Someday | no staleness | Aspirational tasks don't create pressure |
+
+**Staleness curve:** `1 + 0.25 × ln(days + 1)`, capped at 2×. Grows fast in the first week (surfaces genuinely forgotten tasks), then flattens. A task untouched for 7 days gets ~1.6×; at 30 days it hits the 2× cap. The old linear model (4× cap) caused runaway compounding — worst case was 24× (3 × 2 × 4). Now the worst case is 12× (3 × 2 × 2).
+
+**Someday flag:** For long-term goals and aspirational items (e.g. "Visit Japan"). These tasks skip staleness entirely — they stay at base weight regardless of age, so they can still appear in roulette but never dominate due to age. Mutually exclusive with high priority (they're conceptual opposites). Inspired by GTD's "Someday/Maybe" list, but kept in the main task list rather than a separate view.
 
 **Why invisible?** Showing weights would invite meta-optimization — that's procrastination disguised as productivity.
 
@@ -81,7 +85,7 @@ ADHD = impaired executive function = the brain's "manager" is overloaded. Every 
 | Complex config | Executive function tax | Sensible defaults |
 | Calendar scheduling | Requires time estimation | "Today's 5" |
 | Leaderboards | External pressure = anxiety | Private, personal |
-| Difficulty ratings | Triggers effort avoidance | Quick/normal toggle |
+| Difficulty ratings | Triggers effort avoidance | Removed — was rarely used |
 | Detailed stats | Meta-work, not real work | Simple progress bar |
 | Explicit repeating | Config overhead, guilt on miss | Implicit via "Done today" |
 
