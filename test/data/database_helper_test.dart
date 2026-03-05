@@ -2793,23 +2793,23 @@ void main() {
       await db.importDatabase(v14DbPath);
     });
 
-    test('rejects version 15 as too high', () async {
+    test('rejects version 16 as too high', () async {
       DatabaseHelper.testDatabasePath = mainDbPath;
       await db.reset();
       await db.database;
 
-      final v15DbPath = '${tempDir.path}/v15.db';
-      final v15Db = await openDatabase(v15DbPath, version: 15,
+      final tooHighDbPath = '${tempDir.path}/v16.db';
+      final tooHighDb = await openDatabase(tooHighDbPath, version: 16,
         onCreate: (db, version) async {
           await db.execute('CREATE TABLE tasks (id INTEGER PRIMARY KEY, name TEXT)');
           await db.execute('CREATE TABLE task_relationships (parent_id INTEGER, child_id INTEGER)');
           await db.execute('CREATE TABLE task_dependencies (task_id INTEGER, depends_on_task_id INTEGER)');
         },
       );
-      await v15Db.close();
+      await tooHighDb.close();
 
       expect(
-        () => db.importDatabase(v15DbPath),
+        () => db.importDatabase(tooHighDbPath),
         throwsA(isA<FormatException>().having(
           (e) => e.message, 'message', contains('Incompatible backup version'),
         )),

@@ -11,6 +11,7 @@ class LeafTaskDetail extends StatelessWidget {
   final VoidCallback onRename;
   final void Function(String?) onUpdateUrl;
   final ValueChanged<int> onUpdatePriority;
+  final ValueChanged<bool> onUpdateSomeday;
   final VoidCallback? onWorkedOn;
   final VoidCallback? onUndoWorkedOn;
   final List<Task> dependencies;
@@ -30,6 +31,7 @@ class LeafTaskDetail extends StatelessWidget {
     required this.onRename,
     required this.onUpdateUrl,
     required this.onUpdatePriority,
+    required this.onUpdateSomeday,
     this.onWorkedOn,
     this.onUndoWorkedOn,
     this.dependencies = const [],
@@ -245,6 +247,18 @@ class LeafTaskDetail extends StatelessWidget {
                     size: 20,
                     color: isHighPriority
                         ? colorScheme.error
+                        : colorScheme.onSurfaceVariant.withAlpha(120),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => onUpdateSomeday(!task.isSomeday),
+                  tooltip: task.isSomeday ? 'Someday' : 'Mark as someday',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    task.isSomeday ? Icons.cloud : Icons.cloud_outlined,
+                    size: 20,
+                    color: task.isSomeday
+                        ? colorScheme.tertiary
                         : colorScheme.onSurfaceVariant.withAlpha(120),
                   ),
                 ),

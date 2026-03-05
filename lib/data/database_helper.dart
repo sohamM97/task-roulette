@@ -69,7 +69,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 14,
+      version: 15,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -90,7 +90,8 @@ class DatabaseHelper {
             next_due_at INTEGER,
             sync_id TEXT,
             updated_at INTEGER,
-            sync_status TEXT NOT NULL DEFAULT 'synced'
+            sync_status TEXT NOT NULL DEFAULT 'synced',
+            is_someday INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_sync_id ON tasks(sync_id)');
@@ -245,6 +246,9 @@ class DatabaseHelper {
         if (oldVersion < 14) {
           await db.execute('ALTER TABLE todays_five_state ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0');
         }
+        if (oldVersion < 15) {
+          await db.execute('ALTER TABLE tasks ADD COLUMN is_someday INTEGER NOT NULL DEFAULT 0');
+        }
       },
     );
   }
@@ -287,9 +291,9 @@ class DatabaseHelper {
       // Check schema version is compatible
       final versionResult = await testDb.rawQuery('PRAGMA user_version');
       final version = versionResult.first.values.first as int;
-      if (version < 1 || version > 14) {
+      if (version < 1 || version > 15) {
         throw FormatException(
-          'Incompatible backup version ($version). This app supports versions 1-14.',
+          'Incompatible backup version ($version). This app supports versions 1-15.',
         );
       }
 
@@ -673,6 +677,11 @@ class DatabaseHelper {
   Future<void> updateTaskPriority(int taskId, int priority) async {
     final db = await database;
     await db.update('tasks', {'priority': priority, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
+  }
+
+  Future<void> updateTaskSomeday(int taskId, bool isSomeday) async {
+    final db = await database;
+    await db.update('tasks', {'is_someday': isSomeday ? 1 : 0, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
   }
 
   Future<void> markWorkedOn(int taskId) async {

@@ -269,12 +269,15 @@ class TaskProvider extends ChangeNotifier {
     // Started: committed tasks = 2x
     if (t.isStarted) w *= 2.0;
 
-    // Staleness: +10% per day untouched, max 4x at 30 days
-    final lastTouched = t.lastWorkedAt ?? t.startedAt ?? t.createdAt;
-    final daysSince = DateTime.now()
-        .difference(DateTime.fromMillisecondsSinceEpoch(lastTouched))
-        .inDays;
-    w *= 1.0 + (daysSince.clamp(0, 30) * 0.1);
+    // Staleness: logarithmic curve, cap 2x. Someday tasks skip staleness.
+    if (!t.isSomeday) {
+      final lastTouched = t.lastWorkedAt ?? t.startedAt ?? t.createdAt;
+      final daysSince = DateTime.now()
+          .difference(DateTime.fromMillisecondsSinceEpoch(lastTouched))
+          .inDays;
+      final staleness = 1.0 + 0.25 * log(daysSince + 1);
+      w *= staleness.clamp(1.0, 2.0);
+    }
 
     // Novelty: added in last 3 days = 1.3x
     final daysOld = DateTime.now()
@@ -491,9 +494,32 @@ class TaskProvider extends ChangeNotifier {
   }
 
   Future<void> updateTaskPriority(int taskId, int priority) async {
+    if (priority >= 1) {
+      // Clear someday when marking as high priority
+      await _db.updateTaskSomeday(taskId, false);
+    }
     await _db.updateTaskPriority(taskId, priority);
     if (_currentParent?.id == taskId) {
-      _currentParent = _currentParent!.copyWith(priority: priority);
+      _currentParent = _currentParent!.copyWith(
+        priority: priority,
+        isSomeday: priority >= 1 ? false : null,
+      );
+    }
+    await _refreshCurrentList();
+  }
+
+  /// Toggles someday flag. Mutually exclusive with high priority.
+  Future<void> updateTaskSomeday(int taskId, bool isSomeday) async {
+    if (isSomeday) {
+      // Clear priority when marking as someday
+      await _db.updateTaskPriority(taskId, 0);
+    }
+    await _db.updateTaskSomeday(taskId, isSomeday);
+    if (_currentParent?.id == taskId) {
+      _currentParent = _currentParent!.copyWith(
+        isSomeday: isSomeday,
+        priority: isSomeday ? 0 : null,
+      );
     }
     await _refreshCurrentList();
   }
