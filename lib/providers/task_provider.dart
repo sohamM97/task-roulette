@@ -241,6 +241,25 @@ class TaskProvider extends ChangeNotifier {
     return _db.getParents(childId);
   }
 
+  /// Returns archived parents of [childId].
+  Future<List<Task>> getArchivedParents(int childId) async {
+    return _db.getArchivedParents(childId);
+  }
+
+  /// Removes relationships to archived parents for [childId].
+  Future<void> removeArchivedParentLinks(int childId, List<Task> archivedParents) async {
+    for (final parent in archivedParents) {
+      await _db.removeRelationship(parent.id!, childId);
+    }
+    await _refreshCurrentList();
+  }
+
+  /// Re-adds a previously existing parent-child relationship (for undo).
+  /// Skips cycle check since the relationship is known to be safe.
+  Future<void> addRelationship(int parentId, int childId) async {
+    await _db.addRelationship(parentId, childId);
+  }
+
   double _taskWeight(Task t) {
     double w = 1.0;
 
@@ -329,8 +348,11 @@ class TaskProvider extends ChangeNotifier {
     return _db.getArchivedTasks();
   }
 
-  Future<Map<int, List<String>>> getParentNamesForTaskIds(List<int> taskIds) async {
-    return _db.getParentNamesForTaskIds(taskIds);
+  Future<Map<int, List<String>>> getParentNamesForTaskIds(
+    List<int> taskIds, {
+    bool includeArchived = false,
+  }) async {
+    return _db.getParentNamesForTaskIds(taskIds, includeArchived: includeArchived);
   }
 
   /// Re-completes a task (for undo-restore). Unlike completeTask(), this does

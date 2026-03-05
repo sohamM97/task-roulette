@@ -37,7 +37,9 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
     final provider = context.read<TaskProvider>();
     final tasks = await provider.getArchivedTasks();
     final taskIds = tasks.map((t) => t.id!).toList();
-    final parentNames = await provider.getParentNamesForTaskIds(taskIds);
+    final parentNames = await provider.getParentNamesForTaskIds(
+      taskIds, includeArchived: true,
+    );
 
     if (!mounted) return;
     // Precompute archive labels once using a single "now" snapshot.
@@ -120,10 +122,53 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
 
   Future<void> _restoreTask(Task task) async {
     final provider = context.read<TaskProvider>();
+
+    // Check for archived parents before restoring
+    final archivedParents = await provider.getArchivedParents(task.id!);
+
+    if (archivedParents.isNotEmpty && mounted) {
+      final parentNames = archivedParents.map((p) => '"${p.name}"').join(' and ');
+      final activeParents = await provider.getParents(task.id!);
+      if (!mounted) return;
+      final willBeRoot = activeParents.isEmpty;
+      final verb = archivedParents.length > 1 ? 'have' : 'has';
+
+      final message = willBeRoot
+          ? '"${task.name}" was listed under $parentNames, which $verb since been completed. '
+              'It will be restored to the top level.'
+          : '"${task.name}" was also listed under $parentNames, which $verb since been completed. '
+              'It will no longer show under ${archivedParents.length > 1 ? 'them' : 'it'}.';
+
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Restore task'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Restore'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirm != true || !mounted) return;
+    }
+
     if (task.isSkipped) {
       await provider.unskipTask(task.id!);
     } else {
       await provider.uncompleteTask(task.id!);
+    }
+
+    // Remove links to archived parents
+    if (archivedParents.isNotEmpty) {
+      await provider.removeArchivedParentLinks(task.id!, archivedParents);
     }
 
     if (!mounted) return;
@@ -143,6 +188,10 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
               await provider.reSkipTask(task.id!);
             } else {
               await provider.reCompleteTask(task.id!);
+            }
+            // Re-add archived parent links that were removed
+            for (final parent in archivedParents) {
+              await provider.addRelationship(parent.id!, task.id!);
             }
             // _loadData() called automatically via TaskProvider listener.
           },
