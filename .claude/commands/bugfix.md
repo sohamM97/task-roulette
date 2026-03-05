@@ -1,4 +1,4 @@
-# Start a Bugfix
+# Create a Bugfix Branch
 
 Create a bugfix branch from an up-to-date `main`.
 
