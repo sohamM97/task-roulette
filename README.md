@@ -25,8 +25,8 @@ flutter test
 - **Today's 5** — a daily focus list of 5 tasks, picked by weighted random to surface what matters
 - **Random pick** — can't decide what to do? Let the app choose for you, with "Go Deeper" for drilling into subtasks
 - **Start working / Done today** — track what you're actively working on and what you finished today
-- **Priority & difficulty** — tag tasks to influence how often they get picked
-- **Quick task & brain dump** — rapidly capture ideas without worrying about where they go
+- **Priority** — tag tasks as high priority to influence how often they get picked
+- **Brain dump** — rapidly capture ideas without worrying about where they go
 - **Search** — find any task instantly from anywhere in the app
 - **Soft dependencies** — mark tasks as "do after..." to gently guide your order without hard blocking
 - **Cloud sync** — optional Google Sign-In to sync tasks across devices via Firestore

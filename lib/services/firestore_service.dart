@@ -430,7 +430,6 @@ class FirestoreService {
       if (task.skippedAt != null)
         'skipped_at': {'integerValue': task.skippedAt.toString()},
       'priority': {'integerValue': task.priority.toString()},
-      'difficulty': {'integerValue': task.difficulty.toString()},
       if (task.lastWorkedAt != null)
         'last_worked_at': {'integerValue': task.lastWorkedAt.toString()},
       if (task.repeatInterval != null)
@@ -466,7 +465,6 @@ class FirestoreService {
       url: url,
       skippedAt: _intFieldNullable(fields, 'skipped_at'),
       priority: _intField(fields, 'priority'),
-      difficulty: _intField(fields, 'difficulty'),
       lastWorkedAt: _intFieldNullable(fields, 'last_worked_at'),
       repeatInterval: repeatInterval,
       nextDueAt: _intFieldNullable(fields, 'next_due_at'),

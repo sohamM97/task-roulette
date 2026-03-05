@@ -372,10 +372,6 @@ class TaskListScreenState extends State<TaskListScreen>
     await context.read<TaskProvider>().updateTaskPriority(task.id!, priority);
   }
 
-  Future<void> _updateQuickTask(Task task, int quickTask) async {
-    await context.read<TaskProvider>().updateQuickTask(task.id!, quickTask);
-  }
-
   Future<void> _workedOn(Task task) async {
     final provider = context.read<TaskProvider>();
     final previousLastWorkedAt = task.lastWorkedAt;
@@ -628,7 +624,6 @@ class TaskListScreenState extends State<TaskListScreen>
           onRename: () => _renameTask(task),
           onUpdateUrl: (url) => _updateUrl(task, url),
           onUpdatePriority: (p) => _updatePriority(task, p),
-          onUpdateQuickTask: (q) => _updateQuickTask(task, q),
           onWorkedOn: () => _workedOn(task),
           onUndoWorkedOn: () async {
             final provider = context.read<TaskProvider>();

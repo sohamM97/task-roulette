@@ -146,7 +146,6 @@ Task copyWith({
   String? Function()? url,
   int? Function()? skippedAt,
   int? priority,
-  int? difficulty,
   int? Function()? lastWorkedAt,
   String? Function()? repeatInterval,
   int? Function()? nextDueAt,
@@ -160,7 +159,6 @@ Task copyWith({
     url: url != null ? url() : this.url,
     skippedAt: skippedAt != null ? skippedAt() : this.skippedAt,
     priority: priority ?? this.priority,
-    difficulty: difficulty ?? this.difficulty,
     lastWorkedAt: lastWorkedAt != null ? lastWorkedAt() : this.lastWorkedAt,
     repeatInterval: repeatInterval != null ? repeatInterval() : this.repeatInterval,
     nextDueAt: nextDueAt != null ? nextDueAt() : this.nextDueAt,
@@ -313,11 +311,6 @@ The `default` case falls back to 1-day for unrecognized intervals.
 ---
 
 ## Nit
-
-### N1. Rename `difficulty` field internally
-**File:** `lib/models/task.dart:11`
-
-The field semantically means "quick task" but is named `difficulty`. When adding `copyWith()` (I2), rename internally to `isQuickTaskFlag` or similar, keeping the DB column as `difficulty`.
 
 ### N2. `TaskPickerDialog` filtering has no debounce
 **File:** `lib/widgets/task_picker_dialog.dart:79`

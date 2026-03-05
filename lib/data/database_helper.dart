@@ -653,11 +653,6 @@ class DatabaseHelper {
     await db.update('tasks', {'priority': priority, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
   }
 
-  Future<void> updateTaskQuickTask(int taskId, int quickTask) async {
-    final db = await database;
-    await db.update('tasks', {'difficulty': quickTask, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
-  }
-
   Future<void> markWorkedOn(int taskId) async {
     final db = await database;
     await db.update(

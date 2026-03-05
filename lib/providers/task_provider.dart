@@ -247,9 +247,6 @@ class TaskProvider extends ChangeNotifier {
     // Priority: high = 3x
     if (t.isHighPriority) w *= 3.0;
 
-    // Quick task: momentum starter = 1.5x
-    if (t.isQuickTask) w *= 1.5;
-
     // Started: committed tasks = 2x
     if (t.isStarted) w *= 2.0;
 
@@ -296,7 +293,6 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Picks n tasks via weighted random without replacement.
-  /// Tries to include at least 1 quick task if available.
   List<Task> pickWeightedN(List<Task> candidates, int n) {
     if (candidates.isEmpty) return [];
     final eligible = candidates.where((t) =>
@@ -307,25 +303,7 @@ class TaskProvider extends ChangeNotifier {
     final picked = <Task>[];
     final remaining = List<Task>.from(eligible);
 
-    // Ensure at least 1 quick task if available and not yet picked
-    if (picked.length < n && !picked.any((t) => t.isQuickTask)) {
-      final quickTasks = remaining.where((t) => t.isQuickTask).toList();
-      if (quickTasks.isNotEmpty) {
-        final weights = quickTasks.map(_taskWeight).toList();
-        final total = weights.fold(0.0, (a, b) => a + b);
-        var roll = _random.nextDouble() * total;
-        Task? quickPick;
-        for (int i = 0; i < quickTasks.length; i++) {
-          roll -= weights[i];
-          if (roll <= 0) { quickPick = quickTasks[i]; break; }
-        }
-        quickPick ??= quickTasks.last;
-        picked.add(quickPick);
-        remaining.remove(quickPick);
-      }
-    }
-
-    // Fill remaining slots via weighted random
+    // Fill slots via weighted random
     while (picked.length < n && remaining.isNotEmpty) {
       final weights = remaining.map(_taskWeight).toList();
       final total = weights.fold(0.0, (a, b) => a + b);
@@ -494,14 +472,6 @@ class TaskProvider extends ChangeNotifier {
     await _db.updateTaskPriority(taskId, priority);
     if (_currentParent?.id == taskId) {
       _currentParent = _currentParent!.copyWith(priority: priority);
-    }
-    await _refreshCurrentList();
-  }
-
-  Future<void> updateQuickTask(int taskId, int quickTask) async {
-    await _db.updateTaskQuickTask(taskId, quickTask);
-    if (_currentParent?.id == taskId) {
-      _currentParent = _currentParent!.copyWith(difficulty: quickTask);
     }
     await _refreshCurrentList();
   }

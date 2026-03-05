@@ -1573,15 +1573,6 @@ void main() {
       expect(task.isHighPriority, isTrue);
     });
 
-    test('updateTaskQuickTask changes difficulty/quick-task flag', () async {
-      final id = await db.insertTask(Task(name: 'Task'));
-      await db.updateTaskQuickTask(id, 1); // quick
-
-      final task = await db.getTaskById(id);
-      expect(task!.difficulty, 1);
-      expect(task.isQuickTask, isTrue);
-    });
-
     test('getRootTaskIds returns only IDs', () async {
       final id1 = await db.insertTask(Task(name: 'Root 1'));
       final id2 = await db.insertTask(Task(name: 'Root 2'));

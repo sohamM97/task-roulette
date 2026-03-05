@@ -12,24 +12,7 @@ ADHD = impaired executive function = the brain's "manager" is overloaded. Every 
 
 ---
 
-## 1. Quick Task Toggle (replaces Difficulty)
-
-**Old:** 3-level difficulty (Easy/Medium/Hard)
-**New:** Binary lightning bolt (quick / normal)
-
-**Why the old way was bad:**
-- Estimating effort *is* an executive function — the exact thing ADHD impairs
-- "Hard" label triggers effort avoidance (Barkley, 2015)
-- 3 effort levels = open-ended evaluation, which triggers ADHD decision paralysis (Barkley, 1997)
-
-**Why the new way works:**
-- "Is this quick?" — yes or no, no judgment needed
-- Quick tasks build momentum (Task Snowball Method)
-- Not required at creation — set it later, or never
-
----
-
-## 2. Three Ways to Finish (replaces explicit repeating)
+## 1. Three Ways to Finish (replaces explicit repeating)
 
 **The old model** had explicit "repeating" tasks with schedules. Too much config, too many concepts.
 

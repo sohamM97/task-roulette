@@ -15,14 +15,12 @@ void main() {
         name: 'Test task',
         createdAt: 1000000,
         priority: 1,
-        difficulty: 2,
       );
       final fields = service.taskToFirestoreFields(task);
 
       expect(fields['name'], {'stringValue': 'Test task'});
       expect(fields['created_at'], {'integerValue': '1000000'});
       expect(fields['priority'], {'integerValue': '1'});
-      expect(fields['difficulty'], {'integerValue': '2'});
       expect(fields.containsKey('updated_at'), isTrue);
     });
 
@@ -35,7 +33,6 @@ void main() {
         url: 'https://example.com',
         skippedAt: 1800000,
         priority: 2,
-        difficulty: 1,
         lastWorkedAt: 1900000,
         repeatInterval: 'daily',
         nextDueAt: 3000000,
@@ -79,7 +76,6 @@ void main() {
           'url': {'stringValue': 'https://example.com'},
           'skipped_at': {'integerValue': '1800000'},
           'priority': {'integerValue': '1'},
-          'difficulty': {'integerValue': '2'},
           'last_worked_at': {'integerValue': '1900000'},
           'repeat_interval': {'stringValue': 'daily'},
           'next_due_at': {'integerValue': '3000000'},
@@ -98,7 +94,6 @@ void main() {
       expect(task.url, 'https://example.com');
       expect(task.skippedAt, 1800000);
       expect(task.priority, 1);
-      expect(task.difficulty, 2);
       expect(task.lastWorkedAt, 1900000);
       expect(task.repeatInterval, 'daily');
       expect(task.nextDueAt, 3000000);
@@ -113,7 +108,6 @@ void main() {
           'name': {'stringValue': 'Simple'},
           'created_at': {'integerValue': '500'},
           'priority': {'integerValue': '0'},
-          'difficulty': {'integerValue': '0'},
         },
       };
 
@@ -148,7 +142,6 @@ void main() {
           'name': {'stringValue': 'Task'},
           'created_at': {'integerValue': '0'},
           'priority': {'integerValue': '0'},
-          'difficulty': {'integerValue': '0'},
         },
       };
 
@@ -164,7 +157,6 @@ void main() {
           'name': {'stringValue': 'Task'},
           'created_at': {'integerValue': '12345'},
           'priority': {'integerValue': '2'},
-          'difficulty': {'integerValue': '1'},
           'updated_at': {'integerValue': '99999'},
         },
       };
@@ -172,7 +164,6 @@ void main() {
       final task = service.taskFromFirestoreDoc(doc);
       expect(task!.createdAt, 12345);
       expect(task.priority, 2);
-      expect(task.difficulty, 1);
       expect(task.updatedAt, 99999);
     });
 
@@ -182,7 +173,6 @@ void main() {
         'fields': {
           'created_at': {'integerValue': '0'},
           'priority': {'integerValue': '0'},
-          'difficulty': {'integerValue': '0'},
         },
       };
 
@@ -201,7 +191,6 @@ void main() {
       final task = service.taskFromFirestoreDoc(doc);
       expect(task!.createdAt, 0);
       expect(task.priority, 0);
-      expect(task.difficulty, 0);
     });
   });
 
@@ -215,7 +204,6 @@ void main() {
         url: 'https://example.com/path',
         skippedAt: 1800000,
         priority: 2,
-        difficulty: 1,
         lastWorkedAt: 1900000,
         repeatInterval: 'weekly',
         nextDueAt: 3000000,
@@ -241,7 +229,6 @@ void main() {
       expect(restored.url, original.url);
       expect(restored.skippedAt, original.skippedAt);
       expect(restored.priority, original.priority);
-      expect(restored.difficulty, original.difficulty);
       expect(restored.lastWorkedAt, original.lastWorkedAt);
       expect(restored.repeatInterval, original.repeatInterval);
       expect(restored.nextDueAt, original.nextDueAt);
@@ -301,7 +288,6 @@ void main() {
           'name': {'stringValue': longName},
           'created_at': {'integerValue': '0'},
           'priority': {'integerValue': '0'},
-          'difficulty': {'integerValue': '0'},
         },
       };
 
@@ -317,7 +303,6 @@ void main() {
           'name': {'stringValue': 'Task'},
           'created_at': {'integerValue': '0'},
           'priority': {'integerValue': '0'},
-          'difficulty': {'integerValue': '0'},
           'url': {'stringValue': longUrl},
         },
       };
@@ -334,7 +319,6 @@ void main() {
           'name': {'stringValue': 'Task'},
           'created_at': {'integerValue': '0'},
           'priority': {'integerValue': '0'},
-          'difficulty': {'integerValue': '0'},
           'url': {'stringValue': normalUrl},
         },
       };
@@ -351,7 +335,6 @@ void main() {
           'name': {'stringValue': 'Task'},
           'created_at': {'integerValue': '0'},
           'priority': {'integerValue': '0'},
-          'difficulty': {'integerValue': '0'},
           'repeat_interval': {'stringValue': longInterval},
         },
       };
@@ -367,7 +350,6 @@ void main() {
           'name': {'stringValue': 'Normal task'},
           'created_at': {'integerValue': '100'},
           'priority': {'integerValue': '1'},
-          'difficulty': {'integerValue': '2'},
           'url': {'stringValue': 'https://example.com'},
           'repeat_interval': {'stringValue': 'daily'},
         },
@@ -388,7 +370,6 @@ void main() {
           'name': {'stringValue': 'Task'},
           'created_at': {'integerValue': '0'},
           'priority': {'integerValue': '0'},
-          'difficulty': {'integerValue': '0'},
           'url': {'stringValue': exactUrl},
         },
       };
@@ -405,7 +386,6 @@ void main() {
           'name': {'stringValue': 'Task'},
           'created_at': {'integerValue': '0'},
           'priority': {'integerValue': '0'},
-          'difficulty': {'integerValue': '0'},
           'repeat_interval': {'stringValue': exactInterval},
         },
       };
@@ -422,7 +402,6 @@ void main() {
           'name': {'stringValue': exactName},
           'created_at': {'integerValue': '0'},
           'priority': {'integerValue': '0'},
-          'difficulty': {'integerValue': '0'},
         },
       };
 
@@ -440,7 +419,6 @@ void main() {
           'name': {'stringValue': 'Task'},
           'created_at': {'integerValue': 42},
           'priority': {'integerValue': 1},
-          'difficulty': {'integerValue': 3},
           'updated_at': {'integerValue': 9999},
         },
       };
@@ -448,7 +426,6 @@ void main() {
       final task = service.taskFromFirestoreDoc(doc);
       expect(task!.createdAt, 42);
       expect(task.priority, 1);
-      expect(task.difficulty, 3);
       expect(task.updatedAt, 9999);
     });
 
@@ -459,14 +436,12 @@ void main() {
           'name': {'stringValue': 'Task'},
           'created_at': {'integerValue': 'not-a-number'},
           'priority': {'integerValue': ''},
-          'difficulty': {'integerValue': 'abc'},
         },
       };
 
       final task = service.taskFromFirestoreDoc(doc);
       expect(task!.createdAt, 0);
       expect(task.priority, 0);
-      expect(task.difficulty, 0);
     });
 
     test('returns null for nullable int fields with non-parseable values', () {
@@ -476,7 +451,6 @@ void main() {
           'name': {'stringValue': 'Task'},
           'created_at': {'integerValue': '100'},
           'priority': {'integerValue': '0'},
-          'difficulty': {'integerValue': '0'},
           'completed_at': {'integerValue': 'invalid'},
           'started_at': {'integerValue': 'xyz'},
         },
@@ -494,7 +468,6 @@ void main() {
           'name': {'stringValue': 'Task'},
           'created_at': {'wrongKey': '100'},
           'priority': {'integerValue': '0'},
-          'difficulty': {'integerValue': '0'},
         },
       };
 
@@ -509,7 +482,6 @@ void main() {
           'name': {'stringValue': 'Task'},
           'created_at': {'integerValue': '0'},
           'priority': {'integerValue': '0'},
-          'difficulty': {'integerValue': '0'},
           // skipped_at, last_worked_at etc. are completely absent
         },
       };
@@ -545,7 +517,6 @@ void main() {
         url: 'https://x.com',
         skippedAt: 4,
         priority: 5,
-        difficulty: 6,
         lastWorkedAt: 7,
         repeatInterval: 'weekly',
         nextDueAt: 8,
@@ -553,7 +524,7 @@ void main() {
       );
       final fields = service.taskToFirestoreFields(task);
 
-      expect(fields.length, 12); // all 12 fields
+      expect(fields.length, 11); // all 11 fields
       expect(fields['name'], {'stringValue': 'Full'});
       expect(fields['completed_at'], {'integerValue': '2'});
       expect(fields['started_at'], {'integerValue': '3'});
@@ -568,8 +539,8 @@ void main() {
       final task = Task(name: 'Minimal', createdAt: 0, updatedAt: 100);
       final fields = service.taskToFirestoreFields(task);
 
-      // Required: name, created_at, priority, difficulty, updated_at = 5
-      expect(fields.length, 5);
+      // Required: name, created_at, priority, updated_at = 4
+      expect(fields.length, 4);
       expect(fields.containsKey('completed_at'), isFalse);
       expect(fields.containsKey('started_at'), isFalse);
       expect(fields.containsKey('url'), isFalse);
