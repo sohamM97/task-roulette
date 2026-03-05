@@ -5,6 +5,7 @@ import 'package:path/path.dart';
 import 'package:uuid/uuid.dart';
 import '../models/task.dart';
 import '../models/task_relationship.dart';
+import 'todays_five_pin_helper.dart' show maxSlots;
 import '../platform/platform_utils.dart'
     if (dart.library.io) '../platform/platform_utils_native.dart' as platform;
 
@@ -1952,19 +1953,32 @@ class DatabaseHelper {
       ));
     }
 
-    // Append local-only tasks that are pinned or completed (up to 5 total)
+    // Append local-only pinned tasks (always preserved, up to maxSlots total)
     var nextOrder = mergedList.length;
+    for (final localId in localState.taskIds) {
+      if (mergedList.length >= maxSlots) break;
+      if (remoteIdSet.contains(localId)) continue;
+      if (!localState.pinnedIds.contains(localId)) continue;
+      mergedList.add((
+        taskId: localId,
+        isCompleted: localState.completedIds.contains(localId),
+        isWorkedOn: localState.workedOnIds.contains(localId),
+        isPinned: true,
+        sortOrder: nextOrder++,
+      ));
+    }
+
+    // Append local-only completed (non-pinned) tasks up to 5 total
     for (final localId in localState.taskIds) {
       if (mergedList.length >= 5) break;
       if (remoteIdSet.contains(localId)) continue;
-      final isPinned = localState.pinnedIds.contains(localId);
-      final isCompleted = localState.completedIds.contains(localId);
-      if (!isPinned && !isCompleted) continue;
+      if (localState.pinnedIds.contains(localId)) continue;
+      if (!localState.completedIds.contains(localId)) continue;
       mergedList.add((
         taskId: localId,
-        isCompleted: isCompleted,
+        isCompleted: true,
         isWorkedOn: localState.workedOnIds.contains(localId),
-        isPinned: isPinned,
+        isPinned: false,
         sortOrder: nextOrder++,
       ));
     }
