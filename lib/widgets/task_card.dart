@@ -279,10 +279,10 @@ class TaskCard extends StatelessWidget {
                           color: Theme.of(context).colorScheme.error,
                         ),
                       if (task.isSomeday)
-                        Icon(
-                          Icons.cloud,
+                        const Icon(
+                          Icons.bedtime,
                           size: 16,
-                          color: Theme.of(context).colorScheme.tertiary,
+                          color: Color(0xFF7EB8D8), // soft sky blue
                         ),
                     ],
                   ),

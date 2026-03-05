@@ -152,4 +152,22 @@ void main() {
       expect(find.text('Shopping'), findsOneWidget);
     });
   });
+
+  group('TaskCard someday badge', () {
+    testWidgets('shows bedtime icon when isSomeday is true', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Someday task', createdAt: 1000, isSomeday: true),
+      ));
+
+      expect(find.byIcon(Icons.bedtime), findsOneWidget);
+    });
+
+    testWidgets('no bedtime icon when isSomeday is false', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Normal task', createdAt: 1000),
+      ));
+
+      expect(find.byIcon(Icons.bedtime), findsNothing);
+    });
+  });
 }

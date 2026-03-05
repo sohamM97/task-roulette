@@ -9,15 +9,15 @@ Last updated: 2026-03-04
 ## Covered
 
 ### Models (complete)
-- **test/models/task_test.dart** (~120 tests) — Construction, defaults, all timestamps, state flags, priority, sync fields, `toMap`/`fromMap`/`copyWith` round-trips.
+- **test/models/task_test.dart** (~128 tests) — Construction, defaults, all timestamps, state flags, priority, sync fields, someday field (`toMap`/`fromMap`/`copyWith` round-trips, default false, integer serialization).
 - **test/models/task_relationship_test.dart** (4 tests) — Construction, `toMap`, `fromMap`, round-trip.
 
 ### Data Layer (excellent)
-- **test/data/database_helper_test.dart** (~200+ tests) — Task CRUD, completion, start/unstart, skip/archive, dependencies (add/remove/blocking/paths), cycle detection (`hasPath`, `wouldRelationshipCreateCycle`, `wouldDependencyCreateCycle`), DAG ops (`getAllLeafTasks`, `deleteTaskAndReparentChildren`, `deleteTaskSubtree`), ancestry paths, repeating tasks, worked-on tracking, field updates, sync fields/dirty tracking/sync queue, import/export validation, Today's 5 state (save/load/pin/sync merge via `upsertTodaysFiveFromRemote` with OR-merge, cap-at-5, skip-unresolvable, empty-no-op, remote-replaces-local, keeps-local-pinned), leaf descendants, started descendants, pin business rules, `deleteAllLocalData`.
+- **test/data/database_helper_test.dart** (~210+ tests) — Task CRUD, completion, start/unstart, skip/archive, dependencies (add/remove/blocking/paths), cycle detection (`hasPath`, `wouldRelationshipCreateCycle`, `wouldDependencyCreateCycle`), DAG ops (`getAllLeafTasks`, `deleteTaskAndReparentChildren`, `deleteTaskSubtree`), ancestry paths, repeating tasks, worked-on tracking, field updates (including `updateTaskSomeday` set/clear/sync-dirty), sync fields/dirty tracking/sync queue, `getPendingAdds` (relationship/dependency), pull reconciliation (pending-preserved, synced-removed), import/export validation, Today's 5 state (save/load/pin/sync merge via `upsertTodaysFiveFromRemote` with OR-merge, cap-at-5, skip-unresolvable, empty-no-op, remote-replaces-local, keeps-local-pinned), leaf descendants, started descendants, pin business rules, `deleteAllLocalData`.
 - **test/data/todays_five_pin_helper_test.dart** (~80 tests) — `togglePin`, `pinNewTask`, `togglePinInPlace`, `trimExcess`, bottom sheet and add dialog gates, max constraints.
 
 ### Providers (good)
-- **test/providers/task_provider_test.dart** (~136 tests) — Navigation (load/into/back/toTask), completion (with nav, without nav, leaf handling), start/unstart with `_currentParent` freshness, dependencies (add/remove/cycle prevention), random pick, deletion (single/with-relationships/subtree/restore), rename, field updates (URL/priority) all with `_currentParent` freshness, worked-on, multi-parent DAG (link/unlink), Today's 5 leaf filtering (`getAllLeafTasks`, `pickWeightedN`), undo/restore, `refreshCurrentView` (root refresh, non-root preserves position, stack depth preserved, no mutation trigger).
+- **test/providers/task_provider_test.dart** (~141 tests) — Navigation (load/into/back/toTask), completion (with nav, without nav, leaf handling), start/unstart with `_currentParent` freshness, dependencies (add/remove/cycle prevention), random pick, deletion (single/with-relationships/subtree/restore), rename, field updates (URL/priority/someday) all with `_currentParent` freshness, someday↔priority mutual exclusion, someday staleness weight exclusion, worked-on, multi-parent DAG (link/unlink), Today's 5 leaf filtering (`getAllLeafTasks`, `pickWeightedN`), undo/restore, `refreshCurrentView` (root refresh, non-root preserves position, stack depth preserved, no mutation trigger).
 - **test/providers/theme_provider_test.dart** (8 tests) — Toggle, persistence, icons, listener notifications.
 - **test/providers/auth_provider_test.dart** (6 tests) — `setSyncStatus` updates/notifications, `isConfigured`, initial state.
 
@@ -31,11 +31,11 @@ Last updated: 2026-03-04
 
 ### Widgets (good)
 - **test/widgets/task_picker_dialog_test.dart** (~15 tests) — Priority sorting (tiers), preserved relative order, search filtering, parent context, search ranking (name matches before context-only matches, stable order within tiers, interaction with priority tiers).
-- **test/widgets/leaf_task_detail_test.dart** (~30 tests) — Name display, rename, URL icon states, Done/Skip buttons, Start/Stop buttons, priority/quick indicators.
+- **test/widgets/leaf_task_detail_test.dart** (~32 tests) — Name display, rename, URL icon states, Done/Skip buttons, Start/Stop buttons, priority/someday toggle icons and callbacks.
 - **test/widgets/pin_button_test.dart** (~15 tests) — Pin/unpin icons, tooltips, max-pins disabled, muted alpha, callbacks.
 - **test/widgets/small_widgets_test.dart** (~27 tests) — `EmptyState` (root/non-root), `DeleteTaskDialog` (cancel/keep-subtrees/delete-everything), `AddTaskDialog` (submit, empty/whitespace rejection, "Add multiple" with text preservation and trimming, pin toggle), `BrainDumpDialog` (line counting, whitespace trimming, submit, disabled state, initialText pre-fill).
 - **test/widgets/task_card_icons_test.dart** (~12 tests) — Pin vs fire icon, color/size.
-- **test/widgets/task_card_test.dart** (~20 tests) — In-progress icon, long-press menu, parent tags, pin+priority coexistence.
+- **test/widgets/task_card_test.dart** (~22 tests) — In-progress icon, long-press menu, parent tags, pin+priority coexistence, someday bedtime badge.
 - **test/widgets/completion_animation_test.dart** (3 tests) — Overlay render, checkmark, IgnorePointer.
 - **test/widgets/profile_icon_test.dart** (2 tests) — Hidden when unconfigured, sync badge.
 - **test/widgets/random_result_dialog_test.dart** (~15 tests) — Layout, Go Deeper button, result enum.

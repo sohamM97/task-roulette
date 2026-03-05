@@ -12,6 +12,7 @@ void main() {
     VoidCallback? onRename,
     void Function(String?)? onUpdateUrl,
     ValueChanged<int>? onUpdatePriority,
+    ValueChanged<bool>? onUpdateSomeday,
     VoidCallback? onWorkedOn,
     VoidCallback? onUndoWorkedOn,
   }) {
@@ -25,7 +26,7 @@ void main() {
           onRename: onRename ?? () {},
           onUpdateUrl: onUpdateUrl ?? (_) {},
           onUpdatePriority: onUpdatePriority ?? (_) {},
-          onUpdateSomeday: (_) {},
+          onUpdateSomeday: onUpdateSomeday ?? (_) {},
           onWorkedOn: onWorkedOn,
           onUndoWorkedOn: onUndoWorkedOn,
         ),
@@ -243,16 +244,16 @@ void main() {
       expect(find.text('Remove'), findsOneWidget);
     });
 
-    testWidgets('shows priority flag icon (outlined when normal)', (tester) async {
+    testWidgets('shows outlined flag and bedtime icons when normal priority', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
       ));
 
       expect(find.byIcon(Icons.flag_outlined), findsOneWidget);
-      expect(find.byIcon(Icons.flag), findsNothing);
+      expect(find.byIcon(Icons.bedtime_outlined), findsOneWidget);
     });
 
-    testWidgets('tapping priority flag fires onUpdatePriority with 1', (tester) async {
+    testWidgets('tapping flag fires onUpdatePriority with 1', (tester) async {
       int? newPriority;
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
@@ -263,13 +264,33 @@ void main() {
       expect(newPriority, 1);
     });
 
-    testWidgets('shows filled flag icon when high priority', (tester) async {
+    testWidgets('shows filled flag when high priority', (tester) async {
       await tester.pumpWidget(buildTestWidget(
         task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch, priority: 1),
       ));
 
       expect(find.byIcon(Icons.flag), findsOneWidget);
       expect(find.byIcon(Icons.flag_outlined), findsNothing);
+    });
+
+    testWidgets('tapping bedtime fires onUpdateSomeday with true', (tester) async {
+      bool? newSomeday;
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+        onUpdateSomeday: (s) => newSomeday = s,
+      ));
+
+      await tester.tap(find.byIcon(Icons.bedtime_outlined));
+      expect(newSomeday, true);
+    });
+
+    testWidgets('shows filled bedtime when someday', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch, isSomeday: true),
+      ));
+
+      expect(find.byIcon(Icons.bedtime), findsOneWidget);
+      expect(find.byIcon(Icons.bedtime_outlined), findsNothing);
     });
 
     testWidgets('shows "Done today" when not worked on today', (tester) async {

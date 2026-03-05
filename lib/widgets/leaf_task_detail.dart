@@ -255,10 +255,10 @@ class LeafTaskDetail extends StatelessWidget {
                   tooltip: task.isSomeday ? 'Someday' : 'Mark as someday',
                   visualDensity: VisualDensity.compact,
                   icon: Icon(
-                    task.isSomeday ? Icons.cloud : Icons.cloud_outlined,
+                    task.isSomeday ? Icons.bedtime : Icons.bedtime_outlined,
                     size: 20,
                     color: task.isSomeday
-                        ? colorScheme.tertiary
+                        ? const Color(0xFF7EB8D8)
                         : colorScheme.onSurfaceVariant.withAlpha(120),
                   ),
                 ),
@@ -379,3 +379,4 @@ class LeafTaskDetail extends StatelessWidget {
     );
   }
 }
+

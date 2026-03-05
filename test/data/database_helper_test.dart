@@ -1642,6 +1642,26 @@ void main() {
       expect(task.isHighPriority, isTrue);
     });
 
+    test('updateTaskSomeday sets and clears someday flag', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      expect((await db.getTaskById(id))!.isSomeday, isFalse);
+
+      await db.updateTaskSomeday(id, true);
+      expect((await db.getTaskById(id))!.isSomeday, isTrue);
+
+      await db.updateTaskSomeday(id, false);
+      expect((await db.getTaskById(id))!.isSomeday, isFalse);
+    });
+
+    test('updateTaskSomeday marks task as dirty for sync', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      await db.markTasksSynced([id]);
+
+      await db.updateTaskSomeday(id, true);
+      final task = await db.getTaskById(id);
+      expect(task!.syncStatus, 'pending');
+    });
+
     test('getRootTaskIds returns only IDs', () async {
       final id1 = await db.insertTask(Task(name: 'Root 1'));
       final id2 = await db.insertTask(Task(name: 'Root 2'));
