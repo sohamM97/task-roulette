@@ -1483,8 +1483,8 @@ void main() {
       final normalId = await db.insertTask(Task(name: 'Normal', createdAt: old));
 
       final leaves = await provider.getAllLeafTasks();
-      final somedayTask = leaves.firstWhere((t) => t.id == somedayId);
-      final normalTask = leaves.firstWhere((t) => t.id == normalId);
+      expect(leaves.any((t) => t.id == somedayId), isTrue);
+      expect(leaves.any((t) => t.id == normalId), isTrue);
 
       // Both should be pickable, but normal task should have higher weight
       // due to staleness. We can verify by picking many times — normal should
