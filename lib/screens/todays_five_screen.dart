@@ -1304,13 +1304,13 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final hasOverflow = _otherDoneExpanded || _chipsOverflow(context, constraints.maxWidth);
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                GestureDetector(
-                  onTap: hasOverflow ? () => setState(() => _otherDoneExpanded = !_otherDoneExpanded) : null,
-                  behavior: HitTestBehavior.opaque,
-                  child: Row(
+            return GestureDetector(
+              onTap: hasOverflow ? () => setState(() => _otherDoneExpanded = !_otherDoneExpanded) : null,
+              behavior: HitTestBehavior.opaque,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
                       Text(
                         'Also done today',
@@ -1328,10 +1328,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                       ],
                     ],
                   ),
-                ),
-                const SizedBox(height: 8),
-                _buildOtherDoneChips(context),
-              ],
+                  const SizedBox(height: 8),
+                  _buildOtherDoneChips(context),
+                ],
+              ),
             );
           },
         ),
