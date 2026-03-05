@@ -7,8 +7,6 @@ class Task {
   final String? url;
   final int? skippedAt;
   final int priority;
-  /// Reinterpreted: 0 = normal, 1 = quick task. DB column kept as `difficulty`.
-  final int difficulty;
   final int? lastWorkedAt;
   final String? repeatInterval;
   final int? nextDueAt;
@@ -27,7 +25,6 @@ class Task {
     this.url,
     this.skippedAt,
     this.priority = 0,
-    this.difficulty = 0,
     this.lastWorkedAt,
     this.repeatInterval,
     this.nextDueAt,
@@ -43,7 +40,6 @@ class Task {
 
   bool get isHighPriority => priority >= 1;
   String get priorityLabel => isHighPriority ? 'High' : 'Normal';
-  bool get isQuickTask => difficulty == 1;
   bool get isRepeating => repeatInterval != null;
   bool get isDue => nextDueAt == null || nextDueAt! <= DateTime.now().millisecondsSinceEpoch;
 
@@ -65,7 +61,6 @@ class Task {
     String? Function()? url,
     int? Function()? skippedAt,
     int? priority,
-    int? difficulty,
     int? Function()? lastWorkedAt,
     String? Function()? repeatInterval,
     int? Function()? nextDueAt,
@@ -82,7 +77,6 @@ class Task {
       url: url != null ? url() : this.url,
       skippedAt: skippedAt != null ? skippedAt() : this.skippedAt,
       priority: priority ?? this.priority,
-      difficulty: difficulty ?? this.difficulty,
       lastWorkedAt: lastWorkedAt != null ? lastWorkedAt() : this.lastWorkedAt,
       repeatInterval: repeatInterval != null ? repeatInterval() : this.repeatInterval,
       nextDueAt: nextDueAt != null ? nextDueAt() : this.nextDueAt,
@@ -102,7 +96,6 @@ class Task {
       'url': url,
       'skipped_at': skippedAt,
       'priority': priority,
-      'difficulty': difficulty,
       'last_worked_at': lastWorkedAt,
       'repeat_interval': repeatInterval,
       'next_due_at': nextDueAt,
@@ -122,7 +115,6 @@ class Task {
       url: map['url'] as String?,
       skippedAt: map['skipped_at'] as int?,
       priority: (map['priority'] as int? ?? 0).clamp(0, 1),
-      difficulty: map['difficulty'] as int? ?? 0,
       lastWorkedAt: map['last_worked_at'] as int?,
       repeatInterval: map['repeat_interval'] as String?,
       nextDueAt: map['next_due_at'] as int?,

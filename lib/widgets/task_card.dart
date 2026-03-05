@@ -246,8 +246,8 @@ class TaskCard extends StatelessWidget {
                   ),
                 ),
               ),
-              // Top-left icons: today's 5, in-progress, priority flag, quick task bolt, worked-on-today
-              if (task.isHighPriority || task.isQuickTask || showIndicator || task.isWorkedOnToday || isInTodaysFive)
+              // Top-left icons: today's 5, in-progress, priority flag, worked-on-today
+              if (task.isHighPriority || showIndicator || task.isWorkedOnToday || isInTodaysFive)
                 Positioned(
                   left: 6,
                   top: 6,
@@ -277,12 +277,6 @@ class TaskCard extends StatelessWidget {
                           Icons.flag,
                           size: 16,
                           color: Theme.of(context).colorScheme.error,
-                        ),
-                      if (task.isQuickTask)
-                        Icon(
-                          Icons.bolt,
-                          size: 16,
-                          color: Colors.amber,
                         ),
                     ],
                   ),

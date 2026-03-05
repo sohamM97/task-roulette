@@ -9,7 +9,7 @@ Last updated: 2026-03-04
 ## Covered
 
 ### Models (complete)
-- **test/models/task_test.dart** (~120 tests) — Construction, defaults, all timestamps, state flags, priority/difficulty, sync fields, `toMap`/`fromMap`/`copyWith` round-trips.
+- **test/models/task_test.dart** (~120 tests) — Construction, defaults, all timestamps, state flags, priority, sync fields, `toMap`/`fromMap`/`copyWith` round-trips.
 - **test/models/task_relationship_test.dart** (4 tests) — Construction, `toMap`, `fromMap`, round-trip.
 
 ### Data Layer (excellent)
@@ -17,7 +17,7 @@ Last updated: 2026-03-04
 - **test/data/todays_five_pin_helper_test.dart** (~80 tests) — `togglePin`, `pinNewTask`, `togglePinInPlace`, `trimExcess`, bottom sheet and add dialog gates, max constraints.
 
 ### Providers (good)
-- **test/providers/task_provider_test.dart** (~136 tests) — Navigation (load/into/back/toTask), completion (with nav, without nav, leaf handling), start/unstart with `_currentParent` freshness, dependencies (add/remove/cycle prevention), random pick, deletion (single/with-relationships/subtree/restore), rename, field updates (URL/priority/quickTask) all with `_currentParent` freshness, worked-on, multi-parent DAG (link/unlink), Today's 5 leaf filtering (`getAllLeafTasks`, `pickWeightedN`), undo/restore, `refreshCurrentView` (root refresh, non-root preserves position, stack depth preserved, no mutation trigger).
+- **test/providers/task_provider_test.dart** (~136 tests) — Navigation (load/into/back/toTask), completion (with nav, without nav, leaf handling), start/unstart with `_currentParent` freshness, dependencies (add/remove/cycle prevention), random pick, deletion (single/with-relationships/subtree/restore), rename, field updates (URL/priority) all with `_currentParent` freshness, worked-on, multi-parent DAG (link/unlink), Today's 5 leaf filtering (`getAllLeafTasks`, `pickWeightedN`), undo/restore, `refreshCurrentView` (root refresh, non-root preserves position, stack depth preserved, no mutation trigger).
 - **test/providers/theme_provider_test.dart** (8 tests) — Toggle, persistence, icons, listener notifications.
 - **test/providers/auth_provider_test.dart** (6 tests) — `setSyncStatus` updates/notifications, `isConfigured`, initial state.
 
@@ -63,7 +63,7 @@ Last updated: 2026-03-04
 - **force_directed_layout.dart** (369 lines) — NO TESTS. Graph layout algorithm. Could unit test node positioning/convergence.
 
 ### Widgets (incomplete)
-- **leaf_task_detail.dart** — ~30 tests but file is 451 lines. NOT tested: worked-on badge, repeat task UI, dependency markers, URL opening, priority/difficulty pickers.
+- **leaf_task_detail.dart** — ~30 tests but file is 451 lines. NOT tested: worked-on badge, repeat task UI, dependency markers, URL opening, priority picker.
 - **add_task_dialog.dart** — Only partial coverage in `small_widgets_test.dart`.
 - **brain_dump_dialog.dart** — Only partial coverage in `small_widgets_test.dart`.
 

@@ -1426,20 +1426,6 @@ void main() {
       expect(provider.currentParent!.isHighPriority, isTrue);
     });
 
-    test('updateQuickTask updates currentParent in place', () async {
-      final parentId = await db.insertTask(Task(name: 'Task'));
-      final childId = await db.insertTask(Task(name: 'Child'));
-      await db.addRelationship(parentId, childId);
-
-      await provider.loadRootTasks();
-      await navInto(provider, parentId);
-
-      await provider.updateQuickTask(parentId, 1); // quick
-
-      expect(provider.currentParent!.difficulty, 1);
-      expect(provider.currentParent!.isQuickTask, isTrue);
-    });
-
     test('field updates on non-currentParent task do not break currentParent', () async {
       final parentId = await db.insertTask(Task(name: 'Parent'));
       final childId = await db.insertTask(Task(name: 'Child'));
@@ -2261,27 +2247,6 @@ void main() {
 
       final ids = picked.map((t) => t.id).toSet();
       expect(ids.length, picked.length); // no duplicates
-    });
-
-    test('includes at least one quick task if available', () async {
-      // Create 9 normal tasks and 1 quick task
-      for (int i = 0; i < 9; i++) {
-        await db.insertTask(Task(name: 'Normal $i'));
-      }
-      final quickId = await db.insertTask(Task(name: 'Quick', difficulty: 1));
-
-      final leaves = await provider.getAllLeafTasks();
-
-      // Run multiple times to verify the quick task guarantee
-      bool quickAlwaysIncluded = true;
-      for (int run = 0; run < 20; run++) {
-        final picked = provider.pickWeightedN(leaves, 5);
-        if (!picked.any((t) => t.id == quickId)) {
-          quickAlwaysIncluded = false;
-          break;
-        }
-      }
-      expect(quickAlwaysIncluded, isTrue);
     });
 
     test('excludes tasks worked on today', () async {

@@ -12,7 +12,6 @@ void main() {
     VoidCallback? onRename,
     void Function(String?)? onUpdateUrl,
     ValueChanged<int>? onUpdatePriority,
-    ValueChanged<int>? onUpdateQuickTask,
     VoidCallback? onWorkedOn,
     VoidCallback? onUndoWorkedOn,
   }) {
@@ -26,7 +25,6 @@ void main() {
           onRename: onRename ?? () {},
           onUpdateUrl: onUpdateUrl ?? (_) {},
           onUpdatePriority: onUpdatePriority ?? (_) {},
-          onUpdateQuickTask: onUpdateQuickTask ?? (_) {},
           onWorkedOn: onWorkedOn,
           onUndoWorkedOn: onUndoWorkedOn,
         ),
@@ -253,35 +251,6 @@ void main() {
       expect(find.byIcon(Icons.flag), findsNothing);
     });
 
-    testWidgets('shows bolt icon for quick task toggle', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
-      ));
-
-      // Should show outlined bolt (not quick task by default)
-      expect(find.byIcon(Icons.bolt_outlined), findsOneWidget);
-    });
-
-    testWidgets('shows filled bolt icon when task is quick', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch, difficulty: 1),
-      ));
-
-      expect(find.byIcon(Icons.bolt), findsOneWidget);
-      expect(find.byIcon(Icons.bolt_outlined), findsNothing);
-    });
-
-    testWidgets('tapping bolt icon fires onUpdateQuickTask with 1', (tester) async {
-      int? newQuick;
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
-        onUpdateQuickTask: (q) => newQuick = q,
-      ));
-
-      await tester.tap(find.byIcon(Icons.bolt_outlined));
-      expect(newQuick, 1);
-    });
-
     testWidgets('tapping priority flag fires onUpdatePriority with 1', (tester) async {
       int? newPriority;
       await tester.pumpWidget(buildTestWidget(
@@ -381,15 +350,6 @@ void main() {
       expect(find.byIcon(Icons.repeat), findsNothing);
     });
 
-    testWidgets('no difficulty segmented button', (tester) async {
-      await tester.pumpWidget(buildTestWidget(
-        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
-      ));
-
-      expect(find.text('Difficulty'), findsNothing);
-      expect(find.text('Easy'), findsNothing);
-      expect(find.text('Hard'), findsNothing);
-    });
   });
 
   group('LeafTaskDetail parent tags', () {
@@ -404,7 +364,6 @@ void main() {
             onRename: () {},
             onUpdateUrl: (_) {},
             onUpdatePriority: (_) {},
-            onUpdateQuickTask: (_) {},
             parentNames: const ['Work', 'Personal'],
           ),
         ),
@@ -437,7 +396,6 @@ void main() {
             onRename: () {},
             onUpdateUrl: (_) {},
             onUpdatePriority: (_) {},
-            onUpdateQuickTask: (_) {},
             parentNames: const ['Current Parent', 'Other Parent', 'Third Parent'],
           ),
         ),

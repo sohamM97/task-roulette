@@ -11,7 +11,6 @@ class LeafTaskDetail extends StatelessWidget {
   final VoidCallback onRename;
   final void Function(String?) onUpdateUrl;
   final ValueChanged<int> onUpdatePriority;
-  final ValueChanged<int> onUpdateQuickTask;
   final VoidCallback? onWorkedOn;
   final VoidCallback? onUndoWorkedOn;
   final List<Task> dependencies;
@@ -31,7 +30,6 @@ class LeafTaskDetail extends StatelessWidget {
     required this.onRename,
     required this.onUpdateUrl,
     required this.onUpdatePriority,
-    required this.onUpdateQuickTask,
     this.onWorkedOn,
     this.onUndoWorkedOn,
     this.dependencies = const [],
@@ -264,18 +262,6 @@ class LeafTaskDetail extends StatelessWidget {
                     size: 20,
                     color: isHighPriority
                         ? colorScheme.error
-                        : colorScheme.onSurfaceVariant.withAlpha(120),
-                  ),
-                ),
-                IconButton(
-                  onPressed: () => onUpdateQuickTask(task.isQuickTask ? 0 : 1),
-                  tooltip: task.isQuickTask ? 'Quick task' : 'Mark as quick task',
-                  visualDensity: VisualDensity.compact,
-                  icon: Icon(
-                    task.isQuickTask ? Icons.bolt : Icons.bolt_outlined,
-                    size: 20,
-                    color: task.isQuickTask
-                        ? Colors.amber
                         : colorScheme.onSurfaceVariant.withAlpha(120),
                   ),
                 ),

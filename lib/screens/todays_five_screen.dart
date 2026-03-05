@@ -1214,11 +1214,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                       padding: const EdgeInsets.only(right: 4),
                       child: Icon(Icons.flag, size: 14, color: colorScheme.error),
                     ),
-                  if (task.isQuickTask)
-                    const Padding(
-                      padding: EdgeInsets.only(right: 4),
-                      child: Icon(Icons.bolt, size: 14, color: Colors.amber),
-                    ),
                   if (task.isStarted && !isDone)
                     Padding(
                       padding: const EdgeInsets.only(right: 4),
