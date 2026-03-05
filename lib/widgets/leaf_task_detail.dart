@@ -86,44 +86,27 @@ class LeafTaskDetail extends StatelessWidget {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Link'),
-        content: GestureDetector(
-          onHorizontalDragEnd: (details) {
-            if ((details.primaryVelocity ?? 0) > 0 && controller.text.isEmpty) {
-              controller.text = 'https://';
-              controller.selection = TextSelection.fromPosition(
-                TextPosition(offset: controller.text.length),
-              );
-            }
-          },
-          child: TextField(
-            controller: controller,
-            maxLength: 2048,
-            decoration: const InputDecoration(
-              hintText: 'https://...',
-              border: OutlineInputBorder(),
-              counterText: '',
-            ),
-            keyboardType: TextInputType.url,
-            autofocus: true,
-            onSubmitted: (value) {
-              final trimmed = value.trim();
-              if (trimmed.isEmpty) {
-                Navigator.pop(dialogContext);
-                onUpdateUrl(null);
-                return;
-              }
-              final url = normalizeUrl(trimmed);
-              if (url == null || !isAllowedUrl(url)) {
-                Navigator.pop(dialogContext);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Only web links (http/https) are supported'), persist: false),
-                );
-                return;
-              }
+        content: UrlTextField(
+          controller: controller,
+          autofocus: true,
+          onSubmitted: (value) {
+            final trimmed = value.trim();
+            if (trimmed.isEmpty) {
               Navigator.pop(dialogContext);
-              onUpdateUrl(url);
-            },
-          ),
+              onUpdateUrl(null);
+              return;
+            }
+            final url = normalizeUrl(trimmed);
+            if (url == null || !isAllowedUrl(url)) {
+              Navigator.pop(dialogContext);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Only web links (http/https) are supported'), persist: false),
+              );
+              return;
+            }
+            Navigator.pop(dialogContext);
+            onUpdateUrl(url);
+          },
         ),
         actions: [
           if (currentUrl != null && currentUrl.isNotEmpty)

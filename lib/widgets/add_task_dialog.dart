@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/display_utils.dart' show normalizeUrl, isAllowedUrl, UrlTextField;
 
 /// Result from AddTaskDialog: either a single task name or a request
 /// to switch to brain dump mode.
@@ -6,8 +7,9 @@ sealed class AddTaskResult {}
 
 class SingleTask extends AddTaskResult {
   final String name;
+  final String? url;
   final bool pinInTodays5;
-  SingleTask(this.name, {this.pinInTodays5 = false});
+  SingleTask(this.name, {this.url, this.pinInTodays5 = false});
 }
 
 class SwitchToBrainDump extends AddTaskResult {
@@ -27,19 +29,35 @@ class AddTaskDialog extends StatefulWidget {
 
 class _AddTaskDialogState extends State<AddTaskDialog> {
   final _controller = TextEditingController();
+  final _urlController = TextEditingController();
   bool _pin = false;
+  bool _showUrl = false;
 
   @override
   void dispose() {
     _controller.dispose();
+    _urlController.dispose();
     super.dispose();
   }
 
   void _submit() {
     final name = _controller.text.trim();
-    if (name.isNotEmpty) {
-      Navigator.pop(context, SingleTask(name, pinInTodays5: _pin));
+    if (name.isEmpty) return;
+    String? url;
+    if (_showUrl) {
+      final raw = _urlController.text.trim();
+      if (raw.isNotEmpty) {
+        url = normalizeUrl(raw);
+        if (url == null || !isAllowedUrl(url)) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Invalid URL'), showCloseIcon: true, persist: false),
+          );
+          return;
+        }
+      }
     }
+    Navigator.pop(context, SingleTask(name, url: url, pinInTodays5: _pin));
   }
 
   @override
@@ -55,14 +73,33 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
             controller: _controller,
             autofocus: true,
             maxLength: 500,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               hintText: 'Task name',
-              border: OutlineInputBorder(),
+              border: const OutlineInputBorder(),
               counterText: '',
+              suffixIcon: IconButton(
+                icon: Icon(
+                  Icons.link,
+                  size: 20,
+                  color: _showUrl
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant.withAlpha(120),
+                ),
+                tooltip: 'Add URL',
+                onPressed: () => setState(() => _showUrl = !_showUrl),
+              ),
             ),
             textCapitalization: TextCapitalization.sentences,
             onSubmitted: (_) => _submit(),
           ),
+          if (_showUrl) ...[
+            const SizedBox(height: 8),
+            UrlTextField(
+              controller: _urlController,
+              isDense: true,
+              onSubmitted: (_) => _submit(),
+            ),
+          ],
           const SizedBox(height: 4),
           Row(
             children: [
@@ -93,7 +130,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          "Today's 5",
+                          'Pin for today',
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: _pin
                                 ? colorScheme.tertiary

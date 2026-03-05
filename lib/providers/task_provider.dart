@@ -85,8 +85,8 @@ class TaskProvider extends ChangeNotifier {
     await _refreshCurrentList();
   }
 
-  Future<int> addTask(String name, {List<int>? additionalParentIds}) async {
-    final task = Task(name: name);
+  Future<int> addTask(String name, {String? url, List<int>? additionalParentIds}) async {
+    final task = Task(name: name, url: url);
     final taskId = await _db.insertTask(task);
 
     if (_currentParent != null) {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// Icon used for the archive/completed-tasks screen.
 const IconData archiveIcon = Icons.inventory_2_outlined;
@@ -26,6 +27,68 @@ bool isAllowedUrl(String url) {
   if (uri == null) return false;
   final scheme = uri.scheme.toLowerCase();
   return scheme == 'http' || scheme == 'https';
+}
+
+/// A URL text field with auto-fill "https://":
+/// - Swipe right on mobile (when empty)
+/// - Tab key on desktop/web (when empty)
+class UrlTextField extends StatelessWidget {
+  final TextEditingController controller;
+  final ValueChanged<String>? onSubmitted;
+  final bool autofocus;
+  final bool isDense;
+
+  const UrlTextField({
+    super.key,
+    required this.controller,
+    this.onSubmitted,
+    this.autofocus = false,
+    this.isDense = false,
+  });
+
+  void _fillHttps() {
+    controller.text = 'https://';
+    controller.selection = TextSelection.fromPosition(
+      TextPosition(offset: controller.text.length),
+    );
+  }
+
+  KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.tab &&
+        controller.text.isEmpty) {
+      _fillHttps();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onHorizontalDragEnd: (details) {
+        if ((details.primaryVelocity ?? 0) > 0 && controller.text.isEmpty) {
+          _fillHttps();
+        }
+      },
+      child: Focus(
+        onKeyEvent: _handleKey,
+        child: TextField(
+          controller: controller,
+          maxLength: 2048,
+          decoration: InputDecoration(
+            hintText: 'https://...',
+            border: const OutlineInputBorder(),
+            counterText: '',
+            isDense: isDense,
+          ),
+          keyboardType: TextInputType.url,
+          autofocus: autofocus,
+          onSubmitted: onSubmitted,
+        ),
+      ),
+    );
+  }
 }
 
 /// Pin/unpin toggle button for Today's 5 tasks.
