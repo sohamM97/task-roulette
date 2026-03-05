@@ -1092,29 +1092,30 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
   }
 
   Widget _buildTaskList(BuildContext context, ColorScheme colorScheme, TextTheme textTheme) {
-    // Split into pinned-undone ("Must do") and the rest
+    // Split into three buckets: pinned-undone, undone-unpinned, done
     final mustDo = <int>[]; // indices into _todaysTasks
     final rest = <int>[];
+    final done = <int>[];
     for (int i = 0; i < _todaysTasks.length; i++) {
       final task = _todaysTasks[i];
       final isDone = _completedIds.contains(task.id);
-      if (_pinnedIds.contains(task.id) && !isDone) {
+      if (isDone) {
+        done.add(i);
+      } else if (_pinnedIds.contains(task.id)) {
         mustDo.add(i);
       } else {
         rest.add(i);
       }
     }
 
-    if (mustDo.isEmpty) {
-      // No pinned tasks — flat list, no headers
+    final showSections = mustDo.isNotEmpty || done.isNotEmpty;
+
+    if (!showSections) {
+      // No pinned tasks and no done tasks — flat list, no headers
       return ListView(
         children: [
-          ..._todaysTasks.asMap().entries.map((entry) {
-            final index = entry.key;
-            final task = entry.value;
-            final isDone = _completedIds.contains(task.id);
-            return _buildTaskCard(context, task, index, isDone);
-          }),
+          for (int i = 0; i < _todaysTasks.length; i++)
+            _buildTaskCard(context, _todaysTasks[i], i, false),
           if (_otherDoneToday.isNotEmpty)
             _buildOtherDoneBox(context, textTheme, colorScheme),
         ],
@@ -1123,30 +1124,47 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
 
     return ListView(
       children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: Text(
-            'Must do',
-            style: textTheme.labelMedium?.copyWith(
-              color: colorScheme.tertiary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        for (final i in mustDo)
-          _buildTaskCard(context, _todaysTasks[i], i, false),
-        if (rest.isNotEmpty)
+        if (mustDo.isNotEmpty) ...[
           Padding(
-            padding: const EdgeInsets.only(top: 12, bottom: 4),
+            padding: const EdgeInsets.only(bottom: 4),
             child: Text(
-              'Also on the table',
+              'Must do',
               style: textTheme.labelMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
+                color: colorScheme.tertiary,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
-        for (final i in rest)
-          _buildTaskCard(context, _todaysTasks[i], i, _completedIds.contains(_todaysTasks[i].id)),
+          for (final i in mustDo)
+            _buildTaskCard(context, _todaysTasks[i], i, false),
+        ],
+        if (rest.isNotEmpty) ...[
+          if (mustDo.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 12, bottom: 4),
+              child: Text(
+                'Also on the table',
+                style: textTheme.labelMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          for (final i in rest)
+            _buildTaskCard(context, _todaysTasks[i], i, false),
+        ],
+        if (done.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 4),
+            child: Text(
+              'Done',
+              style: textTheme.labelMedium?.copyWith(
+                color: colorScheme.primary,
+              ),
+            ),
+          ),
+          for (final i in done)
+            _buildTaskCard(context, _todaysTasks[i], i, true),
+        ],
         if (_otherDoneToday.isNotEmpty)
           _buildOtherDoneBox(context, textTheme, colorScheme),
       ],
@@ -1203,12 +1221,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (_pinnedIds.contains(task.id) && !isDone)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 4),
-                      child: Icon(Icons.push_pin, size: 14,
-                          color: colorScheme.tertiary),
-                    ),
                   if (task.isHighPriority)
                     Padding(
                       padding: const EdgeInsets.only(right: 4),
@@ -1248,6 +1260,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
                     }
                   },
                 ),
+              if (isDone && _pinnedIds.contains(task.id))
+                Icon(Icons.push_pin, size: 18, color: colorScheme.tertiary),
               if (!isDone)
                 IconButton(
                   icon: const Icon(Icons.shuffle, size: 18),
