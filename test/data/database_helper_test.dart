@@ -3352,9 +3352,47 @@ void main() {
 
       final state = await db.loadTodaysFiveState(date);
       expect(state, isNotNull);
-      // Should cap at 5 (the remote 5), no room for local-only pinned
-      expect(state!.taskIds, hasLength(5));
-      expect(state.taskIds, [ids[0], ids[1], ids[2], ids[3], ids[4]]);
+      // Remote 5 + local-only pinned 2 = 7 (pinned tasks always preserved)
+      expect(state!.taskIds, hasLength(7));
+      expect(state.taskIds, [ids[0], ids[1], ids[2], ids[3], ids[4], ids[5], ids[6]]);
+      expect(state.pinnedIds, containsAll([ids[5], ids[6]]));
+    });
+
+    test('upsertTodaysFiveFromRemote: local-only pinned tasks survive full remote set', () async {
+      // Regression: pinned task created locally before sync push shouldn't be
+      // dropped when remote already has 5 tasks.
+      final remoteIds = <int>[];
+      for (var i = 0; i < 5; i++) {
+        remoteIds.add(await insertTaskWithSyncId('Remote $i', 'sync-r$i'));
+      }
+      final pinnedId = await insertTaskWithSyncId('Local Pinned', 'sync-lp');
+
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [pinnedId],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {pinnedId},
+      );
+
+      final remoteEntries = List.generate(5, (i) => {
+        'task_sync_id': 'sync-r$i',
+        'is_completed': false,
+        'is_worked_on': false,
+        'is_pinned': false,
+        'sort_order': i,
+      });
+      await db.upsertTodaysFiveFromRemote(date, remoteEntries);
+
+      final state = await db.loadTodaysFiveState(date);
+      expect(state, isNotNull);
+      expect(state!.taskIds, hasLength(6));
+      expect(state.taskIds, contains(pinnedId));
+      expect(state.pinnedIds, contains(pinnedId));
+      // All 5 remote tasks are also present
+      for (final rid in remoteIds) {
+        expect(state.taskIds, contains(rid));
+      }
     });
 
     test('upsertTodaysFiveFromRemote: skips unresolvable sync_ids', () async {
