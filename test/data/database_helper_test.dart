@@ -2405,6 +2405,89 @@ void main() {
       await db.upsertDependencyFromRemote('unknown-1', 'unknown-2');
       await db.removeDependencyFromRemote('unknown-1', 'unknown-2');
     });
+
+    test('getPendingAdds returns pending relationship adds from sync queue', () async {
+      final id1 = await db.insertTask(Task(name: 'Parent'));
+      final id2 = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(id1, id2);
+
+      final t1 = await db.getTaskById(id1);
+      final t2 = await db.getTaskById(id2);
+      final pending = await db.getPendingAdds('relationship');
+      expect(pending, contains('${t1!.syncId}:${t2!.syncId}'));
+    });
+
+    test('getPendingAdds returns empty after sync queue is drained', () async {
+      final id1 = await db.insertTask(Task(name: 'Parent'));
+      final id2 = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(id1, id2);
+
+      await db.drainSyncQueue();
+      final pending = await db.getPendingAdds('relationship');
+      expect(pending, isEmpty);
+    });
+
+    test('getPendingAdds returns pending dependency adds', () async {
+      final id1 = await db.insertTask(Task(name: 'Task'));
+      final id2 = await db.insertTask(Task(name: 'Blocker'));
+      await db.addDependency(id1, id2);
+
+      final t1 = await db.getTaskById(id1);
+      final t2 = await db.getTaskById(id2);
+      final pending = await db.getPendingAdds('dependency');
+      expect(pending, contains('${t1!.syncId}:${t2!.syncId}'));
+    });
+
+    test('regression: local-only relationship survives pull reconciliation', () async {
+      // Simulate: user creates task under a parent, push hasn't fired yet,
+      // then a pull happens. The local relationship should NOT be deleted.
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      // Simulate pull reconciliation: remote has no relationships
+      final remoteRelSet = <String>{};
+      final pendingRelAdds = await db.getPendingAdds('relationship');
+      final localRels = await db.getAllRelationshipsWithSyncIds();
+
+      for (final local in localRels) {
+        final key = '${local.parentSyncId}:${local.childSyncId}';
+        if (!remoteRelSet.contains(key) && !pendingRelAdds.contains(key)) {
+          await db.removeRelationshipFromRemote(local.parentSyncId, local.childSyncId);
+        }
+      }
+
+      // Relationship should still exist because it's pending push
+      final children = await db.getChildren(parentId);
+      expect(children, hasLength(1));
+      expect(children.first.id, childId);
+    });
+
+    test('regression: synced relationship IS removed when absent from remote', () async {
+      // A relationship that was previously synced (not in sync queue) should
+      // be deleted if it's no longer in the remote set.
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      // Simulate push completing: drain the sync queue
+      await db.drainSyncQueue();
+
+      final remoteRelSet = <String>{};
+      final pendingRelAdds = await db.getPendingAdds('relationship');
+      final localRels = await db.getAllRelationshipsWithSyncIds();
+
+      for (final local in localRels) {
+        final key = '${local.parentSyncId}:${local.childSyncId}';
+        if (!remoteRelSet.contains(key) && !pendingRelAdds.contains(key)) {
+          await db.removeRelationshipFromRemote(local.parentSyncId, local.childSyncId);
+        }
+      }
+
+      // Relationship should be removed — it was synced and is no longer remote
+      final children = await db.getChildren(parentId);
+      expect(children, isEmpty);
+    });
   });
 
   group('deleteAllLocalData', () {
