@@ -60,6 +60,6 @@ If no argument is provided, ask the user which mode they want.
 
 ## Rules
 
-- Always run `flutter test` after writing tests to verify they pass.
+- Always run `flutter analyze` and `flutter test` after writing tests to verify they pass with no warnings.
 - Do NOT commit — just write the tests and report. The user will decide when to commit.
 - If a test reveals an actual bug, flag it to the user immediately.
