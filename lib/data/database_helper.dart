@@ -480,6 +480,19 @@ class DatabaseHelper {
     return _tasksFromMaps(maps);
   }
 
+  /// Returns archived (completed or skipped) parents of [childId].
+  Future<List<Task>> getArchivedParents(int childId) async {
+    final db = await database;
+    final maps = await db.rawQuery('''
+      SELECT t.* FROM tasks t
+      INNER JOIN task_relationships tr ON t.id = tr.parent_id
+      WHERE tr.child_id = ?
+      AND (t.completed_at IS NOT NULL OR t.skipped_at IS NOT NULL)
+      ORDER BY t.created_at ASC
+    ''', [childId]);
+    return _tasksFromMaps(maps);
+  }
+
   /// Returns a path from root to the task's immediate parent using a single
   /// recursive CTE. Picks the first (min id) parent at each level for DAGs.
   /// Result is ordered root-first: [grandparent, parent].
@@ -562,16 +575,24 @@ class DatabaseHelper {
   }
 
   /// Returns a map of task ID → list of parent names for the given task IDs.
-  /// Unlike getParentNamesMap(), this includes completed parents too.
-  Future<Map<int, List<String>>> getParentNamesForTaskIds(List<int> taskIds) async {
+  /// By default, excludes archived parents. Pass [includeArchived] = true to
+  /// include them (e.g. for the completed tasks screen).
+  Future<Map<int, List<String>>> getParentNamesForTaskIds(
+    List<int> taskIds, {
+    bool includeArchived = false,
+  }) async {
     if (taskIds.isEmpty) return {};
     final db = await database;
     final placeholders = taskIds.map((_) => '?').join(',');
+    final archivedFilter = includeArchived
+        ? ''
+        : 'AND p.completed_at IS NULL AND p.skipped_at IS NULL';
     final maps = await db.rawQuery('''
       SELECT tr.child_id, p.name AS parent_name
       FROM task_relationships tr
       INNER JOIN tasks p ON tr.parent_id = p.id
       WHERE tr.child_id IN ($placeholders)
+      $archivedFilter
       ORDER BY p.name ASC
     ''', taskIds);
     return _parentNamesFromRows(maps);

@@ -113,6 +113,75 @@ void main() {
     });
   });
 
+  group('Archived parent handling', () {
+    test('getArchivedParents returns only archived parents', () async {
+      final parent1 = await db.insertTask(Task(name: 'Active Parent'));
+      final parent2 = await db.insertTask(Task(name: 'Archived Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent1, child);
+      await db.addRelationship(parent2, child);
+      await db.completeTask(parent2);
+
+      final archivedParents = await db.getArchivedParents(child);
+      expect(archivedParents, hasLength(1));
+      expect(archivedParents.first.id, parent2);
+      expect(archivedParents.first.name, 'Archived Parent');
+    });
+
+    test('getArchivedParents returns empty when no parents are archived',
+        () async {
+      final parent = await db.insertTask(Task(name: 'Active Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      final archivedParents = await db.getArchivedParents(child);
+      expect(archivedParents, isEmpty);
+    });
+
+    test('getArchivedParents returns skipped parents', () async {
+      final parent = await db.insertTask(Task(name: 'Skipped Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+      await db.skipTask(parent);
+
+      final archivedParents = await db.getArchivedParents(child);
+      expect(archivedParents, hasLength(1));
+      expect(archivedParents.first.id, parent);
+      expect(archivedParents.first.name, 'Skipped Parent');
+    });
+
+    test('getParentNamesForTaskIds excludes archived parents by default',
+        () async {
+      final parent1 = await db.insertTask(Task(name: 'Active Parent'));
+      final parent2 = await db.insertTask(Task(name: 'Archived Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent1, child);
+      await db.addRelationship(parent2, child);
+      await db.completeTask(parent2);
+
+      final map = await db.getParentNamesForTaskIds([child]);
+      expect(map[child], hasLength(1));
+      expect(map[child], contains('Active Parent'));
+      expect(map[child], isNot(contains('Archived Parent')));
+    });
+
+    test('getParentNamesForTaskIds includes archived parents when requested',
+        () async {
+      final parent1 = await db.insertTask(Task(name: 'Active Parent'));
+      final parent2 = await db.insertTask(Task(name: 'Archived Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent1, child);
+      await db.addRelationship(parent2, child);
+      await db.completeTask(parent2);
+
+      final map =
+          await db.getParentNamesForTaskIds([child], includeArchived: true);
+      expect(map[child], hasLength(2));
+      expect(map[child], contains('Active Parent'));
+      expect(map[child], contains('Archived Parent'));
+    });
+  });
+
   group('Task started state', () {
     test('startTask sets started_at', () async {
       final id = await db.insertTask(Task(name: 'WIP'));
