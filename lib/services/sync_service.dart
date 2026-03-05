@@ -405,14 +405,16 @@ class SyncService {
         }
       }
 
-      // Remove local synced relationships that no longer exist remotely
+      // Remove local synced relationships that no longer exist remotely,
+      // but preserve any that are still pending push (not yet sent to cloud).
       final remoteRelSet = remoteRels
           .map((r) => '${r.parentSyncId}:${r.childSyncId}')
           .toSet();
+      final pendingRelAdds = await _db.getPendingAdds('relationship');
       final localRels = await _db.getAllRelationshipsWithSyncIds();
       for (final local in localRels) {
         final key = '${local.parentSyncId}:${local.childSyncId}';
-        if (!remoteRelSet.contains(key)) {
+        if (!remoteRelSet.contains(key) && !pendingRelAdds.contains(key)) {
           await _db.removeRelationshipFromRemote(
               local.parentSyncId, local.childSyncId);
           anyChange = true;
@@ -429,14 +431,16 @@ class SyncService {
         }
       }
 
-      // Remove local synced dependencies that no longer exist remotely
+      // Remove local synced dependencies that no longer exist remotely,
+      // but preserve any that are still pending push.
       final remoteDepSet = remoteDeps
           .map((d) => '${d.taskSyncId}:${d.dependsOnSyncId}')
           .toSet();
+      final pendingDepAdds = await _db.getPendingAdds('dependency');
       final localDeps = await _db.getAllDependenciesWithSyncIds();
       for (final local in localDeps) {
         final key = '${local.taskSyncId}:${local.dependsOnSyncId}';
-        if (!remoteDepSet.contains(key)) {
+        if (!remoteDepSet.contains(key) && !pendingDepAdds.contains(key)) {
           await _db.removeDependencyFromRemote(
               local.taskSyncId, local.dependsOnSyncId);
           anyChange = true;
