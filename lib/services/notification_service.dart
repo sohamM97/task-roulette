@@ -97,7 +97,7 @@ class NotificationService {
       '5 tasks are lined up for your day. Tap to see them.',
       nextEightAM(),
       details,
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       matchDateTimeComponents: DateTimeComponents.time,
     );
   }
