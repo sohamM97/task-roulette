@@ -25,6 +25,7 @@ class _DagViewScreenState extends State<DagViewScreen> {
   Map<int, LayoutNode> _layoutNodes = {};
   List<LayoutEdge> _layoutEdges = [];
   Size _graphSize = Size.zero;
+  int _layoutGeneration = 0;
 
   // Root task IDs (connected tasks that are never children).
   Set<int> _rootIds = {};
@@ -282,13 +283,14 @@ class _DagViewScreenState extends State<DagViewScreen> {
   }
 
   Future<void> _computeLayout() async {
+    final gen = ++_layoutGeneration;
     final screenSize = MediaQuery.sizeOf(context);
     final result = await ForceDirectedLayout.runAsync(
       nodes: _layoutNodes,
       edges: _layoutEdges,
       aspectRatio: (screenSize.width / screenSize.height).clamp(0.8, 2.0),
     );
-    if (!mounted) return;
+    if (!mounted || gen != _layoutGeneration) return;
     // Update with computed positions.
     _layoutNodes = result.nodes;
     setState(() {

@@ -53,7 +53,7 @@ class LayoutNode {
         isRoot: map['isRoot'] as bool,
         depth: map['depth'] as int,
         cluster: map['cluster'] as int,
-        allClusters: (map['allClusters'] as List).cast<int>().toSet(),
+        allClusters: (map['allClusters'] as List).map((e) => e as int).toSet(),
         x: (map['x'] as num).toDouble(),
         y: (map['y'] as num).toDouble(),
         width: (map['width'] as num).toDouble(),
