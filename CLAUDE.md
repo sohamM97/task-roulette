@@ -46,6 +46,15 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 - `/code-review` and `/sec-review` — **always run in a fresh session**, not the current one.
 - `/code-review-fix` and `/sec-review-fix` — can run in any session **except** the one where the corresponding review was run.
 
+## Hooks
+
+Hooks in `.claude/hooks/` enforce guardrails automatically:
+- **`pre-commit-analyze.sh`** — blocks `git commit` if `flutter analyze` fails
+- **`guard-git-tag.sh`** — requires user confirmation for `git tag` (use `/release`)
+- **`guard-pr-merge.sh`** — requires user confirmation for `gh pr merge`
+- **`block-flutter-run-android.sh`** — blocks `flutter run` without `-d linux`
+- **`apk-dart-defines.sh`** — auto-injects `--dart-define` flags into `flutter build apk`
+
 ## Development Preferences
 
 - **Before exiting plan mode**, ask the user if they want to create a feature branch first (via `/feature`).
@@ -60,7 +69,7 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 ## Mobile Debugging & Testing
 
 - **Don't jump to fixes** when something fails on phone — ask user if they want to troubleshoot with ADB/logcat first.
-- **Use `/debug-build`** to build a debug APK and sideload it on the phone.
+- Use `/debug-build` to build and sideload. Hooks block `flutter run` on Android and auto-inject `--dart-define` flags.
 - Before pushing a new version, remind user to **test on phone** and **export their data** first.
 
 ## Android Signing
@@ -72,5 +81,5 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 ## GitHub
 
 - Repo: sohamM97/task-roulette
-- **Releases:** Auto-created via GitHub Actions on tag push. **Never tag or push a release unless the user runs `/release`.** Don't use `gh release create`.
-- **Never merge PRs without explicit user approval.** Creating PRs is fine, but always ask before running `gh pr merge`.
+- **Releases:** Auto-created via GitHub Actions on tag push. Use `/release` to tag. Don't use `gh release create`.
+- Hooks enforce confirmation prompts for `git tag` and `gh pr merge`.

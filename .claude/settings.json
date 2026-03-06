@@ -13,6 +13,21 @@
             "type": "command",
             "command": "bash .claude/hooks/block-flutter-run-android.sh",
             "statusMessage": "Checking flutter run target device..."
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/pre-commit-analyze.sh",
+            "statusMessage": "Running flutter analyze before commit..."
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/guard-git-tag.sh",
+            "statusMessage": "Checking git tag usage..."
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/guard-pr-merge.sh",
+            "statusMessage": "Checking PR merge..."
           }
         ]
       }
