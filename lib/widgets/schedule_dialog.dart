@@ -1,30 +1,57 @@
 import 'package:flutter/material.dart';
 import '../models/task_schedule.dart';
 
+/// Result from the schedule dialog.
+class ScheduleDialogResult {
+  final List<TaskSchedule> schedules;
+  final bool isOverride;
+
+  const ScheduleDialogResult({required this.schedules, required this.isOverride});
+}
+
+/// A parent task that contributes schedule days via inheritance.
+typedef ScheduleSource = ({int id, String name, Set<int> days});
+
 /// Bottom sheet for editing a task's weekly schedule (day-of-week chips).
-/// Returns the new list of schedules, or null if cancelled.
+///
+/// Return value semantics:
+/// - `null` → cancelled (no change)
+/// - `ScheduleDialogResult(isOverride: true, ...)` → save as override (may be empty)
+/// - `ScheduleDialogResult(isOverride: false, ...)` → clear override, restore inheritance
 class ScheduleDialog extends StatefulWidget {
   final int taskId;
   final List<TaskSchedule> currentSchedules;
+  final Set<int> inheritedDays;
+  final bool isCurrentlyOverriding;
+  final List<ScheduleSource> sources;
 
   const ScheduleDialog({
     super.key,
     required this.taskId,
     required this.currentSchedules,
+    this.inheritedDays = const {},
+    this.isCurrentlyOverriding = false,
+    this.sources = const [],
   });
 
-  /// Shows the schedule bottom sheet and returns updated schedules, or null.
-  static Future<List<TaskSchedule>?> show(
+  /// Shows the schedule bottom sheet and returns the result, or null.
+  static Future<ScheduleDialogResult?> show(
     BuildContext context, {
     required int taskId,
     required List<TaskSchedule> currentSchedules,
+    Set<int> inheritedDays = const {},
+    bool isCurrentlyOverriding = false,
+    List<ScheduleSource> sources = const [],
   }) {
-    return showModalBottomSheet<List<TaskSchedule>>(
+    return showModalBottomSheet<ScheduleDialogResult>(
       context: context,
       isScrollControlled: true,
       builder: (_) => ScheduleDialog(
         taskId: taskId,
         currentSchedules: currentSchedules,
+        inheritedDays: inheritedDays,
+        isCurrentlyOverriding: isCurrentlyOverriding,
+        sources: sources,
       ),
     );
   }
@@ -35,6 +62,7 @@ class ScheduleDialog extends StatefulWidget {
 
 class _ScheduleDialogState extends State<ScheduleDialog> {
   final Set<int> _selectedDays = {}; // 1=Mon..7=Sun
+  bool _isOverriding = false;
 
   static const _dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -44,13 +72,24 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
     for (final s in widget.currentSchedules) {
       _selectedDays.add(s.dayOfWeek);
     }
+    // Task is overriding if it has own schedules or the override flag is set
+    _isOverriding = widget.currentSchedules.isNotEmpty || widget.isCurrentlyOverriding;
   }
+
+  bool get _isInheriting => !_isOverriding && widget.inheritedDays.isNotEmpty;
 
   bool get _hasChanges {
     final oldDays = widget.currentSchedules
         .map((s) => s.dayOfWeek)
         .toSet();
-    return !_setsEqual(oldDays, _selectedDays);
+    if (!_setsEqual(oldDays, _selectedDays)) return true;
+    // Override state only matters when there are inherited days to override
+    if (widget.inheritedDays.isNotEmpty) {
+      final wasOverriding = widget.isCurrentlyOverriding ||
+          widget.currentSchedules.isNotEmpty;
+      if (wasOverriding != _isOverriding) return true;
+    }
+    return false;
   }
 
   bool _setsEqual(Set<int> a, Set<int> b) =>
@@ -61,6 +100,45 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
       taskId: widget.taskId,
       dayOfWeek: day,
     )).toList();
+  }
+
+  void _save() {
+    Navigator.pop(context, ScheduleDialogResult(
+      schedules: _buildSchedules(),
+      isOverride: !_isInheriting,
+    ));
+  }
+
+  void _startOverriding(int day) {
+    setState(() {
+      _isOverriding = true;
+      // Carry over inherited days as the starting selection
+      _selectedDays.addAll(widget.inheritedDays);
+      // Then toggle the tapped day
+      if (_selectedDays.contains(day)) {
+        _selectedDays.remove(day);
+      } else {
+        _selectedDays.add(day);
+      }
+    });
+  }
+
+  void _clearOverride() {
+    setState(() {
+      _isOverriding = false;
+      _selectedDays.clear();
+    });
+  }
+
+  String _sourceLabel() {
+    if (_isInheriting && widget.sources.isNotEmpty) {
+      final names = widget.sources.map((s) => s.name).join(', ');
+      return 'Inherited from: $names';
+    }
+    if (_isOverriding && widget.sources.isNotEmpty) {
+      return 'Custom schedule';
+    }
+    return 'Repeat weekly';
   }
 
   @override
@@ -84,59 +162,98 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
               Text('Schedule',
                 style: Theme.of(context).textTheme.titleMedium),
               const Spacer(),
-              if (_selectedDays.isNotEmpty)
+              if (_selectedDays.isNotEmpty || _isInheriting)
                 TextButton(
-                  onPressed: () => setState(() => _selectedDays.clear()),
+                  onPressed: () {
+                    if (_isInheriting) {
+                      // Switch to override mode with no days (opt out)
+                      setState(() {
+                        _isOverriding = true;
+                        _selectedDays.clear();
+                      });
+                    } else {
+                      setState(() => _selectedDays.clear());
+                    }
+                  },
                   child: const Text('Clear all'),
+                ),
+              if (_isOverriding && widget.inheritedDays.isNotEmpty)
+                TextButton(
+                  onPressed: _clearOverride,
+                  child: const Text('Clear override'),
                 ),
             ],
           ),
           const SizedBox(height: 16),
 
-          // Day chips
-          Text('Repeat weekly',
+          // Source label
+          Text(
+            _sourceLabel(),
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: colorScheme.onSurfaceVariant)),
+              color: colorScheme.onSurfaceVariant),
+          ),
           const SizedBox(height: 8),
+
+          // Day chips
           Wrap(
             spacing: 6,
             children: List.generate(7, (i) {
               final day = i + 1; // 1=Mon..7=Sun
-              final selected = _selectedDays.contains(day);
-              return FilterChip(
-                label: Text(_dayLabels[i]),
-                selected: selected,
-                onSelected: (val) => setState(() {
-                  if (val) {
-                    _selectedDays.add(day);
-                  } else {
-                    _selectedDays.remove(day);
-                  }
-                }),
-                showCheckmark: false,
-                selectedColor: colorScheme.primaryContainer,
-                labelStyle: TextStyle(
-                  color: selected
-                      ? colorScheme.onPrimaryContainer
-                      : colorScheme.onSurfaceVariant,
-                ),
-              );
+              if (_isInheriting) {
+                return _buildInheritedChip(day, colorScheme);
+              }
+              return _buildOverrideChip(day, colorScheme);
             }),
           ),
+
           const SizedBox(height: 20),
 
           // Save button
           SizedBox(
             width: double.infinity,
             child: FilledButton(
-              onPressed: _hasChanges || _selectedDays.isEmpty != widget.currentSchedules.isEmpty
-                  ? () => Navigator.pop(context, _buildSchedules())
-                  : null,
+              onPressed: _hasChanges ? _save : null,
               child: const Text('Save'),
             ),
           ),
           const SizedBox(height: 12),
         ],
+      ),
+    );
+  }
+
+  Widget _buildInheritedChip(int day, ColorScheme colorScheme) {
+    final inherited = widget.inheritedDays.contains(day);
+    return FilterChip(
+      label: Text(_dayLabels[day - 1]),
+      selected: inherited,
+      onSelected: (_) => _startOverriding(day),
+      showCheckmark: false,
+      selectedColor: colorScheme.surfaceContainerHighest,
+      labelStyle: TextStyle(
+        color: colorScheme.onSurfaceVariant,
+      ),
+    );
+  }
+
+  Widget _buildOverrideChip(int day, ColorScheme colorScheme) {
+    final selected = _selectedDays.contains(day);
+    return FilterChip(
+      label: Text(_dayLabels[day - 1]),
+      selected: selected,
+      onSelected: (val) => setState(() {
+        if (val) {
+          _selectedDays.add(day);
+        } else {
+          _selectedDays.remove(day);
+        }
+      }),
+      showCheckmark: false,
+      selectedColor: colorScheme.primaryContainer,
+      labelStyle: TextStyle(
+        color: selected
+            ? colorScheme.onPrimaryContainer
+            : colorScheme.onSurfaceVariant,
       ),
     );
   }

@@ -70,7 +70,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 15,
+      version: 16,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -92,7 +92,8 @@ class DatabaseHelper {
             sync_id TEXT,
             updated_at INTEGER,
             sync_status TEXT NOT NULL DEFAULT 'synced',
-            is_someday INTEGER NOT NULL DEFAULT 0
+            is_someday INTEGER NOT NULL DEFAULT 0,
+            is_schedule_override INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_sync_id ON tasks(sync_id)');
@@ -280,6 +281,9 @@ class DatabaseHelper {
           await db.execute('CREATE INDEX idx_task_schedules_specific_date ON task_schedules(specific_date)');
           await db.execute('CREATE UNIQUE INDEX idx_task_schedules_sync_id ON task_schedules(sync_id)');
         }
+        if (oldVersion < 16) {
+          await db.execute('ALTER TABLE tasks ADD COLUMN is_schedule_override INTEGER NOT NULL DEFAULT 0');
+        }
       },
     );
   }
@@ -322,9 +326,9 @@ class DatabaseHelper {
       // Check schema version is compatible
       final versionResult = await testDb.rawQuery('PRAGMA user_version');
       final version = versionResult.first.values.first as int;
-      if (version < 1 || version > 15) {
+      if (version < 1 || version > 16) {
         throw FormatException(
-          'Incompatible backup version ($version). This app supports versions 1-15.',
+          'Incompatible backup version ($version). This app supports versions 1-16.',
         );
       }
 
@@ -2228,7 +2232,7 @@ class DatabaseHelper {
 
   /// Replaces all schedules for a task atomically.
   /// Deletes existing schedules, inserts new ones, and enqueues sync entries.
-  Future<void> replaceSchedules(int taskId, List<TaskSchedule> schedules) async {
+  Future<void> replaceSchedules(int taskId, List<TaskSchedule> schedules, {bool? isOverride}) async {
     final db = await database;
     await db.transaction((txn) async {
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -2271,6 +2275,13 @@ class DatabaseHelper {
           });
         }
       }
+
+      // Update override flag if specified
+      if (isOverride != null) {
+        await txn.update('tasks',
+          {'is_schedule_override': isOverride ? 1 : 0},
+          where: 'id = ?', whereArgs: [taskId]);
+      }
     });
   }
 
@@ -2284,6 +2295,11 @@ class DatabaseHelper {
 
     final rows = await db.rawQuery('''
       WITH
+        schedule_barrier(task_id) AS (
+          SELECT DISTINCT task_id FROM task_schedules
+          UNION
+          SELECT id FROM tasks WHERE is_schedule_override = 1
+        ),
         scheduled_today(task_id) AS (
           SELECT task_id FROM task_schedules
           WHERE schedule_type = 'weekly' AND day_of_week = ?
@@ -2293,6 +2309,7 @@ class DatabaseHelper {
           UNION
           SELECT tr.child_id FROM task_relationships tr
           INNER JOIN all_descendants d ON tr.parent_id = d.id
+          WHERE tr.child_id NOT IN (SELECT task_id FROM schedule_barrier)
         )
       SELECT DISTINCT d.id FROM all_descendants d
       INNER JOIN tasks t ON d.id = t.id
@@ -2306,6 +2323,132 @@ class DatabaseHelper {
     ''', [dayOfWeek]);
 
     return rows.map((r) => r['id'] as int).toSet();
+  }
+
+  /// Returns which ancestors contribute schedules to this task, with their
+  /// names and days. Used by the UI to show "Inherited from: X, Y".
+  Future<List<({int id, String name, Set<int> days})>> getScheduleSources(int taskId) async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      WITH RECURSIVE
+        schedule_barrier(task_id) AS (
+          SELECT DISTINCT task_id FROM task_schedules
+          UNION
+          SELECT id FROM tasks WHERE is_schedule_override = 1
+        ),
+        ancestors(id) AS (
+          SELECT tr.parent_id FROM task_relationships tr
+          WHERE tr.child_id = ?
+          UNION
+          SELECT tr.parent_id FROM task_relationships tr
+          INNER JOIN ancestors a ON tr.child_id = a.id
+          WHERE a.id NOT IN (SELECT task_id FROM schedule_barrier)
+        ),
+        nearest_scheduled(id) AS (
+          SELECT id FROM ancestors
+          WHERE id IN (SELECT task_id FROM schedule_barrier)
+        )
+      SELECT ns.id, t.name, ts.day_of_week
+      FROM nearest_scheduled ns
+      INNER JOIN tasks t ON ns.id = t.id
+      INNER JOIN task_schedules ts ON ns.id = ts.task_id
+      ORDER BY t.name, ts.day_of_week
+    ''', [taskId]);
+
+    final map = <int, ({int id, String name, Set<int> days})>{};
+    for (final row in rows) {
+      final id = row['id'] as int;
+      final name = row['name'] as String;
+      final day = row['day_of_week'] as int;
+      if (map.containsKey(id)) {
+        map[id]!.days.add(day);
+      } else {
+        map[id] = (id: id, name: name, days: {day});
+      }
+    }
+    return map.values.toList();
+  }
+
+  /// Returns the days this task would inherit from ancestors, ignoring
+  /// the task's own schedules/override flag. Used by the UI to show
+  /// what the task falls back to if its override is cleared.
+  Future<Set<int>> getInheritedScheduleDays(int taskId) async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      WITH RECURSIVE
+        schedule_barrier(task_id) AS (
+          SELECT DISTINCT task_id FROM task_schedules
+          UNION
+          SELECT id FROM tasks WHERE is_schedule_override = 1
+        ),
+        ancestors(id) AS (
+          SELECT tr.parent_id FROM task_relationships tr
+          WHERE tr.child_id = ?
+          UNION
+          SELECT tr.parent_id FROM task_relationships tr
+          INNER JOIN ancestors a ON tr.child_id = a.id
+          WHERE a.id NOT IN (SELECT task_id FROM schedule_barrier)
+        ),
+        nearest_scheduled(id) AS (
+          SELECT id FROM ancestors
+          WHERE id IN (SELECT task_id FROM schedule_barrier)
+        )
+      SELECT DISTINCT ts.day_of_week
+      FROM nearest_scheduled ns
+      INNER JOIN task_schedules ts ON ns.id = ts.task_id
+    ''', [taskId]);
+    return rows.map((r) => r['day_of_week'] as int).toSet();
+  }
+
+  /// Returns the effective scheduled days for a task.
+  /// If the task has its own schedules, returns those days (it's overriding).
+  /// Otherwise, walks up ancestors and collects days from the nearest
+  /// ancestors that have their own schedules (inheritance with barrier).
+  Future<Set<int>> getEffectiveScheduleDays(int taskId) async {
+    final db = await database;
+
+    // Check if task has its own schedules or explicit override flag
+    final taskRow = await db.query('tasks',
+      columns: ['is_schedule_override'],
+      where: 'id = ?', whereArgs: [taskId]);
+    final isOverride = taskRow.isNotEmpty &&
+        (taskRow.first['is_schedule_override'] as int) == 1;
+
+    final ownRows = await db.query('task_schedules',
+      columns: ['day_of_week'],
+      where: 'task_id = ?', whereArgs: [taskId]);
+
+    // If task has own schedules or explicit override, return own days (may be empty)
+    if (ownRows.isNotEmpty || isOverride) {
+      return ownRows.map((r) => r['day_of_week'] as int).toSet();
+    }
+
+    // Walk up ancestors, stopping at schedule barriers
+    final rows = await db.rawQuery('''
+      WITH RECURSIVE
+        schedule_barrier(task_id) AS (
+          SELECT DISTINCT task_id FROM task_schedules
+          UNION
+          SELECT id FROM tasks WHERE is_schedule_override = 1
+        ),
+        ancestors(id) AS (
+          SELECT tr.parent_id FROM task_relationships tr
+          WHERE tr.child_id = ?
+          UNION
+          SELECT tr.parent_id FROM task_relationships tr
+          INNER JOIN ancestors a ON tr.child_id = a.id
+          WHERE a.id NOT IN (SELECT task_id FROM schedule_barrier)
+        ),
+        nearest_scheduled(id) AS (
+          SELECT id FROM ancestors
+          WHERE id IN (SELECT task_id FROM schedule_barrier)
+        )
+      SELECT DISTINCT ts.day_of_week
+      FROM nearest_scheduled ns
+      INNER JOIN task_schedules ts ON ns.id = ts.task_id
+    ''', [taskId]);
+
+    return rows.map((r) => r['day_of_week'] as int).toSet();
   }
 
   /// Returns schedule data by sync_id (for pushing to Firestore).
@@ -2384,5 +2527,14 @@ class DatabaseHelper {
       'SELECT 1 FROM task_schedules WHERE task_id = ? LIMIT 1',
       [taskId]);
     return result.isNotEmpty;
+  }
+
+  Future<bool> isScheduleOverride(int taskId) async {
+    final db = await database;
+    final rows = await db.query('tasks',
+      columns: ['is_schedule_override'],
+      where: 'id = ?', whereArgs: [taskId]);
+    if (rows.isEmpty) return false;
+    return (rows.first['is_schedule_override'] as int) == 1;
   }
 }

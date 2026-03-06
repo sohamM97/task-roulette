@@ -345,25 +345,7 @@ class TaskProvider extends ChangeNotifier {
     final picked = <Task>[];
     final remaining = List<Task>.from(eligible);
 
-    // Ensure at least 1 quick task if available and not yet picked
-    if (picked.length < n && !picked.any((t) => t.isQuickTask)) {
-      final quickTasks = remaining.where((t) => t.isQuickTask).toList();
-      if (quickTasks.isNotEmpty) {
-        final weights = quickTasks.map(weightFn).toList();
-        final total = weights.fold(0.0, (a, b) => a + b);
-        var roll = _random.nextDouble() * total;
-        Task? quickPick;
-        for (int i = 0; i < quickTasks.length; i++) {
-          roll -= weights[i];
-          if (roll <= 0) { quickPick = quickTasks[i]; break; }
-        }
-        quickPick ??= quickTasks.last;
-        picked.add(quickPick);
-        remaining.remove(quickPick);
-      }
-    }
-
-    // Fill remaining slots via weighted random
+    // Fill slots via weighted random
     while (picked.length < n && remaining.isNotEmpty) {
       final weights = remaining.map(weightFn).toList();
       final total = weights.fold(0.0, (a, b) => a + b);
@@ -740,13 +722,29 @@ class TaskProvider extends ChangeNotifier {
     return _db.getSchedulesForTask(taskId);
   }
 
-  Future<void> updateSchedules(int taskId, List<TaskSchedule> schedules) async {
-    await _db.replaceSchedules(taskId, schedules);
+  Future<void> updateSchedules(int taskId, List<TaskSchedule> schedules, {bool? isOverride}) async {
+    await _db.replaceSchedules(taskId, schedules, isOverride: isOverride);
     onMutation?.call();
   }
 
   Future<bool> hasSchedule(int taskId) async {
     return _db.hasSchedules(taskId);
+  }
+
+  Future<Set<int>> getEffectiveScheduleDays(int taskId) async {
+    return _db.getEffectiveScheduleDays(taskId);
+  }
+
+  Future<Set<int>> getInheritedScheduleDays(int taskId) async {
+    return _db.getInheritedScheduleDays(taskId);
+  }
+
+  Future<List<({int id, String name, Set<int> days})>> getScheduleSources(int taskId) async {
+    return _db.getScheduleSources(taskId);
+  }
+
+  Future<bool> isScheduleOverride(int taskId) async {
+    return _db.isScheduleOverride(taskId);
   }
 
   Future<Set<int>> getScheduleBoostedLeafIds() async {

@@ -2814,23 +2814,23 @@ void main() {
       await db.importDatabase(v14DbPath);
     });
 
-    test('rejects version 16 as too high', () async {
+    test('rejects version 17 as too high', () async {
       DatabaseHelper.testDatabasePath = mainDbPath;
       await db.reset();
       await db.database;
 
-      final tooHighDbPath = '${tempDir.path}/v16.db';
-      final tooHighDb = await openDatabase(tooHighDbPath, version: 16,
+      final v17DbPath = '${tempDir.path}/v17.db';
+      final v17Db = await openDatabase(v17DbPath, version: 17,
         onCreate: (db, version) async {
           await db.execute('CREATE TABLE tasks (id INTEGER PRIMARY KEY, name TEXT)');
           await db.execute('CREATE TABLE task_relationships (parent_id INTEGER, child_id INTEGER)');
           await db.execute('CREATE TABLE task_dependencies (task_id INTEGER, depends_on_task_id INTEGER)');
         },
       );
-      await tooHighDb.close();
+      await v17Db.close();
 
       expect(
-        () => db.importDatabase(tooHighDbPath),
+        () => db.importDatabase(v17DbPath),
         throwsA(isA<FormatException>().having(
           (e) => e.message, 'message', contains('Incompatible backup version'),
         )),
@@ -3747,6 +3747,269 @@ void main() {
       final boosted = await db.getScheduleBoostedLeafIds(
         now: DateTime(2026, 3, 2)); // Monday
       expect(boosted, isNot(contains(id)));
+    });
+
+    // --- Schedule override/inheritance tests ---
+
+    test('override blocks inheritance: child with own schedule not boosted by parent', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      // Parent scheduled Monday, child scheduled Wednesday
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(child, [
+        TaskSchedule(taskId: child, dayOfWeek: 3),
+      ]);
+
+      // On Monday: child should NOT be boosted (it overrides with Wed)
+      final monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2)); // Monday
+      expect(monday, isNot(contains(child)));
+
+      // On Wednesday: child should be boosted by its own schedule
+      final wednesday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 4)); // Wednesday
+      expect(wednesday, contains(child));
+    });
+
+    test('override removal restores inheritance', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1), // Monday
+      ]);
+      await db.replaceSchedules(child, [
+        TaskSchedule(taskId: child, dayOfWeek: 3), // Wednesday
+      ]);
+
+      // Child overrides → not boosted on Monday
+      var monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, isNot(contains(child)));
+
+      // Remove child's override → should inherit Monday from parent
+      await db.replaceSchedules(child, []);
+      monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, contains(child));
+    });
+
+    test('multi-parent union: child inherits from both parents', () async {
+      final p1 = await db.insertTask(Task(name: 'Parent1'));
+      final p2 = await db.insertTask(Task(name: 'Parent2'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(p1, child);
+      await db.addRelationship(p2, child);
+
+      await db.replaceSchedules(p1, [
+        TaskSchedule(taskId: p1, dayOfWeek: 1), // Monday
+      ]);
+      await db.replaceSchedules(p2, [
+        TaskSchedule(taskId: p2, dayOfWeek: 5), // Friday
+      ]);
+
+      // Child should be boosted on both Monday and Friday
+      final monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, contains(child));
+
+      final friday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 6));
+      expect(friday, contains(child));
+    });
+
+    test('override with multi-parent: child override replaces all parents', () async {
+      final p1 = await db.insertTask(Task(name: 'Parent1'));
+      final p2 = await db.insertTask(Task(name: 'Parent2'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(p1, child);
+      await db.addRelationship(p2, child);
+
+      await db.replaceSchedules(p1, [
+        TaskSchedule(taskId: p1, dayOfWeek: 1), // Monday
+      ]);
+      await db.replaceSchedules(p2, [
+        TaskSchedule(taskId: p2, dayOfWeek: 5), // Friday
+      ]);
+      await db.replaceSchedules(child, [
+        TaskSchedule(taskId: child, dayOfWeek: 3), // Wednesday
+      ]);
+
+      // Child should ONLY be boosted on Wednesday
+      final monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, isNot(contains(child)));
+
+      final friday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 6));
+      expect(friday, isNot(contains(child)));
+
+      final wednesday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 4));
+      expect(wednesday, contains(child));
+    });
+
+    test('deep override barrier: grandchild inherits from middle override, not grandparent', () async {
+      final gp = await db.insertTask(Task(name: 'GP'));
+      final p = await db.insertTask(Task(name: 'P'));
+      final c = await db.insertTask(Task(name: 'C'));
+      await db.addRelationship(gp, p);
+      await db.addRelationship(p, c);
+
+      // GP=Monday, P=Wednesday (override), C=no schedule (inherits from P)
+      await db.replaceSchedules(gp, [
+        TaskSchedule(taskId: gp, dayOfWeek: 1), // Monday
+      ]);
+      await db.replaceSchedules(p, [
+        TaskSchedule(taskId: p, dayOfWeek: 3), // Wednesday
+      ]);
+
+      // Monday: C should NOT be boosted (P blocks GP's Monday)
+      final monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, isNot(contains(c)));
+
+      // Wednesday: C should be boosted (inherits P's Wednesday)
+      final wednesday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 4));
+      expect(wednesday, contains(c));
+    });
+
+    test('empty override blocks inheritance via is_schedule_override flag', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1), // Monday
+      ]);
+      // Child overrides with empty schedule (opt out)
+      await db.replaceSchedules(child, [], isOverride: true);
+
+      // Monday: child should NOT be boosted (empty override blocks parent)
+      final monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, isNot(contains(child)));
+
+      // Verify isScheduleOverride flag
+      expect(await db.isScheduleOverride(child), isTrue);
+    });
+
+    test('clearing empty override restores inheritance', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1), // Monday
+      ]);
+      await db.replaceSchedules(child, [], isOverride: true);
+
+      // Blocked
+      var monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, isNot(contains(child)));
+
+      // Clear override → restore inheritance
+      await db.replaceSchedules(child, [], isOverride: false);
+      expect(await db.isScheduleOverride(child), isFalse);
+
+      monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, contains(child));
+    });
+
+    test('getEffectiveScheduleDays returns empty for empty override', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(child, [], isOverride: true);
+
+      // Child has empty override → effective days should be empty
+      final days = await db.getEffectiveScheduleDays(child);
+      expect(days, isEmpty);
+    });
+
+    // --- getEffectiveScheduleDays tests ---
+
+    test('getEffectiveScheduleDays returns own days when task has schedules', () async {
+      final id = await db.insertTask(Task(name: 'Own'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 2),
+        TaskSchedule(taskId: id, dayOfWeek: 4),
+      ]);
+
+      final days = await db.getEffectiveScheduleDays(id);
+      expect(days, {2, 4});
+    });
+
+    test('getEffectiveScheduleDays returns inherited days from parent', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1),
+        TaskSchedule(taskId: parent, dayOfWeek: 5),
+      ]);
+
+      final days = await db.getEffectiveScheduleDays(child);
+      expect(days, {1, 5});
+    });
+
+    test('getEffectiveScheduleDays stops at nearest scheduled ancestor', () async {
+      final gp = await db.insertTask(Task(name: 'GP'));
+      final p = await db.insertTask(Task(name: 'P'));
+      final c = await db.insertTask(Task(name: 'C'));
+      await db.addRelationship(gp, p);
+      await db.addRelationship(p, c);
+
+      await db.replaceSchedules(gp, [
+        TaskSchedule(taskId: gp, dayOfWeek: 1), // Monday
+      ]);
+      await db.replaceSchedules(p, [
+        TaskSchedule(taskId: p, dayOfWeek: 3), // Wednesday
+      ]);
+
+      // C should see P's schedule (Wed), not GP's (Mon)
+      final days = await db.getEffectiveScheduleDays(c);
+      expect(days, {3});
+    });
+
+    test('getEffectiveScheduleDays returns empty when no ancestors have schedules', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      final days = await db.getEffectiveScheduleDays(child);
+      expect(days, isEmpty);
+    });
+
+    test('getEffectiveScheduleDays with multi-parent returns union', () async {
+      final p1 = await db.insertTask(Task(name: 'P1'));
+      final p2 = await db.insertTask(Task(name: 'P2'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(p1, child);
+      await db.addRelationship(p2, child);
+
+      await db.replaceSchedules(p1, [
+        TaskSchedule(taskId: p1, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(p2, [
+        TaskSchedule(taskId: p2, dayOfWeek: 5),
+      ]);
+
+      final days = await db.getEffectiveScheduleDays(child);
+      expect(days, {1, 5});
     });
 
     test('deleteAllLocalData clears schedules', () async {

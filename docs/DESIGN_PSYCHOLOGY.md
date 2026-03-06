@@ -89,9 +89,13 @@ ADHD = impaired executive function = the brain's "manager" is overloaded. Every 
 | Weight boost (×2.5), not guarantee | Keeps the roulette spirit — scheduled tasks *float up*, not dominate. No broken promise if they don't appear. |
 | No time-of-day | Time estimation is the hardest ADHD skill (Barkley, 2012). Days are coarse enough to be safe. |
 | Propagation through parent tasks | Schedule a project, all its leaf tasks get boosted. One decision covers many tasks. |
+| Override replaces inheritance | A child with its own schedule ignores ancestors. Removing the child's schedule restores inheritance. No flag needed — presence of schedule rows = override. |
+| Inherited days shown dimmed | The dialog shows what a task inherits (non-interactive chips), with a hint to tap to override. Clear visual distinction between "I chose this" and "I got this from a parent." |
 | No "missed schedule" feedback | Missing a Tuesday schedule has zero consequence. No streak, no badge, no guilt. |
 
 **ADHD rationale:** This is *intention setting*, not *obligation creation*. The user says "I'd like to work on X on Mondays" — the system responds by gently surfacing X more often on Mondays. If Monday passes without X, nothing happens. Compare this to calendar apps that create overdue items and guilt cycles.
+
+**Inheritance model:** Schedules propagate downward through the DAG — schedule a project, and all its leaf tasks float up on that day. But if a child task has its own schedule, it acts as a "barrier": it overrides the parent's schedule entirely. This is implicit (no toggle or flag) — if you've set days on a task, those are *your* days. Delete them, and the parent's schedule flows through again. This keeps the mental model simple: "my schedule wins; no schedule = use parent's."
 
 ---
 

@@ -885,14 +885,27 @@ class TaskListScreenState extends State<TaskListScreen>
     final current = await provider.getSchedules(task.id!);
     if (!mounted) return;
 
+    final isOverride = current.isNotEmpty ||
+        await provider.isScheduleOverride(task.id!);
+    if (!mounted) return;
+    // Always compute sources and inherited days
+    final sources = await provider.getScheduleSources(task.id!);
+    if (!mounted) return;
+    final inheritedDays = sources.fold<Set<int>>(
+        {}, (acc, s) => acc..addAll(s.days));
+
     final result = await ScheduleDialog.show(
       context,
       taskId: task.id!,
       currentSchedules: current,
+      inheritedDays: inheritedDays,
+      isCurrentlyOverriding: isOverride,
+      sources: sources,
     );
     if (result == null || !mounted) return;
 
-    await provider.updateSchedules(task.id!, result);
+    await provider.updateSchedules(task.id!, result.schedules,
+        isOverride: result.isOverride);
     // Invalidate cached schedule state so leaf detail refreshes
     if (mounted) setState(() {});
   }
