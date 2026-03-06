@@ -5,7 +5,7 @@ input=$(cat)
 command=$(echo "$input" | jq -r '.tool_input.command')
 
 # Only act on git commit commands
-if ! echo "$command" | grep -qE '^\s*git\s+commit\b'; then
+if ! echo "$command" | grep -qE '(^|\s*&&\s*|\s*;\s*)git\s+commit\b'; then
   echo '{}'
   exit 0
 fi

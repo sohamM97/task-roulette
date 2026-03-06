@@ -5,7 +5,7 @@
 input=$(cat)
 command=$(echo "$input" | jq -r '.tool_input.command')
 
-if ! echo "$command" | grep -qE '^\s*gh\s+pr\s+merge\b'; then
+if ! echo "$command" | grep -qE '(^|\s*&&\s*|\s*;\s*)gh\s+pr\s+merge\b'; then
   echo '{}'
   exit 0
 fi
