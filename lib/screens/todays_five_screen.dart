@@ -22,7 +22,11 @@ class TodaysFiveScreen extends StatefulWidget {
   State<TodaysFiveScreen> createState() => TodaysFiveScreenState();
 }
 
-class TodaysFiveScreenState extends State<TodaysFiveScreen> {
+class TodaysFiveScreenState extends State<TodaysFiveScreen>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   List<Task> _todaysTasks = [];
   final Set<int> _completedIds = {};
   /// Tracks tasks marked "Done today" (vs "Done for good!") so
@@ -301,9 +305,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     });
     // Keep workedOnIds in sync — remove if no longer in completed set
     _workedOnIds.removeWhere((id) => !_completedIds.contains(id));
-    // Clean pinned IDs: remove if task left the list or is no longer a leaf
+    // Clean pinned IDs: remove if task left the list or is no longer a leaf.
+    // Keep pins on completed tasks — they're not in leafIdSet (getAllLeafTasks
+    // excludes completed) but should retain their pinned indicator.
     _pinnedIds.removeWhere((id) {
       if (!refreshed.any((t) => t.id == id)) return true; // not in list
+      if (_completedIds.contains(id)) return false; // keep pin on done tasks
       return !leafIdSet.contains(id); // no longer a leaf
     });
     if (!mounted) return;
@@ -957,6 +964,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required by AutomaticKeepAliveClientMixin
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final completedCount = _completedIds.length;

@@ -25,6 +25,8 @@ To connect wirelessly:
 
 If the device was previously paired, `adb connect <ip>:<port>` alone should reconnect (no re-pairing needed), as long as both devices are on the same network.
 
+When no device is connected, check your memory for the last known IP. Try `adb connect <saved-ip>:<port>` with the user-provided port. If the connection fails, ask the user to verify the IP hasn't changed. When a connection succeeds, save the IP to memory for next time.
+
 ## Rules
 
 - Do NOT use `flutter run` — it is blocked by a hook on this project.
