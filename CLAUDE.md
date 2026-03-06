@@ -54,6 +54,7 @@ Hooks in `.claude/hooks/` enforce guardrails automatically:
 - **`guard-pr-merge.sh`** — requires user confirmation for `gh pr merge`
 - **`block-flutter-run-android.sh`** — blocks `flutter run` without `-d linux`
 - **`apk-dart-defines.sh`** — auto-injects `--dart-define` flags into `flutter build apk`
+- **`guard-adb-install.sh`** — requires user confirmation for `adb install`
 
 ## Development Preferences
 

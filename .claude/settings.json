@@ -28,6 +28,11 @@
             "type": "command",
             "command": "bash .claude/hooks/guard-pr-merge.sh",
             "statusMessage": "Checking PR merge..."
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/guard-adb-install.sh",
+            "statusMessage": "Checking ADB install..."
           }
         ]
       }
