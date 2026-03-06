@@ -12,6 +12,7 @@ class TaskCard extends StatelessWidget {
   final VoidCallback? onMove;
   final VoidCallback? onRename;
   final VoidCallback? onAddDependency;
+  final VoidCallback? onSchedule;
   final VoidCallback? onStopWorking;
   final bool isBlocked;
   final String? blockedByName;
@@ -29,6 +30,7 @@ class TaskCard extends StatelessWidget {
     this.onMove,
     this.onRename,
     this.onAddDependency,
+    this.onSchedule,
     this.onStopWorking,
     this.isBlocked = false,
     this.blockedByName,
@@ -70,6 +72,15 @@ class TaskCard extends StatelessWidget {
                   onTap: () {
                     Navigator.pop(bottomSheetContext);
                     onAddDependency!();
+                  },
+                ),
+              if (onSchedule != null)
+                ListTile(
+                  leading: const Icon(Icons.event_outlined),
+                  title: const Text('Schedule'),
+                  onTap: () {
+                    Navigator.pop(bottomSheetContext);
+                    onSchedule!();
                   },
                 ),
               if (onMove != null)

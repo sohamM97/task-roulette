@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../data/database_helper.dart';
 import '../data/todays_five_pin_helper.dart';
 import '../models/task.dart';
+import '../models/task_schedule.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
 import '../widgets/add_task_dialog.dart';
@@ -17,6 +18,7 @@ import '../widgets/random_result_dialog.dart';
 import '../widgets/task_card.dart';
 import '../utils/display_utils.dart';
 import '../widgets/delete_task_dialog.dart';
+import '../widgets/schedule_dialog.dart';
 import '../widgets/task_picker_dialog.dart';
 import '../services/backup_service.dart';
 import '../widgets/profile_icon.dart';
@@ -508,6 +510,7 @@ class TaskListScreenState extends State<TaskListScreen>
           deleted.task, deleted.parentIds, deleted.childIds,
           dependsOnIds: deleted.dependsOnIds,
           dependedByIds: deleted.dependedByIds,
+          schedules: deleted.schedules,
         );
       });
       return;
@@ -532,6 +535,7 @@ class TaskListScreenState extends State<TaskListScreen>
             dependsOnIds: result.dependsOnIds,
             dependedByIds: result.dependedByIds,
             removeReparentLinks: result.addedReparentLinks,
+            schedules: result.schedules,
           );
         });
       case DeleteChoice.deleteAll:
@@ -547,6 +551,7 @@ class TaskListScreenState extends State<TaskListScreen>
             tasks: result.deletedTasks,
             relationships: result.deletedRelationships,
             dependencies: result.deletedDependencies,
+            schedules: result.deletedSchedules,
           );
         });
     }
@@ -875,6 +880,38 @@ class TaskListScreenState extends State<TaskListScreen>
     }
   }
 
+  Future<void> _editSchedule(Task task) async {
+    final provider = context.read<TaskProvider>();
+    final results = await Future.wait([
+      provider.getSchedules(task.id!),
+      provider.isScheduleOverride(task.id!),
+      provider.getScheduleSources(task.id!),
+    ]);
+    if (!mounted) return;
+
+    final current = results[0] as List<TaskSchedule>;
+    final isOverrideFlag = results[1] as bool;
+    final sources = results[2] as List<({int id, String name, Set<int> days})>;
+    final isOverride = current.isNotEmpty || isOverrideFlag;
+    final inheritedDays = sources.fold<Set<int>>(
+        {}, (acc, s) => acc..addAll(s.days));
+
+    final result = await ScheduleDialog.show(
+      context,
+      taskId: task.id!,
+      currentSchedules: current,
+      inheritedDays: inheritedDays,
+      isCurrentlyOverriding: isOverride,
+      sources: sources,
+    );
+    if (result == null || !mounted) return;
+
+    await provider.updateSchedules(task.id!, result.schedules,
+        isOverride: result.isOverride);
+    // Invalidate cached schedule state so leaf detail refreshes
+    if (mounted) setState(() {});
+  }
+
   int _crossAxisCount(double width) {
     if (width >= 900) return 3;
     if (width >= 600) return 2;
@@ -1005,6 +1042,8 @@ class TaskListScreenState extends State<TaskListScreen>
                         }
                       case 'do_after':
                         if (task != null) _addDependencyToTask(task);
+                      case 'schedule':
+                        if (task != null) _editSchedule(task);
                       case 'delete':
                         if (task != null) _deleteTaskWithUndo(task);
                       case 'export':
@@ -1042,6 +1081,10 @@ class TaskListScreenState extends State<TaskListScreen>
                       ),
                     ],
                     if (!provider.isRoot) ...[
+                      const PopupMenuItem(
+                        value: 'schedule',
+                        child: Text('Schedule'),
+                      ),
                       const PopupMenuDivider(),
                       const PopupMenuItem(
                         value: 'delete',
@@ -1102,6 +1145,7 @@ class TaskListScreenState extends State<TaskListScreen>
                                 : () => _moveTask(task),
                             onRename: () => _renameTask(task),
                             onAddDependency: () => _addDependencyToTask(task),
+                            onSchedule: () => _editSchedule(task),
                             onStopWorking: task.isStarted
                                 ? () => _toggleStarted(task)
                                 : null,

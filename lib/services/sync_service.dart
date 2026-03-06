@@ -119,6 +119,12 @@ class SyncService {
       final deps = await _db.getAllDependenciesWithSyncIds();
       await _firestore.pushDependencies(uid, idToken, deps);
 
+      // Push all schedules
+      final schedules = await _db.getAllSchedulesWithTaskSyncIds();
+      if (schedules.isNotEmpty) {
+        await _firestore.pushSchedules(uid, idToken, schedules);
+      }
+
       // Mark all tasks as synced
       final taskIds = allTasks.where((t) => t.id != null).map((t) => t.id!).toList();
       await _db.markTasksSynced(taskIds);
@@ -181,6 +187,12 @@ class SyncService {
         await _db.upsertDependencyFromRemote(dep.taskSyncId, dep.dependsOnSyncId);
       }
 
+      // Pull all schedules
+      final remoteSchedules = await _firestore.pullAllSchedules(uid, idToken);
+      for (final schedule in remoteSchedules) {
+        await _db.upsertScheduleFromRemote(schedule);
+      }
+
       // Pull Today's 5 state
       final dateKey = _todayDateKey();
       final remote5 = await _firestore.pullTodaysFive(uid, idToken, dateKey);
@@ -230,6 +242,11 @@ class SyncService {
       for (final dep in remoteDeps) {
         await _firestore.deleteDependency(uid, idToken, dep.taskSyncId, dep.dependsOnSyncId);
       }
+      final remoteScheds = await _firestore.pullAllSchedules(uid, idToken);
+      for (final sched in remoteScheds) {
+        final syncId = sched['sync_id'] as String;
+        await _firestore.deleteSchedule(uid, idToken, syncId);
+      }
 
       // Now push all local data to cloud
       final allTasks = await _db.getAllTasksWithSyncId();
@@ -240,6 +257,12 @@ class SyncService {
 
       final deps = await _db.getAllDependenciesWithSyncIds();
       await _firestore.pushDependencies(uid, idToken, deps);
+
+      // Push all schedules
+      final schedules = await _db.getAllSchedulesWithTaskSyncIds();
+      if (schedules.isNotEmpty) {
+        await _firestore.pushSchedules(uid, idToken, schedules);
+      }
 
       // Mark all tasks as synced
       final taskIds = allTasks.where((t) => t.id != null).map((t) => t.id!).toList();
@@ -337,6 +360,15 @@ class SyncService {
             } else if (action == 'remove') {
               await _firestore.deleteDependency(uid, idToken, key1, key2);
             }
+          case 'schedule':
+            if (action == 'add') {
+              final data = await _db.getScheduleBySyncId(key1);
+              if (data != null) {
+                await _firestore.pushSchedules(uid, idToken, [data]);
+              }
+            } else if (action == 'remove') {
+              await _firestore.deleteSchedule(uid, idToken, key1);
+            }
         }
         await _db.deleteSyncQueueEntry(entryId);
       }
@@ -405,16 +437,16 @@ class SyncService {
         }
       }
 
-      // Remove local synced relationships that no longer exist remotely,
-      // but preserve any that are still pending push (not yet sent to cloud).
+      // Remove local synced relationships that no longer exist remotely
+      // but skip any that are pending push (locally created, not yet synced)
       final remoteRelSet = remoteRels
           .map((r) => '${r.parentSyncId}:${r.childSyncId}')
           .toSet();
-      final pendingRelAdds = await _db.getPendingAdds('relationship');
+      final pendingRelKeys = await _db.getPendingSyncAddKeys('relationship');
       final localRels = await _db.getAllRelationshipsWithSyncIds();
       for (final local in localRels) {
         final key = '${local.parentSyncId}:${local.childSyncId}';
-        if (!remoteRelSet.contains(key) && !pendingRelAdds.contains(key)) {
+        if (!remoteRelSet.contains(key) && !pendingRelKeys.contains(key)) {
           await _db.removeRelationshipFromRemote(
               local.parentSyncId, local.childSyncId);
           anyChange = true;
@@ -431,18 +463,38 @@ class SyncService {
         }
       }
 
-      // Remove local synced dependencies that no longer exist remotely,
-      // but preserve any that are still pending push.
+      // Remove local synced dependencies that no longer exist remotely
+      // but skip any that are pending push (locally created, not yet synced)
       final remoteDepSet = remoteDeps
           .map((d) => '${d.taskSyncId}:${d.dependsOnSyncId}')
           .toSet();
-      final pendingDepAdds = await _db.getPendingAdds('dependency');
+      final pendingDepKeys = await _db.getPendingSyncAddKeys('dependency');
       final localDeps = await _db.getAllDependenciesWithSyncIds();
       for (final local in localDeps) {
         final key = '${local.taskSyncId}:${local.dependsOnSyncId}';
-        if (!remoteDepSet.contains(key) && !pendingDepAdds.contains(key)) {
+        if (!remoteDepSet.contains(key) && !pendingDepKeys.contains(key)) {
           await _db.removeDependencyFromRemote(
               local.taskSyncId, local.dependsOnSyncId);
+          anyChange = true;
+        }
+      }
+
+      // Pull schedules
+      final remoteSchedules = await _firestore.pullAllSchedules(uid, idToken);
+      for (final schedule in remoteSchedules) {
+        await _db.upsertScheduleFromRemote(schedule);
+      }
+      // Remove local schedules not in remote
+      // but skip any that are pending push (locally created, not yet synced)
+      final remoteScheduleIds = remoteSchedules
+          .map((s) => s['sync_id'] as String)
+          .toSet();
+      final pendingScheduleKeys = await _db.getPendingSyncAddKeys('schedule');
+      final localScheduleIds = await _db.getAllScheduleSyncIds();
+      for (final localSyncId in localScheduleIds) {
+        if (!remoteScheduleIds.contains(localSyncId) &&
+            !pendingScheduleKeys.contains(localSyncId)) {
+          await _db.deleteScheduleBySyncId(localSyncId);
           anyChange = true;
         }
       }

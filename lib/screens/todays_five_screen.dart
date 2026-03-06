@@ -322,10 +322,14 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     _preWorkedOnLastWorkedAt.clear();
 
     final provider = context.read<TaskProvider>();
+
     final allLeaves = await provider.getAllLeafTasks();
 
     final leafIds = allLeaves.map((t) => t.id!).toList();
     final blockedIds = await provider.getBlockedChildIds(leafIds);
+
+    // Get schedule-boosted leaf IDs for weight multiplier
+    final scheduleBoostedIds = await provider.getScheduleBoostedLeafIds();
 
     // Keep done + pinned tasks, only replace the rest
     final kept = _todaysTasks.where(
@@ -340,7 +344,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen> {
     ).toList();
 
     final slotsToFill = 5 - kept.length;
-    final picked = provider.pickWeightedN(eligible, slotsToFill);
+    final picked = provider.pickWeightedN(eligible, slotsToFill,
+        scheduleBoostedIds: scheduleBoostedIds);
     if (!mounted) return;
     _todaysTasks = [...kept, ...picked];
     await _loadOtherDoneToday();

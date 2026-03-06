@@ -34,7 +34,7 @@ ADHD = impaired executive function = the brain's "manager" is overloaded. Every 
 - No streak tracking ("you worked on this 3/5 days this week")
 - No punishment for missing days
 - No counting at all — just today / not today
-- No explicit schedules (daily/weekly/monthly) — reminders will come later as a separate feature
+- No *complex* schedules (intervals, cron-like recurrence, time-of-day) — see §5 for our lightweight alternative
 
 ---
 
@@ -49,6 +49,7 @@ ADHD = impaired executive function = the brain's "manager" is overloaded. Every 
 | Stale (logarithmic) | 1x → 2x cap | Gentle rescue from neglect (see below) |
 | New (< 3 days) | 1.3x | Capitalize on initial enthusiasm |
 | Someday | no staleness | Aspirational tasks don't create pressure |
+| Scheduled today | 2.5x | Gentle day-of-week nudge (see §5) |
 
 **Staleness curve:** `1 + 0.25 × ln(days + 1)`, capped at 2×. Grows fast in the first week (surfaces genuinely forgotten tasks), then flattens. A task untouched for 7 days gets ~1.6×; at 30 days it hits the 2× cap. The old linear model (4× cap) caused runaway compounding — worst case was 24× (3 × 2 × 4). Now the worst case is 12× (3 × 2 × 2).
 
@@ -76,6 +77,28 @@ ADHD = impaired executive function = the brain's "manager" is overloaded. Every 
 
 ---
 
+## 5. Scheduled Priorities (Day-Level Nudges)
+
+**The problem:** Users have recurring rhythms — "work stuff Mon–Fri", "side project on weekends" — but traditional scheduling (cron rules, intervals, time-of-day) is an executive function tax.
+
+**Our approach:** Tap a task → Schedule → toggle day-of-week chips. That's it.
+
+| Design choice | Why |
+|---|---|
+| Day chips, not intervals | "Every Monday" is one tap. "Every 3 days" requires mental arithmetic. |
+| Weight boost (×2.5), not guarantee | Keeps the roulette spirit — scheduled tasks *float up*, not dominate. No broken promise if they don't appear. |
+| No time-of-day | Time estimation is the hardest ADHD skill (Barkley, 2012). Days are coarse enough to be safe. |
+| Propagation through parent tasks | Schedule a project, all its leaf tasks get boosted. One decision covers many tasks. |
+| Override replaces inheritance | A child with its own schedule ignores ancestors. Removing the child's schedule restores inheritance. No flag needed — presence of schedule rows = override. |
+| Inherited days shown dimmed | The dialog shows what a task inherits (non-interactive chips), with a hint to tap to override. Clear visual distinction between "I chose this" and "I got this from a parent." |
+| No "missed schedule" feedback | Missing a Tuesday schedule has zero consequence. No streak, no badge, no guilt. |
+
+**ADHD rationale:** This is *intention setting*, not *obligation creation*. The user says "I'd like to work on X on Mondays" — the system responds by gently surfacing X more often on Mondays. If Monday passes without X, nothing happens. Compare this to calendar apps that create overdue items and guilt cycles.
+
+**Inheritance model:** Schedules propagate downward through the DAG — schedule a project, and all its leaf tasks float up on that day. But if a child task has its own schedule, it acts as a "barrier": it overrides the parent's schedule entirely. This is implicit (no toggle or flag) — if you've set days on a task, those are *your* days. Delete them, and the parent's schedule flows through again. This keeps the mental model simple: "my schedule wins; no schedule = use parent's."
+
+---
+
 ## What We Deliberately Avoid
 
 | Anti-Pattern | Why It Hurts | Our Alternative |
@@ -83,11 +106,11 @@ ADHD = impaired executive function = the brain's "manager" is overloaded. Every 
 | Streaks | Breaking = shame spiral | Cumulative counts only |
 | Overdue badges | Amplifies avoidance | Tasks just reappear |
 | Complex config | Executive function tax | Sensible defaults |
-| Calendar scheduling | Requires time estimation | "Today's 5" |
+| Full calendar scheduling | Time estimation + config overhead | Day-chip scheduling (§5) |
 | Leaderboards | External pressure = anxiety | Private, personal |
 | Difficulty ratings | Triggers effort avoidance | Removed — was rarely used |
 | Detailed stats | Meta-work, not real work | Simple progress bar |
-| Explicit repeating | Config overhead, guilt on miss | Implicit via "Done today" |
+| Complex repeating rules | Cron-like config, guilt on miss | Day chips + "Done today" |
 
 ---
 

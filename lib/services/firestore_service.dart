@@ -27,6 +27,7 @@ class FirestoreService {
   String _relationshipsPath(String uid) => '$_baseUrl/users/$uid/relationships';
   String _dependenciesPath(String uid) => '$_baseUrl/users/$uid/dependencies';
   String _todaysFivePath(String uid) => '$_baseUrl/users/$uid/todays_five';
+  String _schedulesPath(String uid) => '$_baseUrl/users/$uid/schedules';
 
   // --- Push ---
 
@@ -254,6 +255,96 @@ class FirestoreService {
     return results;
   }
 
+  // --- Schedules ---
+
+  /// Pushes schedule entries to Firestore.
+  Future<void> pushSchedules(
+    String uid,
+    String idToken,
+    List<Map<String, dynamic>> schedules,
+  ) async {
+    if (schedules.isEmpty) return;
+    for (var i = 0; i < schedules.length; i += 500) {
+      final batch = schedules.skip(i).take(500).toList();
+      final writes = batch.map((s) {
+        final syncId = s['sync_id'] as String;
+        final fields = <String, dynamic>{
+          'task_sync_id': {'stringValue': s['task_sync_id'] as String},
+          'schedule_type': {'stringValue': s['schedule_type'] as String},
+        };
+        if (s['day_of_week'] != null) {
+          fields['day_of_week'] = {'integerValue': (s['day_of_week'] as int).toString()};
+        }
+        if (s['updated_at'] != null) {
+          fields['updated_at'] = {'integerValue': (s['updated_at'] as int).toString()};
+        }
+        return {
+          'update': {
+            'name': 'projects/$_projectId/databases/(default)/documents/users/$uid/schedules/$syncId',
+            'fields': fields,
+          },
+        };
+      }).toList();
+
+      final commitUrl = Uri.parse(
+        'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
+      );
+      final response = await http.post(
+        commitUrl,
+        headers: _headers(idToken),
+        body: json.encode({'writes': writes}),
+      ).timeout(_httpTimeout);
+      if (response.statusCode != 200) {
+        throw FirestoreException('Push schedules failed: ${response.statusCode} ${response.body}');
+      }
+    }
+  }
+
+  /// Deletes a schedule document from Firestore.
+  Future<void> deleteSchedule(
+    String uid,
+    String idToken,
+    String scheduleSyncId,
+  ) async {
+    final url = Uri.parse('${_schedulesPath(uid)}/$scheduleSyncId');
+    final response = await http.delete(url, headers: _headers(idToken)).timeout(_httpTimeout);
+    if (response.statusCode != 200 && response.statusCode != 404) {
+      throw FirestoreException('Delete schedule failed: ${response.statusCode} ${response.body}');
+    }
+  }
+
+  /// Pulls all schedules from Firestore.
+  Future<List<Map<String, dynamic>>> pullAllSchedules(
+    String uid,
+    String idToken,
+  ) async {
+    final results = <Map<String, dynamic>>[];
+    String? pageToken;
+    do {
+      var url = '${_schedulesPath(uid)}?pageSize=300';
+      if (pageToken != null) url += '&pageToken=$pageToken';
+      final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
+      if (response.statusCode != 200) break;
+      final body = json.decode(response.body) as Map<String, dynamic>;
+      final docs = body['documents'] as List<dynamic>? ?? [];
+      for (final doc in docs) {
+        final fields = (doc as Map<String, dynamic>)['fields'] as Map<String, dynamic>?;
+        if (fields == null) continue;
+        final docName = doc['name'] as String;
+        final syncId = docName.split('/').last;
+        results.add({
+          'sync_id': syncId,
+          'task_sync_id': _stringField(fields, 'task_sync_id') ?? '',
+          'schedule_type': _stringField(fields, 'schedule_type') ?? 'weekly',
+          'day_of_week': _intFieldNullable(fields, 'day_of_week'),
+          'updated_at': _intFieldNullable(fields, 'updated_at'),
+        });
+      }
+      pageToken = body['nextPageToken'] as String?;
+    } while (pageToken != null);
+    return results;
+  }
+
   // --- Today's 5 ---
 
   /// Pushes Today's 5 state for a given date to Firestore.
@@ -437,6 +528,8 @@ class FirestoreService {
       if (task.nextDueAt != null)
         'next_due_at': {'integerValue': task.nextDueAt.toString()},
       'updated_at': {'integerValue': (task.updatedAt ?? DateTime.now().millisecondsSinceEpoch).toString()},
+      if (task.isSomeday) 'is_someday': {'booleanValue': true},
+      if (task.isScheduleOverride) 'is_schedule_override': {'booleanValue': true},
     };
   }
 
@@ -471,6 +564,8 @@ class FirestoreService {
       syncId: syncId,
       updatedAt: _intFieldNullable(fields, 'updated_at'),
       syncStatus: 'synced',
+      isSomeday: _boolField(fields, 'is_someday'),
+      isScheduleOverride: _boolField(fields, 'is_schedule_override'),
     );
   }
 

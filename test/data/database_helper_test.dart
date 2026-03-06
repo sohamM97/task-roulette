@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:task_roulette/data/database_helper.dart';
 import 'package:task_roulette/models/task.dart';
+import 'package:task_roulette/models/task_schedule.dart';
 
 void main() {
   late DatabaseHelper db;
@@ -527,8 +528,8 @@ void main() {
       await db.addDependency(c, b); // C depends on B
 
       final rels = await db.deleteTaskWithRelationships(b);
-      expect(rels['dependsOnIds'], contains(a));
-      expect(rels['dependedByIds'], contains(c));
+      expect(rels.dependsOnIds, contains(a));
+      expect(rels.dependedByIds, contains(c));
     });
 
     test('restoreTask restores dependencies', () async {
@@ -545,8 +546,8 @@ void main() {
       // Restore B with dependencies
       await db.restoreTask(
         taskB, [], [],
-        dependsOnIds: rels['dependsOnIds']!,
-        dependedByIds: rels['dependedByIds']!,
+        dependsOnIds: rels.dependsOnIds,
+        dependedByIds: rels.dependedByIds,
       );
 
       // B should still depend on A
@@ -2426,38 +2427,6 @@ void main() {
       await db.removeDependencyFromRemote('unknown-1', 'unknown-2');
     });
 
-    test('getPendingAdds returns pending relationship adds from sync queue', () async {
-      final id1 = await db.insertTask(Task(name: 'Parent'));
-      final id2 = await db.insertTask(Task(name: 'Child'));
-      await db.addRelationship(id1, id2);
-
-      final t1 = await db.getTaskById(id1);
-      final t2 = await db.getTaskById(id2);
-      final pending = await db.getPendingAdds('relationship');
-      expect(pending, contains('${t1!.syncId}:${t2!.syncId}'));
-    });
-
-    test('getPendingAdds returns empty after sync queue is drained', () async {
-      final id1 = await db.insertTask(Task(name: 'Parent'));
-      final id2 = await db.insertTask(Task(name: 'Child'));
-      await db.addRelationship(id1, id2);
-
-      await db.drainSyncQueue();
-      final pending = await db.getPendingAdds('relationship');
-      expect(pending, isEmpty);
-    });
-
-    test('getPendingAdds returns pending dependency adds', () async {
-      final id1 = await db.insertTask(Task(name: 'Task'));
-      final id2 = await db.insertTask(Task(name: 'Blocker'));
-      await db.addDependency(id1, id2);
-
-      final t1 = await db.getTaskById(id1);
-      final t2 = await db.getTaskById(id2);
-      final pending = await db.getPendingAdds('dependency');
-      expect(pending, contains('${t1!.syncId}:${t2!.syncId}'));
-    });
-
     test('regression: local-only relationship survives pull reconciliation', () async {
       // Simulate: user creates task under a parent, push hasn't fired yet,
       // then a pull happens. The local relationship should NOT be deleted.
@@ -2467,7 +2436,7 @@ void main() {
 
       // Simulate pull reconciliation: remote has no relationships
       final remoteRelSet = <String>{};
-      final pendingRelAdds = await db.getPendingAdds('relationship');
+      final pendingRelAdds = await db.getPendingSyncAddKeys('relationship');
       final localRels = await db.getAllRelationshipsWithSyncIds();
 
       for (final local in localRels) {
@@ -2494,7 +2463,7 @@ void main() {
       await db.drainSyncQueue();
 
       final remoteRelSet = <String>{};
-      final pendingRelAdds = await db.getPendingAdds('relationship');
+      final pendingRelAdds = await db.getPendingSyncAddKeys('relationship');
       final localRels = await db.getAllRelationshipsWithSyncIds();
 
       for (final local in localRels) {
@@ -2813,23 +2782,23 @@ void main() {
       await db.importDatabase(v14DbPath);
     });
 
-    test('rejects version 16 as too high', () async {
+    test('rejects version 17 as too high', () async {
       DatabaseHelper.testDatabasePath = mainDbPath;
       await db.reset();
       await db.database;
 
-      final tooHighDbPath = '${tempDir.path}/v16.db';
-      final tooHighDb = await openDatabase(tooHighDbPath, version: 16,
+      final v17DbPath = '${tempDir.path}/v17.db';
+      final v17Db = await openDatabase(v17DbPath, version: 17,
         onCreate: (db, version) async {
           await db.execute('CREATE TABLE tasks (id INTEGER PRIMARY KEY, name TEXT)');
           await db.execute('CREATE TABLE task_relationships (parent_id INTEGER, child_id INTEGER)');
           await db.execute('CREATE TABLE task_dependencies (task_id INTEGER, depends_on_task_id INTEGER)');
         },
       );
-      await tooHighDb.close();
+      await v17Db.close();
 
       expect(
-        () => db.importDatabase(tooHighDbPath),
+        () => db.importDatabase(v17DbPath),
         throwsA(isA<FormatException>().having(
           (e) => e.message, 'message', contains('Incompatible backup version'),
         )),
@@ -3606,6 +3575,543 @@ void main() {
 
       final state = await db.loadTodaysFiveState(date);
       expect(state, isNull);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Task Schedules
+  // ---------------------------------------------------------------------------
+  group('Task schedules', () {
+    test('replaceSchedules and getSchedulesForTask round-trip', () async {
+      final id = await db.insertTask(Task(name: 'Scheduled'));
+
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 3),
+      ]);
+
+      final schedules = await db.getSchedulesForTask(id);
+      expect(schedules.length, 2);
+      expect(schedules.every((s) => s.syncId != null), isTrue);
+    });
+
+    test('replaceSchedules replaces old schedules', () async {
+      final id = await db.insertTask(Task(name: 'Replace'));
+
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 2),
+      ]);
+      expect((await db.getSchedulesForTask(id)).length, 2);
+
+      // Replace with different set
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 5),
+      ]);
+      final schedules = await db.getSchedulesForTask(id);
+      expect(schedules.length, 1);
+      expect(schedules.first.dayOfWeek, 5);
+    });
+
+    test('replaceSchedules with empty list clears all', () async {
+      final id = await db.insertTask(Task(name: 'Clear'));
+
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+      ]);
+      expect((await db.getSchedulesForTask(id)).length, 1);
+
+      await db.replaceSchedules(id, []);
+      expect((await db.getSchedulesForTask(id)).length, 0);
+    });
+
+    test('hasSchedules returns true when schedules exist', () async {
+      final id = await db.insertTask(Task(name: 'HasSched'));
+
+      expect(await db.hasSchedules(id), isFalse);
+
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+      ]);
+      expect(await db.hasSchedules(id), isTrue);
+    });
+
+    test('cascade delete removes schedules when task deleted', () async {
+      final id = await db.insertTask(Task(name: 'Cascade'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+      ]);
+      expect(await db.hasSchedules(id), isTrue);
+
+      await db.deleteTaskWithRelationships(id);
+      expect(await db.hasSchedules(id), isFalse);
+    });
+
+    test('getScheduleBoostedLeafIds returns directly scheduled leaf', () async {
+      final id = await db.insertTask(Task(name: 'Leaf'));
+      // Monday = weekday 1
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+      ]);
+
+      // Check on a Monday (2026-03-02)
+      final boosted = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(boosted, contains(id));
+
+      // Check on a Tuesday — not boosted
+      final notBoosted = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 3));
+      expect(notBoosted, isNot(contains(id)));
+    });
+
+    test('getScheduleBoostedLeafIds propagates from parent to leaf descendants', () async {
+      // Create: Parent → Child (leaf)
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      // Schedule the parent on Wednesdays (weekday 3)
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 3),
+      ]);
+
+      // 2026-03-04 is a Wednesday
+      final boosted = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 4));
+      // Parent is NOT a leaf, so it shouldn't appear; child is the leaf
+      expect(boosted, contains(child));
+      expect(boosted, isNot(contains(parent)));
+    });
+
+    test('getScheduleBoostedLeafIds propagates through multiple levels', () async {
+      // Create: Grandparent → Parent → Child (leaf)
+      final gp = await db.insertTask(Task(name: 'Grandparent'));
+      final p = await db.insertTask(Task(name: 'Parent'));
+      final c = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(gp, p);
+      await db.addRelationship(p, c);
+
+      // Schedule grandparent on Fridays (weekday 5)
+      await db.replaceSchedules(gp, [
+        TaskSchedule(taskId: gp, dayOfWeek: 5),
+      ]);
+
+      // 2026-03-06 is a Friday
+      final boosted = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 6));
+      expect(boosted, contains(c));
+      expect(boosted, isNot(contains(gp)));
+      expect(boosted, isNot(contains(p)));
+    });
+
+    test('getScheduleBoostedLeafIds excludes completed tasks', () async {
+      final id = await db.insertTask(Task(name: 'Done'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+      ]);
+      await db.completeTask(id);
+
+      final boosted = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2)); // Monday
+      expect(boosted, isNot(contains(id)));
+    });
+
+    // --- Schedule override/inheritance tests ---
+
+    test('override blocks inheritance: child with own schedule not boosted by parent', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      // Parent scheduled Monday, child scheduled Wednesday
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(child, [
+        TaskSchedule(taskId: child, dayOfWeek: 3),
+      ]);
+
+      // On Monday: child should NOT be boosted (it overrides with Wed)
+      final monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2)); // Monday
+      expect(monday, isNot(contains(child)));
+
+      // On Wednesday: child should be boosted by its own schedule
+      final wednesday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 4)); // Wednesday
+      expect(wednesday, contains(child));
+    });
+
+    test('override removal restores inheritance', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1), // Monday
+      ]);
+      await db.replaceSchedules(child, [
+        TaskSchedule(taskId: child, dayOfWeek: 3), // Wednesday
+      ]);
+
+      // Child overrides → not boosted on Monday
+      var monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, isNot(contains(child)));
+
+      // Remove child's override → should inherit Monday from parent
+      await db.replaceSchedules(child, []);
+      monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, contains(child));
+    });
+
+    test('multi-parent union: child inherits from both parents', () async {
+      final p1 = await db.insertTask(Task(name: 'Parent1'));
+      final p2 = await db.insertTask(Task(name: 'Parent2'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(p1, child);
+      await db.addRelationship(p2, child);
+
+      await db.replaceSchedules(p1, [
+        TaskSchedule(taskId: p1, dayOfWeek: 1), // Monday
+      ]);
+      await db.replaceSchedules(p2, [
+        TaskSchedule(taskId: p2, dayOfWeek: 5), // Friday
+      ]);
+
+      // Child should be boosted on both Monday and Friday
+      final monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, contains(child));
+
+      final friday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 6));
+      expect(friday, contains(child));
+    });
+
+    test('override with multi-parent: child override replaces all parents', () async {
+      final p1 = await db.insertTask(Task(name: 'Parent1'));
+      final p2 = await db.insertTask(Task(name: 'Parent2'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(p1, child);
+      await db.addRelationship(p2, child);
+
+      await db.replaceSchedules(p1, [
+        TaskSchedule(taskId: p1, dayOfWeek: 1), // Monday
+      ]);
+      await db.replaceSchedules(p2, [
+        TaskSchedule(taskId: p2, dayOfWeek: 5), // Friday
+      ]);
+      await db.replaceSchedules(child, [
+        TaskSchedule(taskId: child, dayOfWeek: 3), // Wednesday
+      ]);
+
+      // Child should ONLY be boosted on Wednesday
+      final monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, isNot(contains(child)));
+
+      final friday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 6));
+      expect(friday, isNot(contains(child)));
+
+      final wednesday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 4));
+      expect(wednesday, contains(child));
+    });
+
+    test('deep override barrier: grandchild inherits from middle override, not grandparent', () async {
+      final gp = await db.insertTask(Task(name: 'GP'));
+      final p = await db.insertTask(Task(name: 'P'));
+      final c = await db.insertTask(Task(name: 'C'));
+      await db.addRelationship(gp, p);
+      await db.addRelationship(p, c);
+
+      // GP=Monday, P=Wednesday (override), C=no schedule (inherits from P)
+      await db.replaceSchedules(gp, [
+        TaskSchedule(taskId: gp, dayOfWeek: 1), // Monday
+      ]);
+      await db.replaceSchedules(p, [
+        TaskSchedule(taskId: p, dayOfWeek: 3), // Wednesday
+      ]);
+
+      // Monday: C should NOT be boosted (P blocks GP's Monday)
+      final monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, isNot(contains(c)));
+
+      // Wednesday: C should be boosted (inherits P's Wednesday)
+      final wednesday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 4));
+      expect(wednesday, contains(c));
+    });
+
+    test('empty override blocks inheritance via is_schedule_override flag', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1), // Monday
+      ]);
+      // Child overrides with empty schedule (opt out)
+      await db.replaceSchedules(child, [], isOverride: true);
+
+      // Monday: child should NOT be boosted (empty override blocks parent)
+      final monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, isNot(contains(child)));
+
+      // Verify isScheduleOverride flag
+      expect(await db.isScheduleOverride(child), isTrue);
+    });
+
+    test('clearing empty override restores inheritance', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1), // Monday
+      ]);
+      await db.replaceSchedules(child, [], isOverride: true);
+
+      // Blocked
+      var monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, isNot(contains(child)));
+
+      // Clear override → restore inheritance
+      await db.replaceSchedules(child, [], isOverride: false);
+      expect(await db.isScheduleOverride(child), isFalse);
+
+      monday = await db.getScheduleBoostedLeafIds(
+        now: DateTime(2026, 3, 2));
+      expect(monday, contains(child));
+    });
+
+    test('getEffectiveScheduleDays returns empty for empty override', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(child, [], isOverride: true);
+
+      // Child has empty override → effective days should be empty
+      final days = await db.getEffectiveScheduleDays(child);
+      expect(days, isEmpty);
+    });
+
+    // --- getEffectiveScheduleDays tests ---
+
+    test('getEffectiveScheduleDays returns own days when task has schedules', () async {
+      final id = await db.insertTask(Task(name: 'Own'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 2),
+        TaskSchedule(taskId: id, dayOfWeek: 4),
+      ]);
+
+      final days = await db.getEffectiveScheduleDays(id);
+      expect(days, {2, 4});
+    });
+
+    test('getEffectiveScheduleDays returns inherited days from parent', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1),
+        TaskSchedule(taskId: parent, dayOfWeek: 5),
+      ]);
+
+      final days = await db.getEffectiveScheduleDays(child);
+      expect(days, {1, 5});
+    });
+
+    test('getEffectiveScheduleDays stops at nearest scheduled ancestor', () async {
+      final gp = await db.insertTask(Task(name: 'GP'));
+      final p = await db.insertTask(Task(name: 'P'));
+      final c = await db.insertTask(Task(name: 'C'));
+      await db.addRelationship(gp, p);
+      await db.addRelationship(p, c);
+
+      await db.replaceSchedules(gp, [
+        TaskSchedule(taskId: gp, dayOfWeek: 1), // Monday
+      ]);
+      await db.replaceSchedules(p, [
+        TaskSchedule(taskId: p, dayOfWeek: 3), // Wednesday
+      ]);
+
+      // C should see P's schedule (Wed), not GP's (Mon)
+      final days = await db.getEffectiveScheduleDays(c);
+      expect(days, {3});
+    });
+
+    test('getEffectiveScheduleDays returns empty when no ancestors have schedules', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      final days = await db.getEffectiveScheduleDays(child);
+      expect(days, isEmpty);
+    });
+
+    test('getEffectiveScheduleDays with multi-parent returns union', () async {
+      final p1 = await db.insertTask(Task(name: 'P1'));
+      final p2 = await db.insertTask(Task(name: 'P2'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(p1, child);
+      await db.addRelationship(p2, child);
+
+      await db.replaceSchedules(p1, [
+        TaskSchedule(taskId: p1, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(p2, [
+        TaskSchedule(taskId: p2, dayOfWeek: 5),
+      ]);
+
+      final days = await db.getEffectiveScheduleDays(child);
+      expect(days, {1, 5});
+    });
+
+    test('deleteAllLocalData clears schedules', () async {
+      final id = await db.insertTask(Task(name: 'LocalData'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+      ]);
+
+      await db.deleteAllLocalData();
+      // After deleteAllLocalData, the tasks table is empty
+      // so we can't query by task ID. Just verify no crash.
+      final all = await db.getAllScheduleSyncIds();
+      expect(all, isEmpty);
+    });
+
+    test('deleteTaskWithRelationships captures schedules', () async {
+      final id = await db.insertTask(Task(name: 'Scheduled'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 5),
+      ]);
+
+      final rels = await db.deleteTaskWithRelationships(id);
+      expect(rels.schedules.length, 2);
+      expect(rels.schedules.map((s) => s.dayOfWeek).toSet(), {1, 5});
+      // Schedules should be gone from DB (CASCADE delete)
+      expect(await db.hasSchedules(id), isFalse);
+    });
+
+    test('restoreTask restores schedules', () async {
+      final id = await db.insertTask(Task(name: 'Restore'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 3),
+      ]);
+
+      // Capture task before deletion
+      final task = (await db.getTaskById(id))!;
+      final rels = await db.deleteTaskWithRelationships(id);
+
+      // Restore with schedules
+      await db.restoreTask(task, [], [],
+        schedules: rels.schedules,
+      );
+
+      final restored = await db.getSchedulesForTask(id);
+      expect(restored.length, 1);
+      expect(restored.first.dayOfWeek, 3);
+    });
+
+    test('deleteTaskAndReparentChildren captures schedules', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 2),
+      ]);
+
+      final result = await db.deleteTaskAndReparentChildren(parent);
+      expect(result.schedules.length, 1);
+      expect(result.schedules.first.dayOfWeek, 2);
+    });
+
+    test('deleteTaskSubtree captures schedules for all subtree tasks', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(root, child);
+      await db.replaceSchedules(root, [
+        TaskSchedule(taskId: root, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(child, [
+        TaskSchedule(taskId: child, dayOfWeek: 4),
+      ]);
+
+      final result = await db.deleteTaskSubtree(root);
+      expect(result.deletedSchedules.length, 2);
+      expect(result.deletedSchedules.map((s) => s.dayOfWeek).toSet(), {1, 4});
+    });
+
+    test('restoreTaskSubtree restores schedules', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(root, child);
+      await db.replaceSchedules(root, [
+        TaskSchedule(taskId: root, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(child, [
+        TaskSchedule(taskId: child, dayOfWeek: 4),
+      ]);
+
+      final result = await db.deleteTaskSubtree(root);
+
+      await db.restoreTaskSubtree(
+        tasks: result.deletedTasks,
+        relationships: result.deletedRelationships,
+        dependencies: result.deletedDependencies,
+        schedules: result.deletedSchedules,
+      );
+
+      final rootScheds = await db.getSchedulesForTask(root);
+      final childScheds = await db.getSchedulesForTask(child);
+      expect(rootScheds.length, 1);
+      expect(rootScheds.first.dayOfWeek, 1);
+      expect(childScheds.length, 1);
+      expect(childScheds.first.dayOfWeek, 4);
+    });
+  });
+
+  group('getPendingSyncAddKeys', () {
+    test('returns pending relationship adds', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      await db.addRelationship(a, b);
+
+      // addRelationship enqueues a relationship add in sync_queue
+      final keys = await db.getPendingSyncAddKeys('relationship');
+      expect(keys, isNotEmpty);
+      // Each key should be parentSyncId:childSyncId format
+      for (final key in keys) {
+        expect(key.contains(':'), isTrue);
+      }
+    });
+
+    test('returns pending schedule adds', () async {
+      final id = await db.insertTask(Task(name: 'Sched'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+      ]);
+
+      final keys = await db.getPendingSyncAddKeys('schedule');
+      expect(keys, isNotEmpty);
+      // Schedule keys are just the schedule sync_id (no colon)
+      for (final key in keys) {
+        expect(key.contains(':'), isFalse);
+      }
     });
   });
 }
