@@ -269,6 +269,46 @@ void main() {
       // Persisted 1 should show as done (check icon present)
       expect(find.byIcon(Icons.check_circle), findsOneWidget);
     });
+
+    testWidgets('pinned status survives refreshSnapshots after completion', (tester) async {
+      late int id1, id2;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Pinned done'));
+        id2 = await db.insertTask(Task(name: 'Normal'));
+        // Complete id1 in the tasks table
+        await db.completeTask(id1);
+        // Pre-save Today's 5 state with id1 pinned + completed
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2],
+          completedIds: {id1},
+          workedOnIds: {},
+          pinnedIds: {id1},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Pin icon should be visible on the completed task
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+
+      // Trigger refreshSnapshots (simulates navigating back to Today's 5)
+      final state = tester.state<TodaysFiveScreenState>(
+        find.byType(TodaysFiveScreen),
+      );
+      await tester.runAsync(() => state.refreshSnapshots());
+      for (var i = 0; i < 10; i++) {
+        await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // Pin icon should still be visible after refresh
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+
+      // Verify DB still has the pin persisted
+      final saved = await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.pinnedIds, contains(id1));
+    });
   });
 
   group('SharedPreferences → DB migration', () {
