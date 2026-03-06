@@ -75,7 +75,7 @@ void main() {
       // Two connected nodes should converge well before 400 iterations.
       // We verify by checking that a high iteration count doesn't change
       // the result vs a lower one (both converge early).
-      final makeNodes = () => {
+      Map<int, LayoutNode> makeNodes() => {
             1: LayoutNode(
                 id: 1, isRoot: true, cluster: 1, x: 0, y: 0,
                 width: 100, height: 50),
