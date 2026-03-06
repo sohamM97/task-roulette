@@ -2782,23 +2782,23 @@ void main() {
       await db.importDatabase(v14DbPath);
     });
 
-    test('rejects version 17 as too high', () async {
+    test('rejects version 18 as too high', () async {
       DatabaseHelper.testDatabasePath = mainDbPath;
       await db.reset();
       await db.database;
 
-      final v17DbPath = '${tempDir.path}/v17.db';
-      final v17Db = await openDatabase(v17DbPath, version: 17,
+      final v18DbPath = '${tempDir.path}/v18.db';
+      final v18Db = await openDatabase(v18DbPath, version: 18,
         onCreate: (db, version) async {
           await db.execute('CREATE TABLE tasks (id INTEGER PRIMARY KEY, name TEXT)');
           await db.execute('CREATE TABLE task_relationships (parent_id INTEGER, child_id INTEGER)');
           await db.execute('CREATE TABLE task_dependencies (task_id INTEGER, depends_on_task_id INTEGER)');
         },
       );
-      await v17Db.close();
+      await v18Db.close();
 
       expect(
-        () => db.importDatabase(v17DbPath),
+        () => db.importDatabase(v18DbPath),
         throwsA(isA<FormatException>().having(
           (e) => e.message, 'message', contains('Incompatible backup version'),
         )),
@@ -4112,6 +4112,108 @@ void main() {
       for (final key in keys) {
         expect(key.contains(':'), isFalse);
       }
+    });
+  });
+
+  group('Migration repair', () {
+    // Uses file-backed DB to control version and schema.
+    late Directory tempDir;
+    late String dbPath;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('task_roulette_migration_');
+      dbPath = '${tempDir.path}/test.db';
+    });
+
+    tearDown(() async {
+      DatabaseHelper.testDatabasePath = inMemoryDatabasePath;
+      await db.reset();
+      await tempDir.delete(recursive: true);
+    });
+
+    test('v16→v17 upgrade creates missing task_schedules table', () async {
+      // Create a DB at version 16 WITHOUT task_schedules (simulates v1.1.6 upgrade path)
+      final v16Db = await openDatabase(dbPath, version: 16,
+        onCreate: (db, version) async {
+          await db.execute('''
+            CREATE TABLE tasks (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              completed_at INTEGER,
+              started_at INTEGER,
+              url TEXT,
+              skipped_at INTEGER,
+              priority INTEGER NOT NULL DEFAULT 0,
+              difficulty INTEGER NOT NULL DEFAULT 0,
+              last_worked_at INTEGER,
+              repeat_interval TEXT,
+              next_due_at INTEGER,
+              sync_id TEXT,
+              updated_at INTEGER,
+              sync_status TEXT NOT NULL DEFAULT 'synced',
+              is_someday INTEGER NOT NULL DEFAULT 0,
+              is_schedule_override INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE task_relationships (
+              parent_id INTEGER NOT NULL, child_id INTEGER NOT NULL,
+              PRIMARY KEY (parent_id, child_id)
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE task_dependencies (
+              task_id INTEGER NOT NULL, depends_on_id INTEGER NOT NULL,
+              PRIMARY KEY (task_id, depends_on_id)
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE sync_queue (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              entity_type TEXT NOT NULL, action TEXT NOT NULL,
+              key1 TEXT NOT NULL, key2 TEXT NOT NULL, created_at INTEGER NOT NULL
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE todays_five_state (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              date TEXT NOT NULL, task_id INTEGER NOT NULL,
+              is_completed INTEGER NOT NULL DEFAULT 0,
+              is_worked_on INTEGER NOT NULL DEFAULT 0,
+              sort_order INTEGER NOT NULL DEFAULT 0,
+              is_pinned INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
+          // Deliberately NO task_schedules table
+        },
+      );
+      // Verify task_schedules doesn't exist
+      final tables = await v16Db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='task_schedules'",
+      );
+      expect(tables, isEmpty);
+      await v16Db.close();
+
+      // Open through DatabaseHelper — should trigger v16→v17 migration
+      DatabaseHelper.testDatabasePath = dbPath;
+      await db.reset();
+      final repairedDb = await db.database;
+
+      // Verify task_schedules now exists
+      final repaired = await repairedDb.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='task_schedules'",
+      );
+      expect(repaired, hasLength(1));
+
+      // Verify we can actually use it
+      final id = await db.insertTask(Task(name: 'Schedule test'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+      ]);
+      final schedules = await db.getSchedulesForTask(id);
+      expect(schedules, hasLength(1));
+      expect(schedules.first.dayOfWeek, 1);
     });
   });
 }

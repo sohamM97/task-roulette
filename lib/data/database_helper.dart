@@ -70,7 +70,7 @@ class DatabaseHelper {
 
     return openDatabase(
       path,
-      version: 16,
+      version: _dbVersion,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -282,6 +282,25 @@ class DatabaseHelper {
         if (oldVersion < 16) {
           await db.execute('ALTER TABLE tasks ADD COLUMN is_schedule_override INTEGER NOT NULL DEFAULT 0');
         }
+        if (oldVersion < 17) {
+          // Repair: task_schedules was added to the v15 block after v1.1.6
+          // shipped, so DBs that upgraded through v1.1.6 never got this table.
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS task_schedules (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              task_id INTEGER NOT NULL,
+              schedule_type TEXT NOT NULL,
+              day_of_week INTEGER,
+              specific_date TEXT,
+              sync_id TEXT,
+              updated_at INTEGER,
+              FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            )
+          ''');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_task_schedules_task_id ON task_schedules(task_id)');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_task_schedules_specific_date ON task_schedules(specific_date)');
+          await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_task_schedules_sync_id ON task_schedules(sync_id)');
+        }
       },
     );
   }
@@ -294,6 +313,7 @@ class DatabaseHelper {
   }
 
   static const _maxBackupSizeBytes = 100 * 1024 * 1024; // 100 MB
+  static const _dbVersion = 17;
   static const _expectedTables = ['tasks', 'task_relationships', 'task_dependencies'];
 
   /// Validates that [sourcePath] is a valid TaskRoulette backup.
@@ -324,9 +344,9 @@ class DatabaseHelper {
       // Check schema version is compatible
       final versionResult = await testDb.rawQuery('PRAGMA user_version');
       final version = versionResult.first.values.first as int;
-      if (version < 1 || version > 16) {
+      if (version < 1 || version > _dbVersion) {
         throw FormatException(
-          'Incompatible backup version ($version). This app supports versions 1-16.',
+          'Incompatible backup version ($version). This app supports versions 1-$_dbVersion.',
         );
       }
 
