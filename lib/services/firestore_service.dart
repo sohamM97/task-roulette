@@ -528,6 +528,8 @@ class FirestoreService {
       if (task.nextDueAt != null)
         'next_due_at': {'integerValue': task.nextDueAt.toString()},
       'updated_at': {'integerValue': (task.updatedAt ?? DateTime.now().millisecondsSinceEpoch).toString()},
+      if (task.isSomeday) 'is_someday': {'booleanValue': true},
+      if (task.isScheduleOverride) 'is_schedule_override': {'booleanValue': true},
     };
   }
 
@@ -562,6 +564,8 @@ class FirestoreService {
       syncId: syncId,
       updatedAt: _intFieldNullable(fields, 'updated_at'),
       syncStatus: 'synced',
+      isSomeday: _boolField(fields, 'is_someday'),
+      isScheduleOverride: _boolField(fields, 'is_schedule_override'),
     );
   }
 

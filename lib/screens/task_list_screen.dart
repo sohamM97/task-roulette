@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../data/database_helper.dart';
 import '../data/todays_five_pin_helper.dart';
 import '../models/task.dart';
+import '../models/task_schedule.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
 import '../widgets/add_task_dialog.dart';
@@ -37,7 +38,6 @@ class TaskListScreenState extends State<TaskListScreen>
   // Consumer rebuild. Invalidated when dependency mutations occur.
   int? _leafDepsTaskId;
   Future<List<Task>>? _leafDepsFuture;
-
 
   // Pre-mutation lastWorkedAt values, keyed by task ID.
   // Used by the leaf detail's "Worked on today" undo button.
@@ -882,15 +882,17 @@ class TaskListScreenState extends State<TaskListScreen>
 
   Future<void> _editSchedule(Task task) async {
     final provider = context.read<TaskProvider>();
-    final current = await provider.getSchedules(task.id!);
+    final results = await Future.wait([
+      provider.getSchedules(task.id!),
+      provider.isScheduleOverride(task.id!),
+      provider.getScheduleSources(task.id!),
+    ]);
     if (!mounted) return;
 
-    final isOverride = current.isNotEmpty ||
-        await provider.isScheduleOverride(task.id!);
-    if (!mounted) return;
-    // Always compute sources and inherited days
-    final sources = await provider.getScheduleSources(task.id!);
-    if (!mounted) return;
+    final current = results[0] as List<TaskSchedule>;
+    final isOverrideFlag = results[1] as bool;
+    final sources = results[2] as List<({int id, String name, Set<int> days})>;
+    final isOverride = current.isNotEmpty || isOverrideFlag;
     final inheritedDays = sources.fold<Set<int>>(
         {}, (acc, s) => acc..addAll(s.days));
 

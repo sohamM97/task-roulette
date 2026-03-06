@@ -14,6 +14,7 @@ class Task {
   final int? updatedAt;
   final String syncStatus;
   final bool isSomeday;
+  final bool isScheduleOverride;
 
   static const priorityLabels = ['Normal', 'High'];
 
@@ -33,6 +34,7 @@ class Task {
     this.updatedAt,
     this.syncStatus = 'synced',
     this.isSomeday = false,
+    this.isScheduleOverride = false,
   }) : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch;
 
   bool get isCompleted => completedAt != null;
@@ -70,6 +72,7 @@ class Task {
     int? updatedAt,
     String? syncStatus,
     bool? isSomeday,
+    bool? isScheduleOverride,
   }) {
     return Task(
       id: id ?? this.id,
@@ -87,6 +90,7 @@ class Task {
       updatedAt: updatedAt ?? this.updatedAt,
       syncStatus: syncStatus ?? this.syncStatus,
       isSomeday: isSomeday ?? this.isSomeday,
+      isScheduleOverride: isScheduleOverride ?? this.isScheduleOverride,
     );
   }
 
@@ -107,6 +111,7 @@ class Task {
       'updated_at': updatedAt,
       'sync_status': syncStatus,
       'is_someday': isSomeday ? 1 : 0,
+      'is_schedule_override': isScheduleOverride ? 1 : 0,
     };
   }
 
@@ -127,6 +132,7 @@ class Task {
       updatedAt: map['updated_at'] as int?,
       syncStatus: map['sync_status'] as String? ?? 'synced',
       isSomeday: (map['is_someday'] as int? ?? 0) == 1,
+      isScheduleOverride: (map['is_schedule_override'] as int? ?? 0) == 1,
     );
   }
 }

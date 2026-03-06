@@ -26,8 +26,9 @@ flutter test --coverage                           # with coverage
 ## Architecture
 
 - Tasks in `tasks` table, relationships in `task_relationships` (parent_id, child_id). Multi-parent DAG with cycle prevention via recursive CTE (`DatabaseHelper.hasPath()`).
-- **DB migrations:** Sequential `onUpgrade` in `DatabaseHelper` (currently at v14). Foreign keys via `PRAGMA foreign_keys = ON`.
+- **DB migrations:** Sequential `onUpgrade` in `DatabaseHelper` (currently at v16). Foreign keys via `PRAGMA foreign_keys = ON`.
 - **Cloud sync:** Optional Google Sign-In + Firestore via REST APIs (no Firebase SDK). `SyncService` orchestrates push/pull; mutations queued in `sync_queue` table and debounced.
+- **When adding a column to `tasks`:** Also add to `Task` model (`toMap`/`fromMap`/`copyWith`), `taskToFirestoreFields`, and `taskFromFirestoreDoc` in `firestore_service.dart`.
 - **Provider pattern:** `TaskProvider._refreshCurrentList()` reloads children only, NOT `_currentParent` — see gotcha below.
 - Tests use `sqflite_common_ffi` with `inMemoryDatabasePath` and reset DB in `setUp()`. No mocking — real SQL against in-memory SQLite.
 

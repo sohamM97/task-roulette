@@ -148,14 +148,12 @@ class DatabaseHelper {
             task_id INTEGER NOT NULL,
             schedule_type TEXT NOT NULL,
             day_of_week INTEGER,
-            specific_date TEXT,
             sync_id TEXT,
             updated_at INTEGER,
             FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
           )
         ''');
         await db.execute('CREATE INDEX idx_task_schedules_task_id ON task_schedules(task_id)');
-        await db.execute('CREATE INDEX idx_task_schedules_specific_date ON task_schedules(specific_date)');
         await db.execute('CREATE UNIQUE INDEX idx_task_schedules_sync_id ON task_schedules(sync_id)');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
@@ -1671,17 +1669,6 @@ class DatabaseHelper {
     return db.query('sync_queue', orderBy: 'id ASC');
   }
 
-  /// Returns the set of 'key1:key2' strings for pending 'add' entries
-  /// of the given [entityType] in the sync queue.
-  Future<Set<String>> getPendingAdds(String entityType) async {
-    final db = await database;
-    final rows = await db.query('sync_queue',
-      columns: ['key1', 'key2'],
-      where: "entity_type = ? AND action = 'add'",
-      whereArgs: [entityType]);
-    return rows.map((r) => '${r['key1']}:${r['key2']}').toSet();
-  }
-
   /// Deletes a single sync queue entry by its row ID.
   Future<void> deleteSyncQueueEntry(int id) async {
     final db = await database;
@@ -2302,7 +2289,7 @@ class DatabaseHelper {
         ),
         scheduled_today(task_id) AS (
           SELECT task_id FROM task_schedules
-          WHERE schedule_type = 'weekly' AND day_of_week = ?
+          WHERE day_of_week = ?
         ),
         all_descendants(id) AS (
           SELECT task_id FROM scheduled_today
