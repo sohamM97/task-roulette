@@ -7,7 +7,7 @@ input=$(cat)
 command=$(echo "$input" | jq -r '.tool_input.command')
 
 # Only act on commands that start with "flutter run" (not just contain it in text)
-if ! echo "$command" | grep -qE '^\s*flutter run'; then
+if ! echo "$command" | grep -qE '(^|\s*&&\s*|\s*;\s*)flutter run'; then
   echo '{}'
   exit 0
 fi

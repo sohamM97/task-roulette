@@ -6,7 +6,7 @@ input=$(cat)
 command=$(echo "$input" | jq -r '.tool_input.command')
 
 # Only act on git tag commands (not git tag -l or git tag --list)
-if ! echo "$command" | grep -qE '^\s*git\s+tag\b'; then
+if ! echo "$command" | grep -qE '(^|\s*&&\s*|\s*;\s*)git\s+tag\b'; then
   echo '{}'
   exit 0
 fi

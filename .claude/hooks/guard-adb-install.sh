@@ -6,7 +6,7 @@ input=$(cat)
 command=$(echo "$input" | jq -r '.tool_input.command')
 
 # Only act on adb install commands
-if ! echo "$command" | grep -qE '^\s*adb\s+install\b'; then
+if ! echo "$command" | grep -qE '(^|\s*&&\s*|\s*;\s*)adb\s+install\b'; then
   echo '{}'
   exit 0
 fi

@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show compute;
+
 /// A node in the force-directed layout with position and velocity.
 class LayoutNode {
   final int id;
@@ -31,6 +33,32 @@ class LayoutNode {
     required this.width,
     required this.height,
   }) : allClusters = allClusters ?? (cluster != -1 ? {cluster} : {});
+
+  /// Serialize for isolate transfer.
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'isRoot': isRoot,
+        'depth': depth,
+        'cluster': cluster,
+        'allClusters': allClusters.toList(),
+        'x': x,
+        'y': y,
+        'width': width,
+        'height': height,
+      };
+
+  /// Deserialize from isolate transfer.
+  factory LayoutNode.fromMap(Map<String, dynamic> map) => LayoutNode(
+        id: map['id'] as int,
+        isRoot: map['isRoot'] as bool,
+        depth: map['depth'] as int,
+        cluster: map['cluster'] as int,
+        allClusters: (map['allClusters'] as List).map((e) => e as int).toSet(),
+        x: (map['x'] as num).toDouble(),
+        y: (map['y'] as num).toDouble(),
+        width: (map['width'] as num).toDouble(),
+        height: (map['height'] as num).toDouble(),
+      );
 }
 
 /// An edge between two nodes.
@@ -60,16 +88,29 @@ class LayoutResult {
 /// (connected pairs), and center gravity. O(n²) per iteration — fine for
 /// personal task managers with <500 nodes.
 class ForceDirectedLayout {
-  /// Runs the layout algorithm and returns positioned nodes.
+  /// Runs the layout in a background isolate via [compute].
   ///
-  /// [nodes] — map of task ID to LayoutNode (positions will be mutated).
-  /// [edges] — list of edges between nodes.
-  /// [iterations] — number of simulation steps (default 300).
+  /// Returns a [LayoutResult] with positioned nodes. The input [nodes] map
+  /// is NOT mutated — fresh LayoutNode objects are returned.
+  static Future<LayoutResult> runAsync({
+    required Map<int, LayoutNode> nodes,
+    required List<LayoutEdge> edges,
+    double aspectRatio = 1.4,
+  }) async {
+    final payload = _LayoutPayload(
+      nodes: {for (final e in nodes.entries) e.key: e.value.toMap()},
+      edges: edges.map((e) => [e.sourceId, e.destId]).toList(),
+      aspectRatio: aspectRatio,
+    );
+    return compute(_runFromPayload, payload);
+  }
+
+  /// Synchronous entry point (used internally and for testing).
   static LayoutResult run({
     required Map<int, LayoutNode> nodes,
     required List<LayoutEdge> edges,
-    int iterations = 300,
-    double aspectRatio = 1.4, // target width/height ratio
+    int? iterations,
+    double aspectRatio = 1.4,
   }) {
     if (nodes.isEmpty) {
       return const LayoutResult(nodes: {}, width: 0, height: 0);
@@ -108,6 +149,11 @@ class ForceDirectedLayout {
     // Initialize positions with wider horizontal spread.
     _initializePositions(nodes, edges, childIds, aspectRatio);
 
+    // Adaptive iteration count: scale with graph complexity.
+    // Small graphs converge fast; large ones need more time.
+    final n = nodes.length;
+    final maxIter = iterations ?? (100 + n * 2).clamp(120, 400);
+
     // Simulation parameters.
     const repulsionStrength = 8000.0;
     const attractionStrength = 0.02;
@@ -117,11 +163,10 @@ class ForceDirectedLayout {
     final startTemperature = 200.0;
 
     final nodeList = nodes.values.toList();
-    final n = nodeList.length;
 
-    for (int iter = 0; iter < iterations; iter++) {
+    for (int iter = 0; iter < maxIter; iter++) {
       final temperature =
-          startTemperature * (1.0 - iter / iterations);
+          startTemperature * (1.0 - iter / maxIter);
 
       // Reset velocities.
       for (final node in nodeList) {
@@ -267,7 +312,9 @@ class ForceDirectedLayout {
         node.vy -= node.y * gravity;
       }
 
-      // Apply velocities, clamped to temperature.
+      // Apply velocities, clamped to temperature. Track total movement
+      // for early convergence detection.
+      var totalMovement = 0.0;
       for (final node in nodeList) {
         final speed = math.sqrt(node.vx * node.vx + node.vy * node.vy);
         if (speed > temperature && speed > 0) {
@@ -276,7 +323,12 @@ class ForceDirectedLayout {
         }
         node.x += node.vx;
         node.y += node.vy;
+        totalMovement += node.vx.abs() + node.vy.abs();
       }
+
+      // Early exit: if average node movement is negligible, layout has
+      // converged. Only check after initial settling (iter > 50).
+      if (iter > 50 && totalMovement / n < 0.1) break;
     }
 
     // Normalize — shift so min x/y = 0.
@@ -366,4 +418,34 @@ class ForceDirectedLayout {
       }
     }
   }
+}
+
+/// Serializable payload for isolate transfer.
+class _LayoutPayload {
+  final Map<int, Map<String, dynamic>> nodes;
+  final List<List<int>> edges;
+  final double aspectRatio;
+
+  const _LayoutPayload({
+    required this.nodes,
+    required this.edges,
+    required this.aspectRatio,
+  });
+}
+
+/// Top-level function for isolate execution.
+LayoutResult _runFromPayload(_LayoutPayload payload) {
+  final nodes = <int, LayoutNode>{};
+  for (final entry in payload.nodes.entries) {
+    nodes[entry.key] = LayoutNode.fromMap(entry.value);
+  }
+  final edges = payload.edges
+      .map((e) => LayoutEdge(sourceId: e[0], destId: e[1]))
+      .toList();
+
+  return ForceDirectedLayout.run(
+    nodes: nodes,
+    edges: edges,
+    aspectRatio: payload.aspectRatio,
+  );
 }

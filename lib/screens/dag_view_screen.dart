@@ -18,10 +18,14 @@ class DagViewScreen extends StatefulWidget {
 }
 
 class _DagViewScreenState extends State<DagViewScreen> {
+  static const _minScale = 0.2;
+  static const _maxScale = 5.0;
+
   // Cached layout data from force-directed computation.
   Map<int, LayoutNode> _layoutNodes = {};
   List<LayoutEdge> _layoutEdges = [];
   Size _graphSize = Size.zero;
+  int _layoutGeneration = 0;
 
   // Root task IDs (connected tasks that are never children).
   Set<int> _rootIds = {};
@@ -68,7 +72,7 @@ class _DagViewScreenState extends State<DagViewScreen> {
   void _zoom(double factor) {
     final currentScale =
         _transformController.value.getMaxScaleOnAxis();
-    final newScale = (currentScale * factor).clamp(0.2, 3.0);
+    final newScale = (currentScale * factor).clamp(_minScale, _maxScale);
     final scaleFactor = newScale / currentScale;
 
     // Scale around the center of the viewport.
@@ -101,10 +105,13 @@ class _DagViewScreenState extends State<DagViewScreen> {
     final graphW = _graphSize.width + graphPadding + margin;
     final graphH = _graphSize.height + graphPadding + margin;
 
+    // Clamp minimum scale so text remains readable. On mobile (narrow
+    // screens) allow slightly more zoom-out than desktop.
+    final minScale = viewportSize.width < 600 ? 0.25 : 0.35;
     final scale = math.min(
       viewportSize.width / graphW,
       viewportSize.height / graphH,
-    ).clamp(0.1, 1.0);
+    ).clamp(minScale, 1.0);
 
     // Center the graph in the viewport.
     final scaledW = graphW * scale;
@@ -130,19 +137,12 @@ class _DagViewScreenState extends State<DagViewScreen> {
       _connectedIds.add(rel.childId);
     }
 
-    _rebuildGraph();
-    setState(() => _loading = false);
-
-    // Auto-fit after the first frame so viewport size is available.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _graphSize != Size.zero) {
-        _fitToScreen();
-      }
-    });
+    await _rebuildGraph();
+    if (mounted) setState(() => _loading = false);
   }
 
   /// Partitions tasks into connected (for graph layout) and unrelated.
-  void _rebuildGraph() {
+  Future<void> _rebuildGraph() async {
     _connectedTaskMap = {};
     _unrelatedTasks = [];
     _layoutNodes = {};
@@ -278,14 +278,29 @@ class _DagViewScreenState extends State<DagViewScreen> {
     }
 
     if (_connectedTaskMap.isNotEmpty) {
-      final screenSize = MediaQuery.sizeOf(context);
-      final result = ForceDirectedLayout.run(
-        nodes: _layoutNodes,
-        edges: _layoutEdges,
-        aspectRatio: (screenSize.width / screenSize.height).clamp(0.8, 2.0),
-      );
-      _graphSize = Size(result.width, result.height);
+      await _computeLayout();
     }
+  }
+
+  Future<void> _computeLayout() async {
+    final gen = ++_layoutGeneration;
+    final screenSize = MediaQuery.sizeOf(context);
+    final result = await ForceDirectedLayout.runAsync(
+      nodes: _layoutNodes,
+      edges: _layoutEdges,
+      aspectRatio: (screenSize.width / screenSize.height).clamp(0.8, 2.0),
+    );
+    if (!mounted || gen != _layoutGeneration) return;
+    // Update with computed positions.
+    _layoutNodes = result.nodes;
+    setState(() {
+      _graphSize = Size(result.width, result.height);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _graphSize != Size.zero) {
+        _fitToScreen();
+      }
+    });
   }
 
   /// Returns a scale factor (1.0 → 0.7) for non-root nodes based on depth.
@@ -420,7 +435,9 @@ class _DagViewScreenState extends State<DagViewScreen> {
               Positioned(
                 left: entry.value.x + padding,
                 top: entry.value.y + padding,
-                child: _buildNodeWidget(_connectedTaskMap[entry.key]!),
+                child: RepaintBoundary(
+                  child: _buildNodeWidget(_connectedTaskMap[entry.key]!),
+                ),
               ),
         ],
       ),
@@ -469,8 +486,8 @@ class _DagViewScreenState extends State<DagViewScreen> {
                               panEnabled: true,
                               boundaryMargin:
                                   const EdgeInsets.all(double.infinity),
-                              minScale: 0.2,
-                              maxScale: 3.0,
+                              minScale: _minScale,
+                              maxScale: _maxScale,
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
