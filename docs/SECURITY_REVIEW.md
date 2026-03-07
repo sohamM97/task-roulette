@@ -911,3 +911,168 @@ backgroundImage: photoUrl != null && photoUrl.isNotEmpty && isAllowedUrl(photoUr
 | **LOW** | LOW-15: Version-control Firestore Security Rules | Low | **New** |
 | **LOW** | LOW-16: Add HTTP request timeouts | Low | **New** |
 | **LOW** | LOW-17: Validate profile photo URL scheme | Trivial | **New** |
+
+---
+
+## Round 4 (2026-03-07)
+
+**Scope:** Full review of codebase after major feature additions (scheduling, notifications, Today's 5 sync, force-directed DAG view, web support). Verification of all Round 3 fixes.
+
+### Previous Round Verification
+
+**Round 3 findings — 8 of 9 resolved:**
+- [x] HIGH-2: Firebase refresh token in secure storage — verified fixed. `auth_service.dart:47-54` uses `FlutterSecureStorage`. Lines 77-86 include migration from legacy SharedPreferences (reads old token, writes to secure storage, deletes legacy entry). `_persistTokens()` at line 335 writes to secure storage exclusively.
+- [x] MED-7: `debugPrint` gated behind `kDebugMode` — verified fixed. All 7 `debugPrint` calls in `auth_service.dart` (lines 103, 151-154, 188, 232, 243, 285, 315) are wrapped in `if (kDebugMode)`. `auth_provider.dart:53` is also gated.
+- [x] MED-8: Remote sync cycle detection — verified fixed. `sync_service.dart:431-437` calls `wouldRelationshipCreateCycle()` before each relationship upsert. Lines 457-463 call `wouldDependencyCreateCycle()` for dependencies. Both methods use `hasPath()`/`hasDependencyPath()` recursive CTEs in `database_helper.dart:1801-1820`.
+- [x] MED-9: Remote task field sizes validated — verified fixed. `firestore_service.dart:545-551` truncates `name` to 500 chars, rejects `url` over 2048 chars, rejects `repeat_interval` over 50 chars.
+- [x] MED-10: Sync error messages sanitized — verified fixed. `sync_service.dart:537-542` maps all exceptions to generic user-friendly messages via `_userFriendlyError()`. All 5 `setSyncStatus(SyncStatus.error, ...)` call sites use this mapper.
+- [x] LOW-14: INTERNET permission declared — verified fixed. `AndroidManifest.xml:2` has explicit `<uses-permission android:name="android.permission.INTERNET"/>`.
+- [x] LOW-16: HTTP request timeouts — verified fixed. `firestore_service.dart:17` defines `_httpTimeout = Duration(seconds: 30)`. All HTTP calls (lines 54, 90, 126, 136, 152, 167, 178, 212, 240, 296, 310, 326, 394, 410, 452, 492) use `.timeout(_httpTimeout)`. `auth_service.dart:311,328` also have 30-second timeouts.
+- [x] LOW-17: Profile photo URL scheme validation — verified fixed. `profile_icon.dart:34` checks `isAllowedUrl(photoUrl)` before creating `NetworkImage`. Line 310-311 also validates in the signed-in sheet. Only http/https schemes pass.
+
+**Not fixed (1 of 9):**
+- [ ] LOW-15: Firestore Security Rules not version-controlled — no `firestore.rules` or `firebase.json` in the repository. Rules are only in the Firebase console.
+
+**Previously accepted items — status unchanged:**
+- LOW-6: Unencrypted DB at rest — still accepted for threat model
+- LOW-7: Unencrypted backup export — still accepted for threat model
+
+### Findings
+
+#### MED-11: Silent Partial Data Loss on Paginated Pull Errors
+
+- **Severity:** Medium
+- **Files:** `lib/services/firestore_service.dart:213,241,327` and `lib/services/sync_service.dart:440-454,466-480,487-500`
+- **Code (relationships example):**
+  ```dart
+  // firestore_service.dart:213
+  if (response.statusCode != 200) break;  // silently returns partial list
+  ```
+  ```dart
+  // sync_service.dart:440-454
+  final remoteRelSet = remoteRels.map(...).toSet();
+  for (final local in localRels) {
+    final key = '${local.parentSyncId}:${local.childSyncId}';
+    if (!remoteRelSet.contains(key) && !pendingRelKeys.contains(key)) {
+      await _db.removeRelationshipFromRemote(...);  // deletes local data!
+    }
+  }
+  ```
+
+**Description:** `pullAllRelationships()`, `pullAllDependencies()`, and `pullAllSchedules()` silently `break` on non-200 HTTP responses during pagination. If the first page of 300 relationships succeeds but the second page fails (e.g., transient 500 error, token expiry mid-pull, network hiccup), the method returns only the first 300 items. The sync reconciliation logic in `sync_service.dart` then compares this partial list against all local synced data and **deletes everything not in the partial response** — silently destroying the user's relationships, dependencies, or schedules that were on page 2+.
+
+**Impact:** Transient network errors during sync can silently and permanently delete the user's task DAG structure and schedules. The data loss is invisible to the user (no error shown — the pull "succeeds" with partial data).
+
+**Recommended Fix:** Throw on non-200 instead of breaking, so the entire pull operation fails and the reconciliation never runs on partial data:
+```dart
+if (response.statusCode != 200) {
+  throw FirestoreException('Pull relationships failed: ${response.statusCode}');
+}
+```
+
+---
+
+#### LOW-18: Ungated `debugPrint` in Today's Five Screen
+
+- **Severity:** Low
+- **File:** `lib/screens/todays_five_screen.dart:114`
+- **Code:**
+  ```dart
+  } catch (e) {
+    debugPrint('TodaysFiveScreen: _loadTodaysTasks failed: $e');
+    if (mounted) setState(() => _loading = false);
+  }
+  ```
+
+**Description:** This `debugPrint` is NOT gated behind `kDebugMode`. Unlike `assert`, `debugPrint` is not stripped in release builds — it calls `print()` which writes to the Android system log (logcat). The exception `e` could contain database error details, file paths, or stack traces. This was introduced after the Round 3 fix for MED-7, which correctly gated all auth-related debug prints.
+
+**Recommended Fix:**
+```dart
+} catch (e) {
+  if (kDebugMode) debugPrint('TodaysFiveScreen: _loadTodaysTasks failed: $e');
+  if (mounted) setState(() => _loading = false);
+}
+```
+
+---
+
+#### LOW-19: Task Picker Search Field Has No `maxLength`
+
+- **Severity:** Low
+- **File:** `lib/widgets/task_picker_dialog.dart:110-118`
+- **Code:**
+  ```dart
+  TextField(
+    autofocus: true,
+    decoration: const InputDecoration(
+      hintText: 'Search tasks...',
+      prefixIcon: Icon(Icons.search),
+      border: OutlineInputBorder(),
+      isDense: true,
+    ),
+    onChanged: (value) => setState(() => _filter = value),
+  ),
+  ```
+
+**Description:** The task picker search field has no `maxLength` constraint. While this field only filters an in-memory list (not stored in the database), pasting megabytes of text would cause repeated `setState()` calls with expensive string matching across all tasks. Other text fields were properly limited in Round 2 (task name: 500 chars, brain dump: 25,000 chars, URL: 2,048 chars), but this search field was missed.
+
+**Recommended Fix:** Add `maxLength: 500` to the TextField, matching the task name limit.
+
+---
+
+#### INFO-10: Web App Has No Content Security Policy
+
+- **Severity:** Informational
+- **File:** `web/index.html`
+
+**Description:** The web `index.html` does not define a Content Security Policy (CSP) meta tag or header. Flutter web apps use a canvas-based renderer that doesn't rely on DOM manipulation, so traditional XSS is not a concern. However, the Google Sign-In client ID is in a `<meta>` tag (line 24), and the app loads `flutter_bootstrap.js`. A CSP could provide defense-in-depth against script injection if the web server is compromised.
+
+**Recommended Fix:** Optional — add a basic CSP if the app is deployed to a public web server:
+```html
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src https://*.googleapis.com;">
+```
+Note: Flutter web uses inline scripts and blob URLs — test thoroughly before deploying with CSP.
+
+---
+
+### Positive Security Findings
+
+1. **Secure token migration is well-implemented.** The `auth_service.dart:77-86` migration from SharedPreferences to `flutter_secure_storage` reads the legacy token, writes it to secure storage, and immediately deletes the legacy entry. This ensures no refresh tokens remain in plaintext SharedPreferences after first launch on the new version.
+
+2. **Backup validation continues to be robust.** `_validateBackup()` at `database_helper.dart:322-359` checks file size (100 MB limit), all 3 expected tables, schema version range (1-17, auto-derived from `_dbVersion`), and absence of triggers/views. The version check correctly uses the `_dbVersion` constant so it auto-updates with migrations.
+
+3. **SQL injection remains clean across all new methods.** New database methods for schedules (`upsertScheduleFromRemote`, `deleteScheduleBySyncId`, `getScheduleBySyncId`, `getAllScheduleSyncIds`, `getPendingSyncAddKeys`) all use parameterized `?` placeholders. The Today's 5 sync methods similarly use safe parameterized queries.
+
+4. **Notification service is properly sandboxed.** `notification_service.dart` is Android-only (no-op on web/desktop), uses a fixed notification ID for idempotent re-scheduling, hardcoded channel metadata, generic notification text (no task data exposed), and gracefully handles permission denial. No security concerns.
+
+5. **Sync cycle detection is thorough.** Both relationship and dependency pulls check for cycles via recursive CTEs before inserting. Pending local items are correctly excluded from reconciliation deletion, preventing locally-created items from being deleted during pull.
+
+6. **Force-directed layout has reasonable safeguards.** Iteration count is capped at 400 (`force_directed_layout.dart:155`), computation runs in a background isolate via `compute()`, and an early convergence exit prevents wasted iterations.
+
+7. **Android manifest is well-hardened.** `allowBackup="false"`, boot receiver is `android:exported="false"`, intent queries are scoped to safe schemes (http/https only), R8 code shrinking is enabled.
+
+8. **All credentials properly externalized.** Firebase API key, Google OAuth client IDs, and client secrets all use `String.fromEnvironment()` with `--dart-define` injection. The `.env` file is properly gitignored. Only the web client ID has a `defaultValue`, which is intentionally public.
+
+### OWASP Mobile Top 10 Assessment (Round 4 Update)
+
+| Category | Status | Notes |
+|----------|--------|-------|
+| M1: Improper Credential Usage | **Pass** | Refresh token in secure storage (HIGH-2 fixed) |
+| M2: Inadequate Supply Chain Security | **Pass** | All dependencies current, no known CVEs |
+| M3: Insecure Authentication/Authorization | **Minor** | Firestore rules not version-controlled (LOW-15 still open) |
+| M4: Insufficient Input/Output Validation | **Minor** | Task picker search field unbounded (LOW-19) |
+| M5: Insecure Communication | **Pass** | All API calls use HTTPS with 30-second timeouts |
+| M6: Inadequate Privacy Controls | **Pass** | No PII beyond task names; user info in secure storage on Android |
+| M7: Insufficient Binary Protections | **Pass** | R8/ProGuard enabled |
+| M8: Security Misconfiguration | **Pass** | Android manifest hardened, `allowBackup="false"` |
+| M9: Insecure Data Storage | **Pass** | Tokens in secure storage, DB sandboxed |
+| M10: Insufficient Cryptography | N/A | App does not use custom cryptography |
+
+### Remaining Priority Action Items
+
+| Priority | Finding | Effort | Status |
+|----------|---------|--------|--------|
+| **MEDIUM** | MED-11: Fix silent partial-pull data loss (throw on paginated pull errors) | Low | **New** |
+| **LOW** | LOW-15: Version-control Firestore Security Rules | Low | **Still open (Round 3)** |
+| **LOW** | LOW-18: Gate `debugPrint` in Today's 5 behind `kDebugMode` | Trivial | **New** |
+| **LOW** | LOW-19: Add `maxLength` to task picker search field | Trivial | **New** |
