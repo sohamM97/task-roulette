@@ -17,4 +17,6 @@ You are fixing issues found during code review of the TaskRoulette Flutter codeb
 7. **Build check**: Run `flutter build linux` to verify compilation.
 8. **Update docs**: In `docs/CODE_REVIEW.md`, mark each fixed item with `[FIXED in Round N fix]` next to its heading. If an item was already fixed before you touched it, mark it `[ALREADY FIXED]`. If you used your judgment and deviated from the recommended fix, add a brief note explaining what you did instead.
 9. **Commit** all fixes to the `code-review` branch with a descriptive message summarizing what was fixed.
-10. **Push** and remind the user to create a PR to merge `code-review` into `main`.
+10. **Push** and remind the user to:
+    - Ask their code review session to quickly verify the fixes for this round (not a full re-review — just confirm the specific items are resolved)
+    - Create a PR to merge `code-review` into `main`

@@ -15,4 +15,6 @@ You are fixing security vulnerabilities found during the security review of the 
 6. **Build check**: Run `flutter build linux` to verify compilation.
 7. **Update docs**: In `docs/SECURITY_REVIEW.md`, mark each fixed item with `[FIXED in Round N fix]` next to its heading. If an item was already fixed before you touched it, mark it `[ALREADY FIXED]`. If you deviated from the recommended fix, add a brief note explaining what you did instead.
 8. **Commit** all fixes to the `sec-review` branch with a descriptive message summarizing what was fixed.
-9. **Push** and remind the user to create a PR to merge `sec-review` into `main`.
+9. **Push** and remind the user to:
+    - Ask their security review session to quickly verify the fixes for this round (not a full re-review — just confirm the specific items are resolved)
+    - Create a PR to merge `sec-review` into `main`
