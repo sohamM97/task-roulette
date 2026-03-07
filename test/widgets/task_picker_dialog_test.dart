@@ -355,4 +355,16 @@ void main() {
       expect(getDisplayedTaskNames(tester), ['Zebra', 'Apple', 'Mango']);
     });
   });
+
+  group('TaskPickerDialog input limits', () {
+    testWidgets('search field has maxLength of 500', (tester) async {
+      final tasks = makeTasks(['Alpha']);
+      await tester.pumpWidget(buildDialog(candidates: tasks));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      final textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.maxLength, 500);
+    });
+  });
 }
