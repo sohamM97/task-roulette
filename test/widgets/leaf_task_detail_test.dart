@@ -374,6 +374,183 @@ void main() {
 
   });
 
+  group('LeafTaskDetail dependency icon', () {
+    testWidgets('shows add_task icon when onAddDependency provided', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LeafTaskDetail(
+            task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+            onDone: () {},
+            onSkip: () {},
+            onToggleStarted: () {},
+            onRename: () {},
+            onUpdateUrl: (_) {},
+            onUpdatePriority: (_) {},
+            onUpdateSomeday: (_) {},
+            onAddDependency: () {},
+          ),
+        ),
+      ));
+
+      expect(find.byIcon(Icons.add_task), findsOneWidget);
+    });
+
+    testWidgets('shows hourglass icon when dependencies exist', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LeafTaskDetail(
+            task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+            onDone: () {},
+            onSkip: () {},
+            onToggleStarted: () {},
+            onRename: () {},
+            onUpdateUrl: (_) {},
+            onUpdatePriority: (_) {},
+            onUpdateSomeday: (_) {},
+            dependencies: [
+              Task(id: 2, name: 'Blocker', createdAt: DateTime.now().millisecondsSinceEpoch),
+            ],
+            onRemoveDependency: (_) {},
+          ),
+        ),
+      ));
+
+      expect(find.byIcon(Icons.hourglass_top), findsOneWidget);
+    });
+
+    testWidgets('tapping dependency icon with deps calls onRemoveDependency', (tester) async {
+      int? removedId;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LeafTaskDetail(
+            task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+            onDone: () {},
+            onSkip: () {},
+            onToggleStarted: () {},
+            onRename: () {},
+            onUpdateUrl: (_) {},
+            onUpdatePriority: (_) {},
+            onUpdateSomeday: (_) {},
+            dependencies: [
+              Task(id: 42, name: 'Blocker', createdAt: DateTime.now().millisecondsSinceEpoch),
+            ],
+            onRemoveDependency: (id) => removedId = id,
+          ),
+        ),
+      ));
+
+      await tester.tap(find.byIcon(Icons.hourglass_top));
+      expect(removedId, 42);
+    });
+
+    testWidgets('no dependency icon when no callback and no deps', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+      ));
+
+      expect(find.byIcon(Icons.hourglass_top), findsNothing);
+      expect(find.byIcon(Icons.add_task), findsNothing);
+    });
+  });
+
+  group('LeafTaskDetail pin button', () {
+    testWidgets('shows pin button when onTogglePin provided', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LeafTaskDetail(
+            task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+            onDone: () {},
+            onSkip: () {},
+            onToggleStarted: () {},
+            onRename: () {},
+            onUpdateUrl: (_) {},
+            onUpdatePriority: (_) {},
+            onUpdateSomeday: (_) {},
+            onTogglePin: () {},
+            isPinnedInTodays5: false,
+          ),
+        ),
+      ));
+
+      // PinButton should render a push_pin_outlined or push_pin icon
+      expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
+    });
+
+    testWidgets('shows filled pin when isPinnedInTodays5 is true', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LeafTaskDetail(
+            task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+            onDone: () {},
+            onSkip: () {},
+            onToggleStarted: () {},
+            onRename: () {},
+            onUpdateUrl: (_) {},
+            onUpdatePriority: (_) {},
+            onUpdateSomeday: (_) {},
+            onTogglePin: () {},
+            isPinnedInTodays5: true,
+          ),
+        ),
+      ));
+
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+    });
+
+    testWidgets('no pin button when onTogglePin is null', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+      ));
+
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+      expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+    });
+  });
+
+  group('LeafTaskDetail "Done today" without onWorkedOn', () {
+    testWidgets('"Done today" fires onDone when onWorkedOn is null', (tester) async {
+      var doneCalled = false;
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+        onDone: () => doneCalled = true,
+        // onWorkedOn is null
+      ));
+
+      await tester.tap(find.text('Done today'));
+      expect(doneCalled, isTrue);
+    });
+  });
+
+  group('LeafTaskDetail formatTimeAgo', () {
+    testWidgets('shows days ago for old started task', (tester) async {
+      final threeDaysAgo = DateTime.now().subtract(const Duration(days: 3));
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(
+          id: 1,
+          name: 'Task',
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          startedAt: threeDaysAgo.millisecondsSinceEpoch,
+        ),
+      ));
+
+      expect(find.textContaining('3d ago'), findsOneWidget);
+    });
+
+    testWidgets('shows minutes ago for recently started task', (tester) async {
+      final fiveMinAgo = DateTime.now().subtract(const Duration(minutes: 5));
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(
+          id: 1,
+          name: 'Task',
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          startedAt: fiveMinAgo.millisecondsSinceEpoch,
+        ),
+      ));
+
+      expect(find.textContaining('5m ago'), findsOneWidget);
+    });
+  });
+
   group('LeafTaskDetail parent tags', () {
     testWidgets('shows "Under:" and parent names as chips when parentNames provided', (tester) async {
       await tester.pumpWidget(MaterialApp(

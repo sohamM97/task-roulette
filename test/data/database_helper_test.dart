@@ -4085,6 +4085,249 @@ void main() {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // Schedule inheritance query methods
+  // ---------------------------------------------------------------------------
+  group('getScheduleSources', () {
+    test('returns empty when no ancestors have schedules', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      final sources = await db.getScheduleSources(child);
+      expect(sources, isEmpty);
+    });
+
+    test('returns parent with schedule days', () async {
+      final parent = await db.insertTask(Task(name: 'Work'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1),
+        TaskSchedule(taskId: parent, dayOfWeek: 3),
+      ]);
+
+      final sources = await db.getScheduleSources(child);
+      expect(sources.length, 1);
+      expect(sources.first.name, 'Work');
+      expect(sources.first.days, {1, 3});
+    });
+
+    test('returns multiple parents as separate sources', () async {
+      final p1 = await db.insertTask(Task(name: 'Work'));
+      final p2 = await db.insertTask(Task(name: 'Hobby'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(p1, child);
+      await db.addRelationship(p2, child);
+
+      await db.replaceSchedules(p1, [
+        TaskSchedule(taskId: p1, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(p2, [
+        TaskSchedule(taskId: p2, dayOfWeek: 5),
+      ]);
+
+      final sources = await db.getScheduleSources(child);
+      expect(sources.length, 2);
+      final names = sources.map((s) => s.name).toSet();
+      expect(names, {'Work', 'Hobby'});
+    });
+
+    test('stops at nearest ancestor with schedule (barrier)', () async {
+      final gp = await db.insertTask(Task(name: 'GP'));
+      final p = await db.insertTask(Task(name: 'P'));
+      final c = await db.insertTask(Task(name: 'C'));
+      await db.addRelationship(gp, p);
+      await db.addRelationship(p, c);
+
+      await db.replaceSchedules(gp, [
+        TaskSchedule(taskId: gp, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(p, [
+        TaskSchedule(taskId: p, dayOfWeek: 3),
+      ]);
+
+      // C should see P (nearest barrier), not GP
+      final sources = await db.getScheduleSources(c);
+      expect(sources.length, 1);
+      expect(sources.first.name, 'P');
+      expect(sources.first.days, {3});
+    });
+  });
+
+  group('getInheritedScheduleDays', () {
+    test('returns empty when no ancestors have schedules', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      final days = await db.getInheritedScheduleDays(child);
+      expect(days, isEmpty);
+    });
+
+    test('returns ancestor schedule days', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 2),
+        TaskSchedule(taskId: parent, dayOfWeek: 4),
+      ]);
+
+      final days = await db.getInheritedScheduleDays(child);
+      expect(days, {2, 4});
+    });
+
+    test('ignores task own schedules (only looks at ancestors)', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(child, [
+        TaskSchedule(taskId: child, dayOfWeek: 5),
+      ]);
+
+      // getInheritedScheduleDays ignores child's own, returns parent's
+      final days = await db.getInheritedScheduleDays(child);
+      expect(days, {1});
+    });
+
+    test('multi-parent returns union of ancestor days', () async {
+      final p1 = await db.insertTask(Task(name: 'P1'));
+      final p2 = await db.insertTask(Task(name: 'P2'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(p1, child);
+      await db.addRelationship(p2, child);
+
+      await db.replaceSchedules(p1, [
+        TaskSchedule(taskId: p1, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(p2, [
+        TaskSchedule(taskId: p2, dayOfWeek: 5),
+      ]);
+
+      final days = await db.getInheritedScheduleDays(child);
+      expect(days, {1, 5});
+    });
+  });
+
+  group('Schedule sync helpers', () {
+    test('getScheduleBySyncId returns schedule with task sync_id', () async {
+      final id = await db.insertTask(Task(name: 'Sync'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 2),
+      ]);
+
+      final schedules = await db.getSchedulesForTask(id);
+      final syncId = schedules.first.syncId!;
+
+      final row = await db.getScheduleBySyncId(syncId);
+      expect(row, isNotNull);
+      expect(row!['day_of_week'], 2);
+      expect(row['task_sync_id'], isNotNull);
+    });
+
+    test('getScheduleBySyncId returns null for unknown sync_id', () async {
+      final row = await db.getScheduleBySyncId('nonexistent');
+      expect(row, isNull);
+    });
+
+    test('upsertScheduleFromRemote inserts new schedule', () async {
+      final id = await db.insertTask(Task(name: 'Remote'));
+      final task = (await db.getTaskById(id))!;
+
+      await db.upsertScheduleFromRemote({
+        'sync_id': 'remote-sched-1',
+        'task_sync_id': task.syncId!,
+        'day_of_week': 3,
+        'updated_at': 1000,
+      });
+
+      final schedules = await db.getSchedulesForTask(id);
+      expect(schedules.length, 1);
+      expect(schedules.first.dayOfWeek, 3);
+      expect(schedules.first.syncId, 'remote-sched-1');
+    });
+
+    test('upsertScheduleFromRemote updates existing schedule', () async {
+      final id = await db.insertTask(Task(name: 'Remote'));
+      final task = (await db.getTaskById(id))!;
+
+      await db.upsertScheduleFromRemote({
+        'sync_id': 'remote-sched-2',
+        'task_sync_id': task.syncId!,
+        'day_of_week': 1,
+        'updated_at': 1000,
+      });
+
+      // Update same sync_id to different day
+      await db.upsertScheduleFromRemote({
+        'sync_id': 'remote-sched-2',
+        'task_sync_id': task.syncId!,
+        'day_of_week': 5,
+        'updated_at': 2000,
+      });
+
+      final schedules = await db.getSchedulesForTask(id);
+      expect(schedules.length, 1);
+      expect(schedules.first.dayOfWeek, 5);
+    });
+
+    test('upsertScheduleFromRemote skips if task not found', () async {
+      // No task with this sync_id exists
+      await db.upsertScheduleFromRemote({
+        'sync_id': 'orphan-sched',
+        'task_sync_id': 'nonexistent-task-sync-id',
+        'day_of_week': 1,
+        'updated_at': 1000,
+      });
+
+      final all = await db.getAllScheduleSyncIds();
+      expect(all, isNot(contains('orphan-sched')));
+    });
+
+    test('deleteScheduleBySyncId removes schedule', () async {
+      final id = await db.insertTask(Task(name: 'Del'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 4),
+      ]);
+
+      final syncIds = await db.getAllScheduleSyncIds();
+      expect(syncIds, isNotEmpty);
+
+      await db.deleteScheduleBySyncId(syncIds.first);
+      expect(await db.hasSchedules(id), isFalse);
+    });
+
+    test('getAllScheduleSyncIds returns all sync_ids', () async {
+      final id = await db.insertTask(Task(name: 'Multi'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 3),
+      ]);
+
+      final syncIds = await db.getAllScheduleSyncIds();
+      expect(syncIds.length, 2);
+    });
+
+    test('getAllSchedulesWithTaskSyncIds returns schedules with task sync_ids', () async {
+      final id = await db.insertTask(Task(name: 'Export'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 2),
+      ]);
+
+      final rows = await db.getAllSchedulesWithTaskSyncIds();
+      expect(rows.length, 1);
+      expect(rows.first['task_sync_id'], isNotNull);
+      expect(rows.first['day_of_week'], 2);
+    });
+  });
+
   group('getPendingSyncAddKeys', () {
     test('returns pending relationship adds', () async {
       final a = await db.insertTask(Task(name: 'A'));
