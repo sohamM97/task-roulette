@@ -176,7 +176,9 @@ class FirestoreService {
   Future<bool> hasRemoteData(String uid, String idToken) async {
     final url = Uri.parse('${_tasksPath(uid)}?pageSize=1');
     final response = await http.get(url, headers: _headers(idToken)).timeout(_httpTimeout);
-    if (response.statusCode != 200) return false;
+    if (response.statusCode != 200) {
+      throw FirestoreException('Check remote data failed: ${response.statusCode}');
+    }
     final body = json.decode(response.body) as Map<String, dynamic>;
     final docs = body['documents'] as List<dynamic>? ?? [];
     return docs.isNotEmpty;
@@ -210,7 +212,9 @@ class FirestoreService {
       var url = '${_relationshipsPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
       final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
-      if (response.statusCode != 200) break;
+      if (response.statusCode != 200) {
+        throw FirestoreException('Pull relationships failed: ${response.statusCode}');
+      }
       final body = json.decode(response.body) as Map<String, dynamic>;
       final docs = body['documents'] as List<dynamic>? ?? [];
       for (final doc in docs) {
@@ -238,7 +242,9 @@ class FirestoreService {
       var url = '${_dependenciesPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
       final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
-      if (response.statusCode != 200) break;
+      if (response.statusCode != 200) {
+        throw FirestoreException('Pull dependencies failed: ${response.statusCode}');
+      }
       final body = json.decode(response.body) as Map<String, dynamic>;
       final docs = body['documents'] as List<dynamic>? ?? [];
       for (final doc in docs) {
@@ -324,7 +330,9 @@ class FirestoreService {
       var url = '${_schedulesPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
       final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
-      if (response.statusCode != 200) break;
+      if (response.statusCode != 200) {
+        throw FirestoreException('Pull schedules failed: ${response.statusCode}');
+      }
       final body = json.decode(response.body) as Map<String, dynamic>;
       final docs = body['documents'] as List<dynamic>? ?? [];
       for (final doc in docs) {
