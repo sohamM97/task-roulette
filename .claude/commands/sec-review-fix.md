@@ -13,5 +13,6 @@ You are fixing security vulnerabilities found during the security review of the 
    - For dependency upgrades with breaking changes, note them and ask the user before proceeding
 5. **Add test cases**: For each security fix, add a test verifying the fix (e.g., test that invalid URL schemes are rejected, test that oversized backups are rejected). Run `flutter test` after each group of fixes.
 6. **Build check**: Run `flutter build linux` to verify compilation.
-7. **Commit** all fixes to the `sec-review` branch with a descriptive message summarizing what was fixed.
-8. **Push** and remind the user to create a PR to merge `sec-review` into `main`.
+7. **Update docs**: In `docs/SECURITY_REVIEW.md`, mark each fixed item with `[FIXED in Round N fix]` next to its heading. If an item was already fixed before you touched it, mark it `[ALREADY FIXED]`. If you deviated from the recommended fix, add a brief note explaining what you did instead.
+8. **Commit** all fixes to the `sec-review` branch with a descriptive message summarizing what was fixed.
+9. **Push** and remind the user to create a PR to merge `sec-review` into `main`.

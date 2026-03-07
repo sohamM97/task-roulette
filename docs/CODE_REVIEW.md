@@ -2310,7 +2310,7 @@ missing sync metadata updates.
 - M-22: Theme data duplicated between light and dark — still open
 - M-23: `ThemeProvider` race between `_loadPreference()` and `toggle()` — still open
 - M-24: `_autoStartedIds` never cleaned up on day rollover — still open
-- M-25: `_chipsOverflow` creates TextPainter objects without disposing them — still open
+- M-25: `_chipsOverflow` creates TextPainter objects without disposing them — fixed (dispose() already present)
 - M-26: `BackupService.importDatabase` doesn't trigger Today's 5 refresh — still open
 - M-27: `_EdgePainter.shouldRepaint` uses identity comparison on lists — still open
 - N1–N4: All still open
@@ -2319,7 +2319,7 @@ missing sync metadata updates.
 
 ### Critical
 
-#### CR-14. Silent partial pull deletes local data — relationships, dependencies, and schedules lost on transient HTTP errors
+#### CR-14. Silent partial pull deletes local data — relationships, dependencies, and schedules lost on transient HTTP errors [FIXED in Round 8 fix]
 **Files:**
 - `lib/services/firestore_service.dart:213, 241, 327`
 - `lib/services/sync_service.dart:440-454, 466-480, 487-500`
@@ -2376,7 +2376,7 @@ destructive diff logic from running on incomplete data.
 
 ---
 
-#### CR-15. `replaceSchedules` doesn't mark task as dirty when updating `is_schedule_override`
+#### CR-15. `replaceSchedules` doesn't mark task as dirty when updating `is_schedule_override` [FIXED in Round 8 fix]
 **File:** `lib/data/database_helper.dart:2287-2291`
 
 When updating the `is_schedule_override` flag on a task, the update does not
@@ -2411,7 +2411,7 @@ if (isOverride != null) {
 
 ### Important
 
-#### I-36. `hasRemoteData` returns `false` on transient errors — wrong sync decision
+#### I-36. `hasRemoteData` returns `false` on transient errors — wrong sync decision [FIXED in Round 8 fix]
 **File:** `lib/services/firestore_service.dart:176-182`
 
 ```dart
@@ -2438,7 +2438,7 @@ if (response.statusCode != 200) {
 
 ---
 
-#### I-37. `_showRandomResult` recursive calls lack mounted checks
+#### I-37. `_showRandomResult` recursive calls lack mounted checks [FIXED in Round 8 fix]
 **File:** `lib/screens/task_list_screen.dart:738-770`
 
 The `_showRandomResult` method recursively calls itself (lines 743-747 and
@@ -2470,7 +2470,7 @@ if (result != null) {
 
 ### Minor
 
-#### M-28. `NotificationService.init()` can register duplicate callbacks
+#### M-28. `NotificationService.init()` can register duplicate callbacks [FIXED in Round 8 fix]
 **File:** `lib/services/notification_service.dart:45-82`
 
 If `init()` is called multiple times (e.g., after hot restart during
@@ -2491,7 +2491,7 @@ Future<void> init() async {
 
 ---
 
-#### M-29. `_chipsOverflow` in Today's 5 leaks `TextPainter` objects (repeat of M-25, still unfixed)
+#### M-29. `_chipsOverflow` in Today's 5 leaks `TextPainter` objects (repeat of M-25, still unfixed) [ALREADY FIXED]
 **File:** `lib/screens/todays_five_screen.dart:1290-1312`
 
 `TextPainter` objects are created and laid out but never `dispose()`d. In
