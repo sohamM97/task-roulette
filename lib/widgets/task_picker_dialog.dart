@@ -109,11 +109,13 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
               const SizedBox(height: 12),
               TextField(
                 autofocus: true,
+                maxLength: 500,
                 decoration: const InputDecoration(
                   hintText: 'Search tasks...',
                   prefixIcon: Icon(Icons.search),
                   border: OutlineInputBorder(),
                   isDense: true,
+                  counterText: '',
                 ),
                 onChanged: (value) => setState(() => _filter = value),
               ),

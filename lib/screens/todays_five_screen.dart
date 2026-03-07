@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/database_helper.dart';
@@ -111,7 +112,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     try {
       await _loadTodaysTasksInner();
     } catch (e) {
-      debugPrint('TodaysFiveScreen: _loadTodaysTasks failed: $e');
+      if (kDebugMode) debugPrint('TodaysFiveScreen: _loadTodaysTasks failed: $e');
       if (mounted) setState(() => _loading = false);
     }
   }
