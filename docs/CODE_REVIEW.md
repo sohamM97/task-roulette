@@ -2268,3 +2268,249 @@ After importing a backup, `provider.loadRootTasks()` refreshes the All Tasks scr
 7. **I-35** — Wire `removeRelationshipFromRemote`/`removeDependencyFromRemote` into pull (part of CR-13)
 8. **M-24 through M-27** — as time permits
 9. **Remaining open items** from previous rounds — as time permits
+
+---
+---
+
+## Round 8 (2026-03-07)
+
+Full codebase review after Round 7 fixes, schedule feature addition, DAG view
+performance overhaul, notification support, and version bump to 1.1.9. Verified
+all Round 7 items. Major focus: silent partial-pull data loss in sync layer, and
+missing sync metadata updates.
+
+---
+
+### Previous Round Verification
+
+- [x] CR-12: Undo-delete sync: cancel pending deletions + mark restored task as pending — verified fixed, `restoreTask` at `database_helper.dart:970-979` cancels sync queue entries and sets `sync_status = 'pending'`; `restoreTaskSubtree` at lines 1564-1577 does the same
+- [x] CR-13: Pull removes stale local relationships/dependencies — verified fixed, `sync_service.dart:440-454` computes diff and calls `removeRelationshipFromRemote`; lines 466-480 for dependencies
+- [x] I-31: `_handleUncomplete` passes `restoreTo` in `task.isCompleted` branch — verified fixed at `todays_five_screen.dart:703-710`, both branches now pass `restoreTo`
+- [x] I-32: `_swapTask` mounted check before state mutation — verified fixed at `todays_five_screen.dart:952`, `mounted` check before mutations
+- [x] I-33: `onNavigateToTask` mounted check after await — verified fixed at `main.dart:171`
+- [x] I-34: Dead `getDeletedTasks()` removed — verified, no such method exists in codebase
+- [x] I-35: `removeRelationshipFromRemote`/`removeDependencyFromRemote` wired into pull — verified, called from `sync_service.dart:450` and `476`
+
+### Items Still Open From Previous Rounds
+
+- I6: Loading indicators for async UI transitions — still open
+- M3: `_renameTask` dialog leaks TextEditingController — still open
+- M5: `BackupService` hardcodes Android download path — still open
+- M6: DAG view doesn't recompute layout on rotation — still open
+- M9: N+1 queries in `_addParent` for grandparent siblings — still open
+- M-10: `showEditUrlDialog` leaks TextEditingController — still open
+- M-12: Repeating task code is dead code — still open
+- M-14: Firestore `integerValue` null guard on `lastSyncAt` — still open
+- M-15: Refresh token stored in plaintext SharedPreferences — still open (future)
+- M-16: No error handling in `_loadTodaysTasks()` initial load — still open
+- M-18: `_preWorkedOnTimestamps` map grows unboundedly — still open
+- M-19: Double refresh on tab navigation — still open
+- M-20: Missing `WidgetsFlutterBinding.ensureInitialized()` in `main()` — still open
+- M-21: `_initAuth` has no error handling — still open
+- M-22: Theme data duplicated between light and dark — still open
+- M-23: `ThemeProvider` race between `_loadPreference()` and `toggle()` — still open
+- M-24: `_autoStartedIds` never cleaned up on day rollover — still open
+- M-25: `_chipsOverflow` creates TextPainter objects without disposing them — still open
+- M-26: `BackupService.importDatabase` doesn't trigger Today's 5 refresh — still open
+- M-27: `_EdgePainter.shouldRepaint` uses identity comparison on lists — still open
+- N1–N4: All still open
+
+---
+
+### Critical
+
+#### CR-14. Silent partial pull deletes local data — relationships, dependencies, and schedules lost on transient HTTP errors
+**Files:**
+- `lib/services/firestore_service.dart:213, 241, 327`
+- `lib/services/sync_service.dart:440-454, 466-480, 487-500`
+
+The `pullAllRelationships`, `pullAllDependencies`, and `pullAllSchedules` methods
+use paginated Firestore LIST requests. If any page request returns a non-200
+status (e.g., 401 token expiry mid-pagination, 500 transient error, network
+timeout), the method silently `break`s out of the pagination loop and returns
+**partial results**:
+
+```dart
+// firestore_service.dart line 213:
+if (response.statusCode != 200) break;  // silent — returns whatever was fetched so far
+```
+
+The caller in `sync_service.dart` then treats this partial result as the
+**complete** remote state and deletes local items not in the set:
+
+```dart
+// sync_service.dart lines 440-454:
+final remoteRelSet = remoteRels.map(...).toSet();  // INCOMPLETE set
+for (final local in localRels) {
+  if (!remoteRelSet.contains(key) && !pendingRelKeys.contains(key)) {
+    await _db.removeRelationshipFromRemote(...);  // DELETES valid local data
+  }
+}
+```
+
+**Reproduction:**
+1. User has 500 relationships (2 pages of 300)
+2. Page 1 succeeds (300 relationships fetched)
+3. Page 2 fails (token expired, 401)
+4. `pullAllRelationships` returns 300 of 500 relationships
+5. Pull logic deletes the 200 local relationships not in the partial set
+6. 200 relationships permanently lost
+
+**Impact:** Any transient HTTP error during a multi-page pull causes irreversible
+deletion of local relationships, dependencies, and schedules. This is the most
+dangerous data-loss vector in the sync layer.
+
+**Fix:** Throw on non-200 status instead of silently breaking. Let the caller's
+try-catch handle the error, preserving local data:
+```dart
+// In pullAllRelationships, pullAllDependencies, pullAllSchedules:
+if (response.statusCode != 200) {
+  throw FirestoreException(
+    'Pull relationships failed on page: ${response.statusCode}');
+}
+```
+
+The `pull()` method's existing catch block at `sync_service.dart:387-388`
+will handle the exception and set `SyncStatus.error`, preventing the
+destructive diff logic from running on incomplete data.
+
+---
+
+#### CR-15. `replaceSchedules` doesn't mark task as dirty when updating `is_schedule_override`
+**File:** `lib/data/database_helper.dart:2287-2291`
+
+When updating the `is_schedule_override` flag on a task, the update does not
+include `_dirtyFields()` — meaning `updated_at` and `sync_status` are not
+updated:
+
+```dart
+if (isOverride != null) {
+  await txn.update('tasks',
+    {'is_schedule_override': isOverride ? 1 : 0},  // missing _dirtyFields()
+    where: 'id = ?', whereArgs: [taskId]);
+}
+```
+
+Compare with every other task mutation method which includes `..._dirtyFields()`
+to mark the task as `sync_status: 'pending'` and update `updated_at`.
+
+**Impact:** When a user toggles schedule override on/off, the change is saved
+locally but never synced to Firestore. On another device (or after
+"Replace with cloud data"), the override flag reverts to its old value.
+
+**Fix:**
+```dart
+if (isOverride != null) {
+  await txn.update('tasks',
+    {'is_schedule_override': isOverride ? 1 : 0, ..._dirtyFields()},
+    where: 'id = ?', whereArgs: [taskId]);
+}
+```
+
+---
+
+### Important
+
+#### I-36. `hasRemoteData` returns `false` on transient errors — wrong sync decision
+**File:** `lib/services/firestore_service.dart:176-182`
+
+```dart
+Future<bool> hasRemoteData(String uid, String idToken) async {
+  final url = Uri.parse('${_tasksPath(uid)}?pageSize=1');
+  final response = await http.get(url, headers: _headers(idToken)).timeout(_httpTimeout);
+  if (response.statusCode != 200) return false;  // ← treats 500/503/429 as "no data"
+  ...
+}
+```
+
+This method is called during first sign-in to decide whether to offer migration
+options. If Firestore returns a transient error (500, 503, rate limit), the method
+reports "no remote data", potentially leading the user to choose "push local"
+when they actually have existing cloud data — overwriting it.
+
+**Fix:** Only treat 200 with empty results as "no data". Throw on unexpected
+status codes:
+```dart
+if (response.statusCode != 200) {
+  throw FirestoreException('Check remote data failed: ${response.statusCode}');
+}
+```
+
+---
+
+#### I-37. `_showRandomResult` recursive calls lack mounted checks
+**File:** `lib/screens/task_list_screen.dart:738-770`
+
+The `_showRandomResult` method recursively calls itself (lines 743-747 and
+764-769) after showing picker dialogs and awaiting `navigateInto`. No `mounted`
+check before the recursive call:
+
+```dart
+// Line 743-747:
+final result = await showDialog<Task?>(...);
+if (result != null) {
+  await provider.navigateInto(result);  // async
+  _showRandomResult(result);            // no mounted check before this
+}
+```
+
+If the widget is disposed while the picker dialog is open or during
+`navigateInto`, the recursive call accesses a stale `context`.
+
+**Fix:** Add `if (!mounted) return;` before each recursive call:
+```dart
+if (result != null) {
+  await provider.navigateInto(result);
+  if (!mounted) return;
+  _showRandomResult(result);
+}
+```
+
+---
+
+### Minor
+
+#### M-28. `NotificationService.init()` can register duplicate callbacks
+**File:** `lib/services/notification_service.dart:45-82`
+
+If `init()` is called multiple times (e.g., after hot restart during
+development), `initialize()` registers a new `onDidReceiveNotificationResponse`
+callback each time. The notification ID is fixed so scheduling is idempotent,
+but the callback could fire multiple times.
+
+**Fix:** Track initialization state:
+```dart
+bool _initialized = false;
+
+Future<void> init() async {
+  if (_initialized) return;
+  _initialized = true;
+  // ... existing logic ...
+}
+```
+
+---
+
+#### M-29. `_chipsOverflow` in Today's 5 leaks `TextPainter` objects (repeat of M-25, still unfixed)
+**File:** `lib/screens/todays_five_screen.dart:1290-1312`
+
+`TextPainter` objects are created and laid out but never `dispose()`d. In
+modern Flutter, `TextPainter` allocates native resources that require explicit
+disposal. This runs on every build when the "Also done today" box is visible.
+
+**Fix:** Call `tp.dispose()` after measuring:
+```dart
+final tp = TextPainter(...)..layout();
+final width = tp.width;
+tp.dispose();
+```
+
+---
+
+## Round 8 — Suggested Implementation Order
+
+1. **CR-14** — Throw on partial pull instead of silently breaking (5 min, `firestore_service.dart` — change `break` to `throw` in 3 methods)
+2. **CR-15** — Add `_dirtyFields()` to `is_schedule_override` update (1 min, `database_helper.dart` line 2289)
+3. **I-36** — Throw on non-200 in `hasRemoteData` (2 min, `firestore_service.dart`)
+4. **I-37** — Add mounted checks in `_showRandomResult` recursive calls (2 min, `task_list_screen.dart`)
+5. **Remaining open items** from previous rounds — as time permits
