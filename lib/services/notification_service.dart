@@ -41,9 +41,13 @@ class NotificationService {
     }
   }
 
+  static bool _initialized = false;
+
   /// Initialize notification scheduling. Android-only; no-op elsewhere.
   static Future<void> init() async {
+    if (_initialized) return;
     if (kIsWeb || !platform.isAndroidPlatform) return;
+    _initialized = true;
 
     // Set up timezone database and resolve device's local timezone
     tz.initializeTimeZones();
