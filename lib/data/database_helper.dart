@@ -2286,7 +2286,7 @@ class DatabaseHelper {
       // Update override flag if specified
       if (isOverride != null) {
         await txn.update('tasks',
-          {'is_schedule_override': isOverride ? 1 : 0},
+          {'is_schedule_override': isOverride ? 1 : 0, ..._dirtyFields()},
           where: 'id = ?', whereArgs: [taskId]);
       }
     });

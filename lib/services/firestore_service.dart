@@ -176,7 +176,9 @@ class FirestoreService {
   Future<bool> hasRemoteData(String uid, String idToken) async {
     final url = Uri.parse('${_tasksPath(uid)}?pageSize=1');
     final response = await http.get(url, headers: _headers(idToken)).timeout(_httpTimeout);
-    if (response.statusCode != 200) return false;
+    if (response.statusCode != 200) {
+      throw FirestoreException('Check remote data failed: ${response.statusCode}');
+    }
     final body = json.decode(response.body) as Map<String, dynamic>;
     final docs = body['documents'] as List<dynamic>? ?? [];
     return docs.isNotEmpty;

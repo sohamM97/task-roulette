@@ -761,6 +761,7 @@ class TaskListScreenState extends State<TaskListScreen>
         if (pool.isNotEmpty) {
           final picked = provider.pickWeightedN(pool, 1);
           if (picked.isNotEmpty) {
+            if (!mounted) return;
             await _showRandomResult(
               picked.first,
               excluded: newExcluded,
