@@ -1076,3 +1076,103 @@ Note: Flutter web uses inline scripts and blob URLs — test thoroughly before d
 | **LOW** | LOW-15: Version-control Firestore Security Rules | Low | **Still open (Round 3)** |
 | **LOW** | LOW-18: Gate `debugPrint` in Today's 5 behind `kDebugMode` | Trivial | **New** |
 | **LOW** | LOW-19: Add `maxLength` to task picker search field | Trivial | **New** |
+
+---
+
+## Round 5 (2026-03-12)
+
+**Scope:** Review of recent code review fixes (PR #37: pin transfer, launchUrl error handling, onMutation consistency, mounted checks). Verification of all Round 4 outstanding items.
+
+### Previous Round Verification
+
+**Round 4 findings — 3 of 4 resolved:**
+- [x] MED-11: Silent partial-pull data loss — verified fixed. All paginated pull methods (`pullAllRelationships` at `firestore_service.dart:215`, `pullAllDependencies` at line 245, `pullAllSchedules` at line 333, `_listAllTasks` at line 461) now throw `FirestoreException` on non-200 responses instead of silently breaking. This prevents reconciliation logic from running on partial data.
+- [x] LOW-18: Ungated `debugPrint` in Today's 5 — verified fixed. `todays_five_screen.dart:112` is now gated with `if (kDebugMode)`.
+- [x] LOW-19: Task picker search field maxLength — verified fixed. `task_picker_dialog.dart:112` has `maxLength: 500`.
+
+**Not fixed (1 of 4):**
+- [ ] LOW-15: Firestore Security Rules not version-controlled — no `firestore.rules` or `firebase.json` in the repository. Rules remain only in the Firebase console.
+
+**Previously accepted items — status unchanged:**
+- LOW-6: Unencrypted DB at rest — still accepted for threat model
+- LOW-7: Unencrypted backup export — still accepted for threat model
+
+### Findings
+
+#### LOW-20: AppBar `launchUrl` Missing Try-Catch for Platform Exceptions [FIXED in Round 5 fix]
+
+- **Severity:** Low
+- **File:** `lib/screens/task_list_screen.dart:1084-1090`
+- **Code:**
+  ```dart
+  final uri = Uri.parse(url);
+  final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+  if (!launched && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Could not open ${displayUrl(url)}')),
+    );
+  }
+  ```
+
+**Description:** The AppBar link button calls `launchUrl` without a try-catch. The leaf detail version (`leaf_task_detail.dart:64-77`) was updated in the recent code review (commit `659b108`) to wrap `launchUrl` in a try-catch that catches platform exceptions (e.g., `PlatformException` on Android when no browser is installed, or `MissingPluginException` on Linux without `xdg-open`). The AppBar version was not updated to match, leaving an unhandled exception path that could crash the screen.
+
+**Recommended Fix:** Wrap in try-catch, matching the leaf detail pattern:
+```dart
+try {
+  final uri = Uri.parse(url);
+  final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+  if (!launched && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Could not open ${displayUrl(url)}'), showCloseIcon: true, persist: false),
+    );
+  }
+} catch (_) {
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not open link'), showCloseIcon: true, persist: false),
+    );
+  }
+}
+```
+
+---
+
+### Positive Security Findings
+
+1. **All Round 4 code fixes remain intact.** URL scheme validation, input length limits, backup validation, R8 code shrinking, secure token storage, HTTP timeouts, debug logging gates, cycle detection, field size validation, and error message sanitization — all verified present and correct.
+
+2. **`UrlTextField` widget centralizes URL input security.** The new `UrlTextField` widget in `display_utils.dart:42-99` encapsulates `maxLength: 2048`, URL keyboard type, and consistent styling. This replaces inline `TextField` definitions for URL input, reducing the chance of a future URL input field missing the length limit.
+
+3. **`onMutation` callback consistency improved.** The recent code review fixes (commits `659b108`, `e98e50b`) ensured `onMutation` is called consistently after all local mutations in `TaskProvider`, preventing silent sync queue stalls.
+
+4. **`mounted` checks added consistently.** Post-async widget code now checks `context.mounted` (or `mounted` for `State` subclasses) before calling `setState` or `ScaffoldMessenger`, preventing "setState called after dispose" crashes.
+
+5. **Brain dump pin transfer uses ID-based diffing.** Commit `fa0c70c` fixed pin transfer to use task ID diffing instead of name matching, preventing incorrect pin transfers when tasks share the same name.
+
+6. **SQL injection remains clean.** All queries across all files continue to use parameterized `?` placeholders. No string concatenation of user input into SQL.
+
+7. **No new `debugPrint`/`print` calls in production paths.** All existing debug logging remains properly gated behind `kDebugMode`.
+
+8. **Dependencies unchanged.** `pubspec.yaml` shows `file_picker: ^10.3.10` (CVE-patched), `flutter_secure_storage: ^10.0.0`, and all other dependencies at same versions as Round 4. No new dependencies added.
+
+### OWASP Mobile Top 10 Assessment (Round 5 Update)
+
+| Category | Status | Notes |
+|----------|--------|-------|
+| M1: Improper Credential Usage | **Pass** | Refresh token in secure storage |
+| M2: Inadequate Supply Chain Security | **Pass** | All dependencies current, no known CVEs |
+| M3: Insecure Authentication/Authorization | **Minor** | Firestore rules not version-controlled (LOW-15 still open) |
+| M4: Insufficient Input/Output Validation | **Pass** | All input fields have length limits; URL scheme validation in place |
+| M5: Insecure Communication | **Pass** | All API calls use HTTPS with 30-second timeouts |
+| M6: Inadequate Privacy Controls | **Pass** | No PII beyond task names; user info in secure storage on Android |
+| M7: Insufficient Binary Protections | **Pass** | R8/ProGuard enabled |
+| M8: Security Misconfiguration | **Pass** | Android manifest hardened |
+| M9: Insecure Data Storage | **Pass** | Tokens in secure storage, DB sandboxed |
+| M10: Insufficient Cryptography | N/A | App does not use custom cryptography |
+
+### Remaining Priority Action Items
+
+| Priority | Finding | Effort | Status |
+|----------|---------|--------|--------|
+| **LOW** | LOW-15: Version-control Firestore Security Rules | Low | **Still open (Round 3)** |
+| **LOW** | LOW-20: Add try-catch to AppBar `launchUrl` | Trivial | **Fixed** — extracted shared `launchSafeUrl` helper in `display_utils.dart` |

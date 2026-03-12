@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../models/task.dart';
 import '../utils/display_utils.dart';
 
@@ -51,31 +50,7 @@ class LeafTaskDetail extends StatelessWidget {
     return 'just now';
   }
 
-  Future<void> _openUrl(BuildContext context) async {
-    final uri = Uri.tryParse(task.url!);
-    if (uri == null || !isAllowedUrl(task.url!)) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Only web links (http/https) are supported'), showCloseIcon: true, persist: false),
-        );
-      }
-      return;
-    }
-    try {
-      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!launched && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open link'), showCloseIcon: true, persist: false),
-        );
-      }
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open link'), showCloseIcon: true, persist: false),
-        );
-      }
-    }
-  }
+  Future<void> _openUrl(BuildContext context) => launchSafeUrl(context, task.url!);
 
   static void showEditUrlDialog(
     BuildContext context,
