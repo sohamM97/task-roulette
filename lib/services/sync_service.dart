@@ -4,6 +4,7 @@ import 'dart:ui' show VoidCallback;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database_helper.dart';
 import '../providers/auth_provider.dart';
+import '../utils/display_utils.dart';
 import 'firestore_service.dart';
 
 /// Orchestrates sync between local SQLite and Firestore.
@@ -29,10 +30,7 @@ class SyncService {
   SyncService(this._authProvider);
 
   /// Returns today's date as YYYY-MM-DD string for Firestore document key.
-  String _todayDateKey() {
-    final now = DateTime.now();
-    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-  }
+  String _todayDateKey() => todayDateKey();
 
   bool get _canSync =>
       _authProvider.isSignedIn &&

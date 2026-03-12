@@ -176,8 +176,7 @@ class TaskListScreenState extends State<TaskListScreen>
   /// in Today's 5 state. Called eagerly after adding a subtask to a pinned
   /// parent so the pin icon appears immediately on the child's card.
   Future<void> _transferPinToChild(int parentId, int childId) async {
-    final now = DateTime.now();
-    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final today = todayDateKey();
     final db = DatabaseHelper();
     final saved = await db.loadTodaysFiveState(today);
     if (saved == null) return;
@@ -212,8 +211,7 @@ class TaskListScreenState extends State<TaskListScreen>
   /// Adds a newly created task to Today's 5 (replacing an unpinned undone slot)
   /// and pins it.
   Future<void> _pinNewTaskInTodays5(int taskId) async {
-    final now = DateTime.now();
-    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final today = todayDateKey();
     final db = DatabaseHelper();
     final saved = await db.loadTodaysFiveState(today);
     if (saved == null) return;
@@ -256,12 +254,13 @@ class TaskListScreenState extends State<TaskListScreen>
       builder: (_) => BrainDumpDialog(initialText: initialText),
     );
     if (names != null && names.isNotEmpty && mounted) {
+      final beforeIds = provider.tasks.map((t) => t.id!).toSet();
       await provider.addTasksBatch(names);
       if (parentIsPinned && mounted) {
-        // Pick one of the new subtasks to inherit the pin
-        final children = provider.tasks;
-        if (children.isNotEmpty) {
-          final picked = provider.pickWeightedN(children, 1);
+        // Pick one of the NEW subtasks to inherit the pin (not pre-existing children)
+        final newChildren = provider.tasks.where((t) => !beforeIds.contains(t.id)).toList();
+        if (newChildren.isNotEmpty) {
+          final picked = provider.pickWeightedN(newChildren, 1);
           if (picked.isNotEmpty) {
             await _transferPinToChild(parentId, picked.first.id!);
           }
@@ -803,6 +802,7 @@ class TaskListScreenState extends State<TaskListScreen>
         if (eligible.isNotEmpty) {
           final picked = provider.pickWeightedN(eligible, 1);
           if (picked.isNotEmpty) {
+            if (!mounted) return;
             await _showRandomResult(
               picked.first,
               siblingPool: eligible,
@@ -1073,7 +1073,7 @@ class TaskListScreenState extends State<TaskListScreen>
                 if (!provider.isRoot && provider.currentParent?.hasUrl == true && provider.tasks.isNotEmpty)
                   IconButton(
                     icon: const Icon(Icons.link, size: 22),
-                    onPressed: () {
+                    onPressed: () async {
                       final url = provider.currentParent!.url!;
                       if (!isAllowedUrl(url)) {
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -1082,7 +1082,12 @@ class TaskListScreenState extends State<TaskListScreen>
                         return;
                       }
                       final uri = Uri.parse(url);
-                      launchUrl(uri, mode: LaunchMode.externalApplication);
+                      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+                      if (!launched && context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Could not open ${displayUrl(url)}'), showCloseIcon: true, persist: false),
+                        );
+                      }
                     },
                     tooltip: 'Open link',
                     visualDensity: VisualDensity.compact,

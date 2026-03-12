@@ -324,7 +324,7 @@ class AuthService {
     final response = await http.post(
       url,
       headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-      body: 'grant_type=refresh_token&refresh_token=$refreshToken',
+      body: 'grant_type=refresh_token&refresh_token=${Uri.encodeQueryComponent(refreshToken)}',
     ).timeout(const Duration(seconds: 30));
     if (response.statusCode == 200) {
       return json.decode(response.body) as Map<String, dynamic>;

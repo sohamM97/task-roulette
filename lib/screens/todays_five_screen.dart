@@ -103,10 +103,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     await _loadTodaysTasks();
   }
 
-  String _todayKey() {
-    final now = DateTime.now();
-    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-  }
+  String _todayKey() => todayDateKey();
 
   Future<void> _loadTodaysTasks() async {
     try {

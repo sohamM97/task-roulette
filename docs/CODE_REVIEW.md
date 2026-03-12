@@ -2514,3 +2514,252 @@ tp.dispose();
 3. **I-36** — Throw on non-200 in `hasRemoteData` (2 min, `firestore_service.dart`)
 4. **I-37** — Add mounted checks in `_showRandomResult` recursive calls (2 min, `task_list_screen.dart`)
 5. **Remaining open items** from previous rounds — as time permits
+
+---
+
+## Round 9 (2026-03-12)
+
+Full codebase review after Round 8 fixes, security review Round 4 fixes,
+and Today's 5 pin state / eager pin transfer feature (d184bdc).
+
+---
+
+### Previous Round Verification
+
+- [x] CR-14: Throw on partial pull — verified fixed at `firestore_service.dart:216`, now throws `FirestoreException` instead of `break`
+- [x] CR-15: `_dirtyFields()` on `is_schedule_override` update — verified fixed at `database_helper.dart:2289`
+- [x] I-36: `hasRemoteData` throws on non-200 — verified fixed at `firestore_service.dart:180`
+- [x] I-37: `_showRandomResult` mounted checks — partially fixed: `pickAnother` branch has mounted check at line 827, but `goDeeper` branch (line 806) still lacks one before the recursive call. In practice safe because the recursive method re-checks mounted at line 786, but inconsistent with `pickAnother`.
+- [x] M-28: `NotificationService.init()` idempotent guard — verified fixed at `notification_service.dart:44-50`
+- [x] M-29: `_chipsOverflow` TextPainter disposal — already fixed (confirmed in Round 8)
+
+### Items Still Open From Previous Rounds
+
+- I6: Loading indicators for async UI transitions — still open
+- M3: `_renameTask` dialog leaks TextEditingController — still open
+- M5: `BackupService` hardcodes Android download path — still open
+- M6: DAG view doesn't recompute layout on rotation — still open
+- M9: N+1 queries in `_addParent` for grandparent siblings — still open
+- M-10: `showEditUrlDialog` leaks TextEditingController — still open
+- M-12: Repeating task code is dead code — still open
+- M-14: Firestore `integerValue` null guard on `lastSyncAt` — still open
+- M-15: Refresh token stored in plaintext SharedPreferences — still open (future)
+- M-16: No error handling in `_loadTodaysTasks()` initial load — still open
+- M-18: `_preWorkedOnTimestamps` map grows unboundedly — still open
+- M-19: Double refresh on tab navigation — still open
+- M-20: Missing `WidgetsFlutterBinding.ensureInitialized()` in `main()` — still open
+- M-21: `_initAuth` has no error handling — still open
+- M-22: Theme data duplicated between light and dark — still open
+- M-23: `ThemeProvider` race between `_loadPreference()` and `toggle()` — still open
+- M-24: `_autoStartedIds` never cleaned up on day rollover — still open
+- M-26: `BackupService.importDatabase` doesn't trigger Today's 5 refresh — still open
+- M-27: `_EdgePainter.shouldRepaint` uses identity comparison on lists — still open
+- N1–N4: All still open
+
+---
+
+### Important
+
+#### I-38. `_transferPinToChild` bypasses TaskProvider for Today's 5 DB mutations
+**File:** `lib/screens/task_list_screen.dart:175-210`
+
+The new `_transferPinToChild` method directly accesses `DatabaseHelper()` to
+load/save Today's 5 state instead of going through a provider method. This
+creates the same class of issue documented in C2 (Round 1): the Today's 5
+screen's in-memory state can diverge from the DB.
+
+While the new `refreshSnapshots()` code at `todays_five_screen.dart:237-258`
+detects this divergence and reloads from DB on tab switch, there's a window
+where both screens hold independent state. If `_persist()` runs on the
+Today's 5 screen before the user switches tabs (e.g., via a timer or
+completion action), it could overwrite the pin transfer.
+
+**Fix:** Add a `transferPin(oldTaskId, newTaskId)` method to a shared
+provider or manager so both screens see the same state, or at minimum
+have `_transferPinToChild` notify the Today's 5 screen to reload
+immediately via a callback.
+
+---
+
+#### I-39. `launchUrl` not awaited and no error handling on task list screen [FIXED in Round 9 fix]
+**File:** `lib/screens/task_list_screen.dart:1085`
+
+The URL launch button fires `launchUrl()` without awaiting the result and
+without error handling:
+
+```dart
+launchUrl(uri, mode: LaunchMode.externalApplication);
+```
+
+Compare with `leaf_task_detail.dart:65-70` which properly awaits and shows
+a snackbar on failure:
+
+```dart
+final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+if (!launched && context.mounted) {
+  ScaffoldMessenger.of(context).showSnackBar(...);
+}
+```
+
+**Fix:** Match the `leaf_task_detail.dart` pattern — await the result and
+show feedback if the URL fails to open. The `onPressed` callback needs to
+be `async`.
+
+---
+
+#### I-40. `_showRandomResult` goDeeper branch missing mounted check (I-37 incomplete) [FIXED in Round 9 fix]
+**File:** `lib/screens/task_list_screen.dart:801-811`
+
+The `goDeeper` branch calls `_showRandomResult` recursively at line 806
+without a `mounted` check, while the `pickAnother` branch (line 827)
+includes one. Although the recursive method re-checks `mounted` at line
+786, the inconsistency means `context.read<TaskProvider>()` at line 769
+could access a disposed widget's context in an edge case where disposal
+happens between the switch statement and the method's first line.
+
+**Fix:** Add `if (!mounted) return;` before line 806:
+```dart
+if (picked.isNotEmpty) {
+  if (!mounted) return;
+  await _showRandomResult(
+    picked.first,
+    siblingPool: eligible,
+    navigateTarget: task,
+  );
+}
+```
+
+---
+
+#### I-41. Refresh token not URL-encoded in form body [FIXED in Round 9 fix]
+**File:** `lib/services/auth_service.dart:327`
+
+The refresh token is interpolated directly into a
+`application/x-www-form-urlencoded` POST body without encoding:
+
+```dart
+body: 'grant_type=refresh_token&refresh_token=$refreshToken',
+```
+
+While Google refresh tokens typically contain only URL-safe characters,
+the `x-www-form-urlencoded` spec requires values to be percent-encoded.
+A token containing `+`, `&`, or `=` would break the request.
+
+**Fix:** Use `Uri.encodeQueryComponent`:
+```dart
+body: 'grant_type=refresh_token&refresh_token=${Uri.encodeQueryComponent(refreshToken)}',
+```
+
+---
+
+### Minor
+
+#### M-30. Today's date key logic duplicated in 3 places [FIXED in Round 9 fix]
+**Files:**
+- `lib/screens/todays_five_screen.dart:106-108` (`_todayKey()`)
+- `lib/services/sync_service.dart:32-35` (`_todayDateKey()`)
+- `lib/screens/task_list_screen.dart:183` (inline in `_transferPinToChild`)
+
+All three produce the same `YYYY-MM-DD` string with identical logic. If the
+format needs to change (e.g., for timezone handling), all three must be
+updated in lockstep.
+
+**Fix:** Extract to a shared utility, e.g., in `display_utils.dart`:
+```dart
+String todayDateKey() {
+  final now = DateTime.now();
+  return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+}
+```
+
+---
+
+#### M-31. `onMutation` calling pattern inconsistent across TaskProvider methods [FIXED in Round 9 fix]
+**File:** `lib/providers/task_provider.dart`
+
+Some mutation methods explicitly call `onMutation?.call()` before navigating
+(e.g., `completeTask` line 203, `skipTask` line 216, `markWorkedOnAndNavigateBack`
+line 563), while others rely on the implicit call inside
+`_refreshCurrentList(isMutation: true)` (e.g., `startTask`, `unstartTask`,
+`completeTaskOnly`, `unskipTask`, `uncompleteTask`).
+
+Both paths work correctly since `_refreshCurrentList` defaults to
+`isMutation: true` (line 716). However, the inconsistency means:
+- The sync trigger timing differs (before vs after UI refresh)
+- If someone adds `isMutation: false` to a call site, sync silently breaks
+
+**Fix:** Choose one pattern and use it consistently. Recommend explicit
+`onMutation?.call()` in each mutation method rather than relying on
+`_refreshCurrentList`'s default.
+
+**Actual fix:** Extracted `_refreshAfterMutation()` which calls `_refreshCurrentList()` then `onMutation?.call()`. Removed `isMutation` parameter from `_refreshCurrentList`. All mutation methods now use `_refreshAfterMutation()`, navigation methods use `_refreshCurrentList()`, and methods that navigate back after mutation keep their explicit `onMutation?.call()` before `navigateBack()`.
+
+---
+
+#### M-32. N+1 queries in `deleteTaskAndReparentChildren` nested loop
+**File:** `lib/data/database_helper.dart:1344-1357`
+
+The reparenting loop queries `task_relationships` individually for each
+(parentId, childId) pair to check if the relationship already exists:
+
+```dart
+for (final parentId in parentIds) {
+  for (final childId in childIds) {
+    final existing = await txn.query('task_relationships',
+        where: 'parent_id = ? AND child_id = ?',
+        whereArgs: [parentId, childId]);
+```
+
+For a task with M parents and N children, this runs M×N queries. Could
+batch-check all desired pairs in a single query using an `IN` clause or
+`INSERT OR IGNORE` with a unique index.
+
+In practice M and N are small (typically 1-2 parents), so this is low
+priority.
+
+---
+
+#### M-33. `_brainDump` pin transfer picks random child from stale pool [FIXED in Round 9 fix]
+**File:** `lib/screens/task_list_screen.dart:267-275`
+
+After `addTasksBatch`, the code picks a child to inherit the pin via
+`provider.pickWeightedN(children, 1)`. The `children` are read from
+`provider.tasks`, which was refreshed by `addTasksBatch`. However,
+the picked child might not be one of the newly added tasks — it could
+be a pre-existing child of the parent. This means a brain dump on a
+pinned parent with existing children might transfer the pin to an
+unrelated existing child instead of one of the new tasks.
+
+**Fix:** Filter `provider.tasks` to only include the newly added tasks
+(e.g., by capturing task IDs from `addTasksBatch` return value), or
+use `provider.tasks.where((t) => names.contains(t.name))`.
+
+---
+
+### Refactoring
+
+#### R-9. `_transferPinToChild` should share infrastructure with Today's 5 screen
+**File:** `lib/screens/task_list_screen.dart:175-210`
+
+The method duplicates the load-modify-save pattern for Today's 5 state
+that already exists in `todays_five_screen.dart`. Both screens now
+independently manage pin state in the DB, with `refreshSnapshots()`
+acting as a reconciliation layer. As pin logic grows (e.g., auto-pin
+rules, pin limits), this split ownership will become harder to maintain.
+
+**Suggested refactor:** Extract Today's 5 state management into a
+dedicated provider or manager class that both screens share. This would
+make pin transfers atomic and eliminate the need for the divergence
+detection in `refreshSnapshots()`.
+
+---
+
+## Round 9 — Suggested Implementation Order
+
+1. **I-40** — Add mounted check in goDeeper branch (1 min, `task_list_screen.dart` line 806)
+2. **I-39** — Await launchUrl and add error handling (2 min, `task_list_screen.dart` line 1085)
+3. **I-41** — URL-encode refresh token in form body (1 min, `auth_service.dart` line 327)
+4. **M-30** — Extract shared `todayDateKey()` utility (5 min, 3 files)
+5. **I-38** / **R-9** — Consolidate Today's 5 state management (larger refactor, future)
+6. **M-31** — Standardize `onMutation` pattern (10 min, `task_provider.dart`)
+7. **Remaining open items** from previous rounds — as time permits
