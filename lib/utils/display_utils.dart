@@ -4,6 +4,13 @@ import 'package:flutter/services.dart';
 /// Icon used for the archive/completed-tasks screen.
 const IconData archiveIcon = Icons.inventory_2_outlined;
 
+/// Returns today's date as a 'YYYY-MM-DD' string, used as a key for
+/// Today's 5 state in the DB and Firestore.
+String todayDateKey() {
+  final now = DateTime.now();
+  return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+}
+
 String displayUrl(String url, {int maxLength = 40}) {
   var display = url.replaceFirst(RegExp(r'^https?://'), '');
   if (display.endsWith('/')) display = display.substring(0, display.length - 1);

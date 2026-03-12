@@ -2581,7 +2581,7 @@ immediately via a callback.
 
 ---
 
-#### I-39. `launchUrl` not awaited and no error handling on task list screen
+#### I-39. `launchUrl` not awaited and no error handling on task list screen [FIXED in Round 9 fix]
 **File:** `lib/screens/task_list_screen.dart:1085`
 
 The URL launch button fires `launchUrl()` without awaiting the result and
@@ -2607,7 +2607,7 @@ be `async`.
 
 ---
 
-#### I-40. `_showRandomResult` goDeeper branch missing mounted check (I-37 incomplete)
+#### I-40. `_showRandomResult` goDeeper branch missing mounted check (I-37 incomplete) [FIXED in Round 9 fix]
 **File:** `lib/screens/task_list_screen.dart:801-811`
 
 The `goDeeper` branch calls `_showRandomResult` recursively at line 806
@@ -2631,7 +2631,7 @@ if (picked.isNotEmpty) {
 
 ---
 
-#### I-41. Refresh token not URL-encoded in form body
+#### I-41. Refresh token not URL-encoded in form body [FIXED in Round 9 fix]
 **File:** `lib/services/auth_service.dart:327`
 
 The refresh token is interpolated directly into a
@@ -2654,7 +2654,7 @@ body: 'grant_type=refresh_token&refresh_token=${Uri.encodeQueryComponent(refresh
 
 ### Minor
 
-#### M-30. Today's date key logic duplicated in 3 places
+#### M-30. Today's date key logic duplicated in 3 places [FIXED in Round 9 fix]
 **Files:**
 - `lib/screens/todays_five_screen.dart:106-108` (`_todayKey()`)
 - `lib/services/sync_service.dart:32-35` (`_todayDateKey()`)
@@ -2674,7 +2674,7 @@ String todayDateKey() {
 
 ---
 
-#### M-31. `onMutation` calling pattern inconsistent across TaskProvider methods
+#### M-31. `onMutation` calling pattern inconsistent across TaskProvider methods [FIXED in Round 9 fix]
 **File:** `lib/providers/task_provider.dart`
 
 Some mutation methods explicitly call `onMutation?.call()` before navigating
@@ -2691,6 +2691,8 @@ Both paths work correctly since `_refreshCurrentList` defaults to
 **Fix:** Choose one pattern and use it consistently. Recommend explicit
 `onMutation?.call()` in each mutation method rather than relying on
 `_refreshCurrentList`'s default.
+
+**Actual fix:** Extracted `_refreshAfterMutation()` which calls `_refreshCurrentList()` then `onMutation?.call()`. Removed `isMutation` parameter from `_refreshCurrentList`. All mutation methods now use `_refreshAfterMutation()`, navigation methods use `_refreshCurrentList()`, and methods that navigate back after mutation keep their explicit `onMutation?.call()` before `navigateBack()`.
 
 ---
 
@@ -2717,7 +2719,7 @@ priority.
 
 ---
 
-#### M-33. `_brainDump` pin transfer picks random child from stale pool
+#### M-33. `_brainDump` pin transfer picks random child from stale pool [FIXED in Round 9 fix]
 **File:** `lib/screens/task_list_screen.dart:267-275`
 
 After `addTasksBatch`, the code picks a child to inherit the pin via

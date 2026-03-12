@@ -4,6 +4,7 @@ import '../data/database_helper.dart';
 import '../models/task.dart';
 import '../models/task_relationship.dart';
 import '../models/task_schedule.dart';
+import '../utils/display_utils.dart';
 
 class TaskProvider extends ChangeNotifier {
   final DatabaseHelper _db = DatabaseHelper();
@@ -39,24 +40,24 @@ class TaskProvider extends ChangeNotifier {
   Future<void> loadRootTasks() async {
     _currentParent = null;
     _parentStack.clear();
-    await _refreshCurrentList(isMutation: false);
+    await _refreshCurrentList();
   }
 
   /// Reload the current view (root or children) without resetting navigation.
   Future<void> refreshCurrentView() async {
-    await _refreshCurrentList(isMutation: false);
+    await _refreshCurrentList();
   }
 
   Future<void> navigateInto(Task task) async {
     _parentStack.add(_currentParent);
     _currentParent = task;
-    await _refreshCurrentList(isMutation: false);
+    await _refreshCurrentList();
   }
 
   Future<bool> navigateBack() async {
     if (_parentStack.isEmpty) return false;
     _currentParent = _parentStack.removeLast();
-    await _refreshCurrentList(isMutation: false);
+    await _refreshCurrentList();
     return true;
   }
 
@@ -76,14 +77,14 @@ class TaskProvider extends ChangeNotifier {
     // Trim the stack to just the entries before the target level
     _parentStack.removeRange(level, _parentStack.length);
     _currentParent = target;
-    await _refreshCurrentList(isMutation: false);
+    await _refreshCurrentList();
   }
 
   /// Inserts multiple tasks in a single transaction, refreshes once at the end.
   Future<void> addTasksBatch(List<String> names) async {
     final tasks = names.map((name) => Task(name: name)).toList();
     await _db.insertTasksBatch(tasks, _currentParent?.id);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   Future<int> addTask(String name, {String? url, List<int>? additionalParentIds}) async {
@@ -102,7 +103,7 @@ class TaskProvider extends ChangeNotifier {
       }
     }
 
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
     return taskId;
   }
 
@@ -113,7 +114,7 @@ class TaskProvider extends ChangeNotifier {
         : _tasks.firstWhere((t) => t.id == taskId,
             orElse: () => throw StateError('Task $taskId not found in current list'));
     final rels = await _db.deleteTaskWithRelationships(taskId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
     return (
       task: task,
       parentIds: rels.parentIds,
@@ -138,7 +139,7 @@ class TaskProvider extends ChangeNotifier {
         dependedByIds: dependedByIds,
         removeReparentLinks: removeReparentLinks,
         schedules: schedules);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   /// Returns true if a task has at least one child.
@@ -158,7 +159,7 @@ class TaskProvider extends ChangeNotifier {
     List<TaskSchedule> schedules,
   })> deleteTaskAndReparent(int taskId) async {
     final result = await _db.deleteTaskAndReparentChildren(taskId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
     return result;
   }
 
@@ -170,7 +171,7 @@ class TaskProvider extends ChangeNotifier {
     List<TaskSchedule> deletedSchedules,
   })> deleteTaskSubtree(int taskId) async {
     final result = await _db.deleteTaskSubtree(taskId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
     return result;
   }
 
@@ -187,7 +188,7 @@ class TaskProvider extends ChangeNotifier {
       dependencies: dependencies,
       schedules: schedules,
     );
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   /// Marks a task as completed (archived) and navigates back.
@@ -221,27 +222,27 @@ class TaskProvider extends ChangeNotifier {
   /// Un-skips a task and refreshes the list.
   Future<void> unskipTask(int taskId) async {
     await _db.unskipTask(taskId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   /// Re-skips a task (for undo-restore). Unlike skipTask(), this does
   /// not call navigateBack() since it's invoked from the archive screen.
   Future<void> reSkipTask(int taskId) async {
     await _db.skipTask(taskId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   /// Completes a task without navigating back. Used by Today's 5 screen
   /// which manages its own UI state separately.
   Future<void> completeTaskOnly(int taskId) async {
     await _db.completeTask(taskId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   /// Un-completes a task and refreshes the list.
   Future<void> uncompleteTask(int taskId) async {
     await _db.uncompleteTask(taskId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   Future<List<Task>> getParents(int childId) async {
@@ -258,7 +259,7 @@ class TaskProvider extends ChangeNotifier {
     for (final parent in archivedParents) {
       await _db.removeRelationship(parent.id!, childId);
     }
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   /// Re-adds a previously existing parent-child relationship (for undo).
@@ -382,13 +383,13 @@ class TaskProvider extends ChangeNotifier {
   /// not call navigateBack() since it's invoked from the archive screen.
   Future<void> reCompleteTask(int taskId) async {
     await _db.completeTask(taskId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   /// Permanently deletes a completed task. Returns info needed for undo.
   Future<({Task task, List<int> parentIds, List<int> childIds, List<int> dependsOnIds, List<int> dependedByIds, List<TaskSchedule> schedules})> permanentlyDeleteTask(int taskId, Task task) async {
     final rels = await _db.deleteTaskWithRelationships(taskId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
     return (
       task: task,
       parentIds: rels.parentIds,
@@ -409,7 +410,7 @@ class TaskProvider extends ChangeNotifier {
         startedAt: () => DateTime.now().millisecondsSinceEpoch,
       );
     }
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   /// Un-starts a task (removes in-progress state).
@@ -418,7 +419,7 @@ class TaskProvider extends ChangeNotifier {
     if (_currentParent?.id == taskId) {
       _currentParent = _currentParent!.copyWith(startedAt: () => null);
     }
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   // --- Task dependency methods ---
@@ -434,13 +435,13 @@ class TaskProvider extends ChangeNotifier {
     // Single dependency: remove any existing before adding new
     await _db.removeAllDependencies(taskId);
     await _db.addDependency(taskId, dependsOnId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
     return true;
   }
 
   Future<void> removeDependency(int taskId, int dependsOnId) async {
     await _db.removeDependency(taskId, dependsOnId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   Future<List<Task>> getDependencies(int taskId) async {
@@ -466,7 +467,7 @@ class TaskProvider extends ChangeNotifier {
     if (wouldCycle) return false;
 
     await _db.addRelationship(parentId, childId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
     return true;
   }
 
@@ -478,7 +479,7 @@ class TaskProvider extends ChangeNotifier {
     if (wouldCycle) return false;
 
     await _db.addRelationship(parentId, taskId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
     return true;
   }
 
@@ -494,7 +495,7 @@ class TaskProvider extends ChangeNotifier {
 
     await _db.addRelationship(newParentId, taskId);
     await _db.removeRelationship(_currentParent!.id!, taskId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
     return true;
   }
 
@@ -503,7 +504,7 @@ class TaskProvider extends ChangeNotifier {
     if (_currentParent?.id == taskId) {
       _currentParent = _currentParent!.copyWith(name: name);
     }
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   Future<void> updateTaskUrl(int taskId, String? url) async {
@@ -511,7 +512,7 @@ class TaskProvider extends ChangeNotifier {
     if (_currentParent?.id == taskId) {
       _currentParent = _currentParent!.copyWith(url: () => url);
     }
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   Future<void> updateTaskPriority(int taskId, int priority) async {
@@ -526,7 +527,7 @@ class TaskProvider extends ChangeNotifier {
         isSomeday: priority >= 1 ? false : null,
       );
     }
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   /// Toggles someday flag. Mutually exclusive with high priority.
@@ -542,7 +543,7 @@ class TaskProvider extends ChangeNotifier {
         priority: isSomeday ? 0 : null,
       );
     }
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   Future<void> markWorkedOn(int taskId) async {
@@ -552,7 +553,7 @@ class TaskProvider extends ChangeNotifier {
         lastWorkedAt: () => DateTime.now().millisecondsSinceEpoch,
       );
     }
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   /// Marks a task as worked on, optionally starts it, and navigates back.
@@ -569,7 +570,7 @@ class TaskProvider extends ChangeNotifier {
     if (_currentParent?.id == taskId) {
       _currentParent = _currentParent!.copyWith(lastWorkedAt: () => restoreTo);
     }
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   /// Removes a task from the current parent only (does not delete the task).
@@ -577,7 +578,7 @@ class TaskProvider extends ChangeNotifier {
   Future<void> unlinkFromCurrentParent(int childId) async {
     if (_currentParent == null) return;
     await _db.removeRelationship(_currentParent!.id!, childId);
-    await _refreshCurrentList();
+    await _refreshAfterMutation();
   }
 
   Future<List<int>> getParentIds(int childId) async {
@@ -606,7 +607,7 @@ class TaskProvider extends ChangeNotifier {
       _parentStack.add(ancestor);
     }
     _currentParent = task;
-    await _refreshCurrentList(isMutation: false);
+    await _refreshCurrentList();
   }
 
   /// Loads blocked-task info, dependency pairs, and parent names for the
@@ -677,15 +678,21 @@ class TaskProvider extends ChangeNotifier {
     _tasks = reordered;
   }
 
-  Future<void> _refreshCurrentList({bool isMutation = true}) async {
+  /// Refreshes the current list and notifies sync that a mutation occurred.
+  /// Use this for all DB-mutating methods instead of bare [_refreshCurrentList].
+  Future<void> _refreshAfterMutation() async {
+    await _refreshCurrentList();
+    onMutation?.call();
+  }
+
+  Future<void> _refreshCurrentList() async {
     if (_currentParent == null) {
       _tasks = await _db.getRootTasks();
     } else {
       _tasks = await _db.getChildren(_currentParent!.id!);
     }
     // Load today's 5 IDs and pinned IDs for sort priority
-    final now = DateTime.now();
-    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final today = todayDateKey();
     final todaysData = await _db.getTodaysFiveTaskAndPinIds(today);
     final pinnedIds = todaysData.pinnedIds;
     final todaysFiveIds = todaysData.taskIds;
@@ -713,7 +720,7 @@ class TaskProvider extends ChangeNotifier {
     await _loadAuxiliaryData();
     _reorderByDependencyChains();
     notifyListeners();
-    if (isMutation) onMutation?.call();
+    // onMutation is now called explicitly by _refreshAfterMutation()
   }
 
   // --- Schedule methods ---
