@@ -1099,7 +1099,7 @@ Note: Flutter web uses inline scripts and blob URLs — test thoroughly before d
 
 ### Findings
 
-#### LOW-20: AppBar `launchUrl` Missing Try-Catch for Platform Exceptions
+#### LOW-20: AppBar `launchUrl` Missing Try-Catch for Platform Exceptions [FIXED in Round 5 fix]
 
 - **Severity:** Low
 - **File:** `lib/screens/task_list_screen.dart:1084-1090`
@@ -1175,4 +1175,4 @@ try {
 | Priority | Finding | Effort | Status |
 |----------|---------|--------|--------|
 | **LOW** | LOW-15: Version-control Firestore Security Rules | Low | **Still open (Round 3)** |
-| **LOW** | LOW-20: Add try-catch to AppBar `launchUrl` | Trivial | **New** |
+| **LOW** | LOW-20: Add try-catch to AppBar `launchUrl` | Trivial | **Fixed** — extracted shared `launchSafeUrl` helper in `display_utils.dart` |

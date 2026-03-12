@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// Icon used for the archive/completed-tasks screen.
 const IconData archiveIcon = Icons.inventory_2_outlined;
@@ -34,6 +35,31 @@ bool isAllowedUrl(String url) {
   if (uri == null) return false;
   final scheme = uri.scheme.toLowerCase();
   return scheme == 'http' || scheme == 'https';
+}
+
+/// Validates and launches a URL, showing a snackbar on failure.
+/// Centralizes the scheme check, try-catch, and mounted guard so callers
+/// don't duplicate the same error-handling boilerplate.
+Future<void> launchSafeUrl(BuildContext context, String url) async {
+  if (!isAllowedUrl(url)) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Only web links (http/https) are supported'), showCloseIcon: true, persist: false),
+      );
+    }
+    return;
+  }
+  bool opened;
+  try {
+    opened = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  } catch (_) {
+    opened = false;
+  }
+  if (!opened && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not open link'), showCloseIcon: true, persist: false),
+    );
+  }
 }
 
 /// A URL text field with auto-fill "https://":

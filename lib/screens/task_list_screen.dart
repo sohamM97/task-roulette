@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../data/database_helper.dart';
 import '../data/todays_five_pin_helper.dart';
 import '../models/task.dart';
@@ -1073,22 +1072,7 @@ class TaskListScreenState extends State<TaskListScreen>
                 if (!provider.isRoot && provider.currentParent?.hasUrl == true && provider.tasks.isNotEmpty)
                   IconButton(
                     icon: const Icon(Icons.link, size: 22),
-                    onPressed: () async {
-                      final url = provider.currentParent!.url!;
-                      if (!isAllowedUrl(url)) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Only web links (http/https) are supported'), persist: false),
-                        );
-                        return;
-                      }
-                      final uri = Uri.parse(url);
-                      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-                      if (!launched && context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Could not open ${displayUrl(url)}'), showCloseIcon: true, persist: false),
-                        );
-                      }
-                    },
+                    onPressed: () => launchSafeUrl(context, provider.currentParent!.url!),
                     tooltip: 'Open link',
                     visualDensity: VisualDensity.compact,
                   ),
