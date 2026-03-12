@@ -27,6 +27,11 @@ The user may provide a version number (e.g. `0.5.0`). If not provided, recommend
 
 - Update `CHANGELOG.md` for **major and minor** releases (e.g. 1.1.0, 2.0.0) — add a new section at the top summarizing what changed since the last entry.
 - **Skip** the changelog for patch releases (e.g. 1.0.1) — commit messages cover those.
+- Include the release date in the version header: `## vX.Y.Z — Title (YYYY-MM-DD)`.
+- Avoid internal jargon (e.g. "Phase 2") — the changelog is user-facing.
+- Don't duplicate entries across versions — if a feature was listed in a prior release, don't repeat it.
+- Keep test counts precise, not approximate.
+- **Linux desktop is dev-only** — never mention Linux as a supported platform. Only Android and Web are user-facing platforms.
 
 ## Rules
 

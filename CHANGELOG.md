@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.2.0 — Web platform, scheduled priorities & DAG overhaul
+## v1.2.0 — Web platform, scheduled priorities & DAG overhaul (2026-03-12)
 
 ### Web Platform
 - **Web version** with GitHub Pages deployment — use TaskRoulette from a browser.
@@ -43,23 +43,22 @@
 - **Repair migration** for `task_schedules` table for v1.1.6 upgraders.
 
 ### Quality
-- **831 automated tests** — up from ~395, covering schedule DB queries, schedule dialog, task card menu, leaf detail, and many more gaps.
+- **831 automated tests** — up from 395, covering schedule DB queries, schedule dialog, task card menu, leaf detail, and many more gaps.
 - **Code review Rounds 8–9** and **Security review Rounds 4–5** — all actionable findings fixed.
-- **R8 code shrinking** and resource shrinking enabled.
 - **Guardrail hooks** for `adb install`, `flutter run` on Android, `git tag`, and `gh pr merge`.
 - `mounted` checks added consistently after all async operations.
 - All `debugPrint` calls gated behind `kDebugMode`.
 
 ---
 
-## v1.1.0 — Cloud sync, pinned tasks & polish
+## v1.1.0 — Cloud sync, pinned tasks & polish (2026-02-26)
 
 ### Cloud Sync
 - **Google Sign-In + Firestore sync** — optionally sign in to sync tasks across devices via REST APIs (no Firebase SDK). Mutations are queued locally and debounced.
 - **Encrypted token storage** — auth tokens stored securely rather than in plain text.
 - Sync resilience improvements: dropped push fix, undo-delete sync safety, pull-side relationship reconciliation, sync queue data loss prevention.
 
-### Pinned Tasks (Phase 2)
+### Pinned Tasks
 - **Pin tasks in Today's 5** — pin important tasks so they always appear in your daily list. Pin state persists in SQLite.
 - **"Must do" section** — pinned tasks shown separately at the top of Today's 5.
 - **Smart replacement** — unpinning a task shrinks the list back; pinning at max greys out the button.
@@ -92,7 +91,7 @@
 
 ---
 
-## v1.0.0 — First stable release
+## v1.0.0 — First stable release (2026-02-17)
 
 TaskRoulette is a DAG-based task manager designed for minimal cognitive load. Break big goals into smaller tasks, organize them in a flexible hierarchy (tasks can live under multiple parents), and let the app pick what to work on next.
 
