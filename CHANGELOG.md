@@ -11,7 +11,7 @@
 - **Scheduled priorities table** (`task_schedules`) with DB migration and full sync support.
 
 ### DAG View Overhaul
-- **Force-directed layout** — Outer Wilds–inspired physics-based graph visualization with draggable nodes.
+- **Force-directed layout** — physics-based graph visualization with draggable nodes.
 - **Multi-parent positioning** and cluster tuning for better readability.
 - **Improved zoom controls** and performance optimizations.
 
