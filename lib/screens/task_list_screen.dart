@@ -254,11 +254,11 @@ class TaskListScreenState extends State<TaskListScreen>
       builder: (_) => BrainDumpDialog(initialText: initialText),
     );
     if (names != null && names.isNotEmpty && mounted) {
+      final beforeIds = provider.tasks.map((t) => t.id!).toSet();
       await provider.addTasksBatch(names);
       if (parentIsPinned && mounted) {
         // Pick one of the NEW subtasks to inherit the pin (not pre-existing children)
-        final nameSet = names.toSet();
-        final newChildren = provider.tasks.where((t) => nameSet.contains(t.name)).toList();
+        final newChildren = provider.tasks.where((t) => !beforeIds.contains(t.id)).toList();
         if (newChildren.isNotEmpty) {
           final picked = provider.pickWeightedN(newChildren, 1);
           if (picked.isNotEmpty) {
@@ -1085,7 +1085,7 @@ class TaskListScreenState extends State<TaskListScreen>
                       final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
                       if (!launched && context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Could not open ${displayUrl(url)}'), persist: false),
+                          SnackBar(content: Text('Could not open ${displayUrl(url)}'), showCloseIcon: true, persist: false),
                         );
                       }
                     },
