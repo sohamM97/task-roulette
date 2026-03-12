@@ -309,6 +309,316 @@ void main() {
       final saved = await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
       expect(saved!.pinnedIds, contains(id1));
     });
+
+    testWidgets('Bug a: pin from task list survives refreshSnapshots', (tester) async {
+      // Scenario: pin a task from task list screen (writes to DB),
+      // then swipe to Today's 5 (refreshSnapshots). Pin should persist.
+      late int id1, id2, id3;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Task A'));
+        id2 = await db.insertTask(Task(name: 'Task B'));
+        id3 = await db.insertTask(Task(name: 'Task C'));
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2, id3],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // No pins initially
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+
+      // Simulate task list screen pinning task B directly in DB
+      // (this is what _togglePinInTodays5 does)
+      await tester.runAsync(() async {
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2, id3],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {id2},
+        );
+      });
+
+      // Trigger refreshSnapshots (simulates swiping back to Today's 5)
+      final state = tester.state<TodaysFiveScreenState>(
+        find.byType(TodaysFiveScreen),
+      );
+      await tester.runAsync(() => state.refreshSnapshots());
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // Pin icon should be visible
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+
+      // Verify DB still has the pin (not overwritten by stale state)
+      final saved = await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.pinnedIds, contains(id2));
+    });
+
+    testWidgets('Bug b: unpin from task list reflected after refreshSnapshots', (tester) async {
+      // Scenario: task is pinned, user unpins from task list (writes to DB),
+      // then swipes to Today's 5. Pin should be gone.
+      late int id1, id2;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Pinned task'));
+        id2 = await db.insertTask(Task(name: 'Other task'));
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {id1},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Pin icon should be visible initially
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+
+      // Simulate task list screen unpinning task directly in DB
+      await tester.runAsync(() async {
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {},
+        );
+      });
+
+      // Trigger refreshSnapshots
+      final state = tester.state<TodaysFiveScreenState>(
+        find.byType(TodaysFiveScreen),
+      );
+      await tester.runAsync(() => state.refreshSnapshots());
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // Pin icon should be gone
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+
+      // Verify DB has no pins (not re-added by stale state)
+      final saved = await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.pinnedIds, isEmpty);
+    });
+
+    testWidgets('Bug c: new pinned task from add dialog survives refreshSnapshots', (tester) async {
+      // Scenario: user adds a new task and pins it from the add dialog
+      // (task list screen writes new task to DB's today's 5 list),
+      // then swipes to Today's 5. New task should appear pinned.
+      late int id1, id2, id3, id4, id5, idNew;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Existing 1'));
+        id2 = await db.insertTask(Task(name: 'Existing 2'));
+        id3 = await db.insertTask(Task(name: 'Existing 3'));
+        id4 = await db.insertTask(Task(name: 'Existing 4'));
+        id5 = await db.insertTask(Task(name: 'Existing 5'));
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2, id3, id4, id5],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // No pins initially
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+
+      // Simulate task list screen adding a new task and pinning it
+      // (replaces last unpinned undone slot in DB)
+      await tester.runAsync(() async {
+        idNew = await db.insertTask(Task(name: 'Newly Added'));
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2, id3, id4, idNew],  // id5 replaced by idNew
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {idNew},
+        );
+      });
+
+      // Trigger refreshSnapshots
+      final state = tester.state<TodaysFiveScreenState>(
+        find.byType(TodaysFiveScreen),
+      );
+      await tester.runAsync(() => state.refreshSnapshots());
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // New task should appear pinned
+      expect(find.text('Newly Added'), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+
+      // Verify DB state is correct (not overwritten)
+      final saved = await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.taskIds, contains(idNew));
+      expect(saved.pinnedIds, contains(idNew));
+    });
+
+    testWidgets('refreshSnapshots preserves completed state across external pin change', (tester) async {
+      // Verifies that completed state (persisted to DB) is preserved when
+      // refreshSnapshots detects external pin changes and does a full reload.
+      late int id1, id2;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Done task'));
+        id2 = await db.insertTask(Task(name: 'Other task'));
+        // Pre-save with id1 marked as worked-on
+        await db.markWorkedOn(id1);
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2],
+          completedIds: {id1},
+          workedOnIds: {id1},
+          pinnedIds: {},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Task 1 should show as done
+      expect(find.byIcon(Icons.check_circle), findsOneWidget);
+
+      // Simulate external pin modification in DB
+      await tester.runAsync(() async {
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2],
+          completedIds: {id1},
+          workedOnIds: {id1},
+          pinnedIds: {id2},  // External pin change
+        );
+      });
+
+      // Trigger refreshSnapshots
+      final state = tester.state<TodaysFiveScreenState>(
+        find.byType(TodaysFiveScreen),
+      );
+      await tester.runAsync(() => state.refreshSnapshots());
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // Task 1 should still show as done (completed state preserved from DB)
+      expect(find.byIcon(Icons.check_circle), findsOneWidget);
+      // Task 2 should show as pinned
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+    });
+
+    testWidgets('refreshSnapshots picks up eagerly transferred pin from parent to child', (tester) async {
+      // Scenario: parent task was pinned in Today's 5, user added a subtask
+      // making parent non-leaf. Task list screen eagerly transferred the pin
+      // to the child in DB. Today's 5 screen should pick this up.
+      late int idParent, idChild, idOther1, idOther2, idOther3;
+      await tester.runAsync(() async {
+        idParent = await db.insertTask(Task(name: 'Parent task'));
+        idOther1 = await db.insertTask(Task(name: 'Other 1'));
+        idOther2 = await db.insertTask(Task(name: 'Other 2'));
+        idOther3 = await db.insertTask(Task(name: 'Other 3'));
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [idParent, idOther1, idOther2, idOther3],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {idParent},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Parent should be pinned
+      expect(find.text('Parent task'), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+
+      // Simulate: task list screen added subtask and transferred pin in DB
+      await tester.runAsync(() async {
+        idChild = await db.insertTask(Task(name: 'Child task'));
+        await db.addRelationship(idParent, idChild);
+        // Eager transfer: replace parent with child in Today's 5, move pin
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [idChild, idOther1, idOther2, idOther3],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {idChild},
+        );
+      });
+
+      // Trigger refreshSnapshots
+      final state = tester.state<TodaysFiveScreenState>(
+        find.byType(TodaysFiveScreen),
+      );
+      await tester.runAsync(() => state.refreshSnapshots());
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // Child should appear pinned, parent should be gone
+      expect(find.text('Child task'), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+
+      // Verify DB state preserved correctly
+      final saved = await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.pinnedIds, contains(idChild));
+      expect(saved.pinnedIds, isNot(contains(idParent)));
+    });
+
+    testWidgets('no-change refreshSnapshots does not reload from DB', (tester) async {
+      // When DB state matches in-memory state, refreshSnapshots should
+      // NOT trigger a full reload — just refresh task snapshots.
+      late int id1, id2;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Stable 1'));
+        id2 = await db.insertTask(Task(name: 'Stable 2'));
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {id1},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Verify initial state
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+
+      // Trigger refreshSnapshots with NO external changes
+      final state = tester.state<TodaysFiveScreenState>(
+        find.byType(TodaysFiveScreen),
+      );
+      await tester.runAsync(() => state.refreshSnapshots());
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // State should be unchanged — pin still there
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      expect(find.text('Stable 1'), findsOneWidget);
+      expect(find.text('Stable 2'), findsOneWidget);
+
+      // DB should be unchanged
+      final saved = await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.pinnedIds, {id1});
+    });
   });
 
   group('SharedPreferences → DB migration', () {

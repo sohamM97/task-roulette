@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode, setEquals;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/database_helper.dart';
@@ -222,7 +222,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
   /// Re-fetches task snapshots from DB without regenerating the set.
   /// Called when switching back to the Today tab to pick up changes
-  /// made in All Tasks (e.g. unstarting a task).
+  /// made in All Tasks (e.g. unstarting a task, toggling pins).
   /// If the current set is empty, generates a new set instead (handles
   /// the case where the app started with no tasks and user added some).
   Future<void> refreshSnapshots() async {
@@ -235,6 +235,28 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       await _generateNewSet();
       return;
     }
+
+    // Detect external modifications: the task list screen can toggle pins
+    // or add pinned tasks directly to the DB. If the DB state differs from
+    // our in-memory state, do a full reload so we don't overwrite DB changes
+    // when _persist() runs at the end.
+    final saved = await DatabaseHelper().loadTodaysFiveState(_todayKey());
+    if (saved != null) {
+      final inMemoryTaskIds = _todaysTasks.map((t) => t.id!).toSet();
+      final savedTaskIds = saved.taskIds.toSet();
+      if (!setEquals(saved.pinnedIds, _pinnedIds) ||
+          !setEquals(savedTaskIds, inMemoryTaskIds)) {
+        // Preserve session-only undo state (not persisted to DB)
+        final prevAutoStarted = Set<int>.from(_autoStartedIds);
+        final prevPreWorkedOn = Map<int, int?>.from(_preWorkedOnLastWorkedAt);
+        await _reloadFromDb();
+        _autoStartedIds.addAll(prevAutoStarted);
+        _preWorkedOnLastWorkedAt.addAll(prevPreWorkedOn);
+        return;
+      }
+    }
+
+    if (!mounted) return;
     final provider = context.read<TaskProvider>();
     final allLeaves = await provider.getAllLeafTasks();
     final leafIdSet = allLeaves.map((t) => t.id!).toSet();

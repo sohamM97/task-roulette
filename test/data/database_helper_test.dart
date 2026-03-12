@@ -2590,6 +2590,48 @@ void main() {
       final loaded = await db.loadTodaysFiveState('1999-01-01');
       expect(loaded, isNull);
     });
+
+    test('pin transfer: replacing parent with child preserves pin', () async {
+      // Simulates _transferPinToChild: parent becomes non-leaf, pin moves
+      // to the new child task in Today's 5 state.
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final other = await db.insertTask(Task(name: 'Other'));
+      final child = await db.insertTask(Task(name: 'Child'));
+
+      // Initial state: parent is pinned in Today's 5
+      await db.saveTodaysFiveState(
+        date: '2026-03-12',
+        taskIds: [parent, other],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {parent},
+      );
+
+      // Transfer: replace parent with child, move pin
+      final saved = await db.loadTodaysFiveState('2026-03-12');
+      final taskIds = List<int>.from(saved!.taskIds);
+      final pinnedIds = Set<int>.from(saved.pinnedIds);
+      final idx = taskIds.indexOf(parent);
+      taskIds[idx] = child;
+      pinnedIds.remove(parent);
+      pinnedIds.add(child);
+      await db.saveTodaysFiveState(
+        date: '2026-03-12',
+        taskIds: taskIds,
+        completedIds: saved.completedIds,
+        workedOnIds: saved.workedOnIds,
+        pinnedIds: pinnedIds,
+      );
+
+      // Verify child is now pinned, parent is gone
+      final loaded = await db.loadTodaysFiveState('2026-03-12');
+      expect(loaded!.taskIds, contains(child));
+      expect(loaded.taskIds, isNot(contains(parent)));
+      expect(loaded.pinnedIds, contains(child));
+      expect(loaded.pinnedIds, isNot(contains(parent)));
+      // Other task unchanged
+      expect(loaded.taskIds, contains(other));
+    });
   });
 
   group('getTodaysFiveTaskAndPinIds', () {

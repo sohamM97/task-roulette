@@ -107,7 +107,7 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   /// Returns true if the user confirmed (or task isn't pinned), false to abort.
-  Future<bool> _warnIfPinned() async {
+  Future<bool> _warnIfPinned({bool isBrainDump = false}) async {
     final provider = context.read<TaskProvider>();
     final currentParent = provider.currentParent;
     if (currentParent == null) return true;
@@ -116,14 +116,16 @@ class TaskListScreenState extends State<TaskListScreen>
     if (pinnedIds == null || !pinnedIds.contains(currentParent.id)) return true;
 
     if (!mounted) return false;
+    final message = isBrainDump
+        ? '"${currentParent.name}" is in your Today\'s 5 and pinned. '
+          'Adding subtasks will replace it with one of the new subtasks.'
+        : '"${currentParent.name}" is in your Today\'s 5 and pinned. '
+          'Adding a subtask will replace it with the new subtask.';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('This task is pinned'),
-        content: Text(
-          '"${currentParent.name}" is in your Today\'s 5 and pinned. '
-          'Adding subtasks will replace it with one of its new subtasks.',
-        ),
+        content: Text(message),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -142,7 +144,13 @@ class TaskListScreenState extends State<TaskListScreen>
   Future<void> _addTask() async {
     if (!await _warnIfPinned()) return;
     if (!mounted) return;
-    final showPin = _todaysFiveIds.isNotEmpty &&
+    final provider = context.read<TaskProvider>();
+    final parentId = provider.currentParent?.id;
+    final parentIsPinned = parentId != null &&
+        (_todays5PinnedIds?.contains(parentId) ?? false);
+    // Hide "Pin for today" when parent is pinned — the pin will auto-transfer
+    // to the new subtask, so the option is misleading.
+    final showPin = !parentIsPinned && _todaysFiveIds.isNotEmpty &&
         (_todays5PinnedIds?.length ?? 0) < maxPins;
     final result = await showDialog<AddTaskResult>(
       context: context,
@@ -150,12 +158,54 @@ class TaskListScreenState extends State<TaskListScreen>
     );
     if (!mounted || result == null) return;
     if (result is SingleTask) {
-      final taskId = await context.read<TaskProvider>().addTask(result.name, url: result.url);
+      final taskId = await provider.addTask(result.name, url: result.url);
       if (result.pinInTodays5 && mounted) {
         await _pinNewTaskInTodays5(taskId);
+      } else if (parentIsPinned && mounted) {
+        // Parent was pinned in Today's 5 and just became non-leaf —
+        // eagerly transfer the pin to the new subtask so the pin icon
+        // appears immediately without waiting for a tab switch.
+        await _transferPinToChild(parentId, taskId);
       }
     } else if (result is SwitchToBrainDump) {
       await _brainDump(initialText: result.initialText);
+    }
+  }
+
+  /// Transfers a pin from a parent that just became non-leaf to its new child
+  /// in Today's 5 state. Called eagerly after adding a subtask to a pinned
+  /// parent so the pin icon appears immediately on the child's card.
+  Future<void> _transferPinToChild(int parentId, int childId) async {
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final db = DatabaseHelper();
+    final saved = await db.loadTodaysFiveState(today);
+    if (saved == null) return;
+
+    final taskIds = List<int>.from(saved.taskIds);
+    final pinnedIds = Set<int>.from(saved.pinnedIds);
+
+    final parentIdx = taskIds.indexOf(parentId);
+    if (parentIdx < 0) return;
+
+    // Replace parent with child in the list, transfer pin
+    taskIds[parentIdx] = childId;
+    if (pinnedIds.remove(parentId)) {
+      pinnedIds.add(childId);
+    }
+
+    await db.saveTodaysFiveState(
+      date: today,
+      taskIds: taskIds,
+      completedIds: saved.completedIds,
+      workedOnIds: saved.workedOnIds,
+      pinnedIds: pinnedIds,
+    );
+    if (mounted) {
+      setState(() {
+        _todaysFiveIds = taskIds.toSet();
+        _todays5PinnedIds = pinnedIds;
+      });
     }
   }
 
@@ -195,15 +245,28 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   Future<void> _brainDump({String initialText = ''}) async {
-    if (!await _warnIfPinned()) return;
+    if (!await _warnIfPinned(isBrainDump: true)) return;
     if (!mounted) return;
+    final provider = context.read<TaskProvider>();
+    final parentId = provider.currentParent?.id;
+    final parentIsPinned = parentId != null &&
+        (_todays5PinnedIds?.contains(parentId) ?? false);
     final names = await showDialog<List<String>>(
       context: context,
       builder: (_) => BrainDumpDialog(initialText: initialText),
     );
     if (names != null && names.isNotEmpty && mounted) {
-      final provider = context.read<TaskProvider>();
       await provider.addTasksBatch(names);
+      if (parentIsPinned && mounted) {
+        // Pick one of the new subtasks to inherit the pin
+        final children = provider.tasks;
+        if (children.isNotEmpty) {
+          final picked = provider.pickWeightedN(children, 1);
+          if (picked.isNotEmpty) {
+            await _transferPinToChild(parentId, picked.first.id!);
+          }
+        }
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(

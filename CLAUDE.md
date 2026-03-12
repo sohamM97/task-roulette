@@ -63,6 +63,7 @@ Hooks in `.claude/hooks/` enforce guardrails automatically:
 - After completing a new feature, ask the user if they want to add test cases for it.
 - When a bug is found and confirmed reproducible, always add a test case for it.
 - When writing tests in bulk, use `flutter test --coverage` + `genhtml` to find gaps.
+- **Manual test checklists**: Always verify UI elements (button labels, icon placements, interaction patterns) by reading the actual widget code before writing test instructions. Never guess.
 - Capture any user-mentioned future work items as todo tasks immediately.
 - When setup instructions change (new deps, build steps), ask user if they want to update README.
 - **Widget tests with sqflite_ffi**: `testWidgets` runs in `FakeAsync` — use `databaseFactoryFfiNoIsolate` in `setUpAll`. Wrap DB inserts in `tester.runAsync()`. For widget loading, use `runAsync(Future.delayed(10ms)) + pump()` cycles. Provide `AuthProvider` and `SyncService` in MultiProvider for screens that need them.
