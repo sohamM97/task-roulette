@@ -1,5 +1,57 @@
 # Changelog
 
+## v1.2.0 — Web platform, scheduled priorities & DAG overhaul
+
+### Web Platform
+- **Web version** with GitHub Pages deployment — use TaskRoulette from a browser.
+- Platform-specific utilities for file operations and platform detection.
+
+### Scheduled Priorities
+- **Scheduled priorities** — set a task's priority to change on a schedule (e.g., bump to High every Monday). Supports inheritance and manual override.
+- **Scheduled priorities table** (`task_schedules`) with DB migration and full sync support.
+
+### DAG View Overhaul
+- **Force-directed layout** — Outer Wilds–inspired physics-based graph visualization with draggable nodes.
+- **Multi-parent positioning** and cluster tuning for better readability.
+- **Improved zoom controls** and performance optimizations.
+
+### Staleness & Someday
+- **Logarithmic staleness curve** — task selection weight grows with days since last worked on, using a log curve to avoid runaway staleness.
+- **Someday flag** — mark tasks you don't want picked right now. They stay in the hierarchy but are excluded from Today's 5 selection.
+
+### Today's 5 Improvements
+- **Sync Today's 5 across devices** via Firestore — selections persist across phone and web.
+- **Pin state preserved** on completed tasks and across tab switches.
+- **Eager pin transfer** for subtasks — completing a pinned subtask transfers the pin smartly.
+- **Brain dump pin transfer** uses ID-based diffing instead of name matching.
+- **Midnight refresh** — Today's 5 resets correctly at midnight.
+- **Sync-on-open** — pulls remote state immediately on app launch.
+
+### Notifications
+- **Daily 8 AM notification** on Android reminding you to check Today's 5. Uses exact alarms.
+
+### UI & Polish
+- **URL field on Add Task dialog** — attach a link when creating a task, with shared `UrlTextField` widget.
+- **"Also done today" box** fully tappable for expand/collapse.
+- **Pick Another** option in the random pick dialog.
+- Centralized `launchSafeUrl` helper for consistent URL opening with error handling.
+
+### Data & Sync
+- **Pull reconciliation fix** — no longer deletes unpushed local relationships during sync.
+- **Silent partial-pull data loss fixed** — paginated pull methods now throw on non-200 responses.
+- **Sync queue consistency** — `onMutation` called after all local mutations, preventing stalls.
+- **Repair migration** for `task_schedules` table for v1.1.6 upgraders.
+
+### Quality
+- **831 automated tests** — up from ~395, covering schedule DB queries, schedule dialog, task card menu, leaf detail, and many more gaps.
+- **Code review Rounds 8–9** and **Security review Rounds 4–5** — all actionable findings fixed.
+- **R8 code shrinking** and resource shrinking enabled.
+- **Guardrail hooks** for `adb install`, `flutter run` on Android, `git tag`, and `gh pr merge`.
+- `mounted` checks added consistently after all async operations.
+- All `debugPrint` calls gated behind `kDebugMode`.
+
+---
+
 ## v1.1.0 — Cloud sync, pinned tasks & polish
 
 ### Cloud Sync
