@@ -120,7 +120,7 @@ class LeafTaskDetail extends StatelessWidget {
           ),
         ],
       ),
-    ).then((_) => controller.dispose());
+    );
   }
 
 

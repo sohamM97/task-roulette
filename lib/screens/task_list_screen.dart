@@ -617,7 +617,6 @@ class TaskListScreenState extends State<TaskListScreen>
         ],
       ),
     );
-    controller.dispose();
     if (newName != null && newName.isNotEmpty && newName != task.name && mounted) {
       await context.read<TaskProvider>().renameTask(task.id!, newName);
     }

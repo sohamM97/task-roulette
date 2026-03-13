@@ -334,7 +334,7 @@ void main() {
       await openAddTaskDialogWithPin(tester,
           onResult: (_) {}, showPinOption: false);
 
-      expect(find.text('Pin'), findsNothing);
+      expect(find.text('Pin for today'), findsNothing);
       expect(find.byIcon(Icons.push_pin), findsNothing);
       expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
     });
@@ -344,7 +344,7 @@ void main() {
         (tester) async {
       await openAddTaskDialogWithPin(tester, onResult: (_) {});
 
-      expect(find.text('Pin'), findsOneWidget);
+      expect(find.text('Pin for today'), findsOneWidget);
       expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
     });
 
@@ -357,7 +357,7 @@ void main() {
       expect(find.byIcon(Icons.push_pin), findsNothing);
 
       // Tap the pin toggle
-      await tester.tap(find.text('Pin'));
+      await tester.tap(find.text('Pin for today'));
       await tester.pumpAndSettle();
 
       // Now pinned
@@ -372,7 +372,7 @@ void main() {
       await openAddTaskDialogWithPin(tester, onResult: (r) => result = r);
 
       // Toggle pin on
-      await tester.tap(find.text('Pin'));
+      await tester.tap(find.text('Pin for today'));
       await tester.pumpAndSettle();
 
       // Enter text and submit
