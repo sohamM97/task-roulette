@@ -143,19 +143,21 @@ class TaskListScreenState extends State<TaskListScreen>
     });
   }
 
-  Future<void> _fileTask(Task task) async {
+  Future<void> _fileTask(Task task, {bool autoAdvance = false}) async {
     final provider = context.read<TaskProvider>();
+    final remaining = autoAdvance ? (_inboxCount - 1) : 0;
     final result = await showDialog<TriageResult>(
       context: context,
       builder: (_) => TriageDialog(
         task: task,
         provider: provider,
+        remainingCount: remaining,
       ),
     );
     if (result == null || !mounted) return;
 
     if (result.keepAtTopLevel) {
-      await _dismissFromInbox(task);
+      await _dismissFromInbox(task, autoAdvance: autoAdvance);
       return;
     }
 
@@ -172,6 +174,9 @@ class TaskListScreenState extends State<TaskListScreen>
           ),
         );
         await _loadInboxTasks();
+        if (autoAdvance && _inboxTasks != null && _inboxTasks!.isNotEmpty && mounted) {
+          await _fileTask(_inboxTasks!.first, autoAdvance: true);
+        }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Cannot file: would create a cycle'), showCloseIcon: true, persist: false),
@@ -180,7 +185,7 @@ class TaskListScreenState extends State<TaskListScreen>
     }
   }
 
-  Future<void> _dismissFromInbox(Task task) async {
+  Future<void> _dismissFromInbox(Task task, {bool autoAdvance = false}) async {
     final provider = context.read<TaskProvider>();
     await provider.dismissFromInbox(task.id!);
     if (!mounted) return;
@@ -193,6 +198,14 @@ class TaskListScreenState extends State<TaskListScreen>
       ),
     );
     await _loadInboxTasks();
+    if (autoAdvance && _inboxTasks != null && _inboxTasks!.isNotEmpty && mounted) {
+      await _fileTask(_inboxTasks!.first, autoAdvance: true);
+    }
+  }
+
+  Future<void> _triageAll() async {
+    if (_inboxTasks == null || _inboxTasks!.isEmpty) return;
+    await _fileTask(_inboxTasks!.first, autoAdvance: true);
   }
 
   /// Returns true if the user confirmed (or task isn't pinned), false to abort.
@@ -958,6 +971,18 @@ class TaskListScreenState extends State<TaskListScreen>
                       ),
                     ),
                   ),
+                  if (_inboxExpanded && _inboxCount > 1)
+                    GestureDetector(
+                      onTap: _triageAll,
+                      child: Text(
+                        'Triage all',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                  if (_inboxExpanded && _inboxCount > 1)
+                    const SizedBox(width: 8),
                   Icon(
                     _inboxExpanded ? Icons.expand_less : Icons.expand_more,
                     size: 20,

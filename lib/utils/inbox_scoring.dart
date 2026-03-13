@@ -16,3 +16,12 @@ double jaccardSimilarity(Set<String> a, Set<String> b) {
   final union = a.union(b).length;
   return intersection / union;
 }
+
+/// Returns 1.0 if either name contains the other as a substring (case-insensitive),
+/// 0.0 otherwise. Catches cases like "Groceries" matching "Buy groceries".
+double substringMatch(String a, String b) {
+  final aLower = a.toLowerCase();
+  final bLower = b.toLowerCase();
+  if (aLower.contains(bLower) || bLower.contains(aLower)) return 1.0;
+  return 0.0;
+}

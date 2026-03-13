@@ -851,6 +851,9 @@ class TaskProvider extends ChangeNotifier {
       final candidateTokens = tokenize(candidate.name);
       final keywordScore = jaccardSimilarity(taskTokens, candidateTokens);
 
+      // Substring boost: "Buy groceries" matches parent "Groceries"
+      final substringScore = substringMatch(taskName, candidate.name);
+
       double recencyScore = 0.0;
       final lastChildCreated = recencyMap[candidate.id!];
       if (lastChildCreated != null) {
@@ -868,7 +871,15 @@ class TaskProvider extends ChangeNotifier {
         siblingScore = jaccardSimilarity(taskTokens, allChildTokens);
       }
 
-      final score = 0.5 * keywordScore + 0.25 * recencyScore + 0.25 * siblingScore;
+      // Category boost: parents with more children are likely categories
+      final childCount = childNames?.length ?? 0;
+      final categoryBoost = childCount >= 3 ? 0.15 : childCount >= 1 ? 0.05 : 0.0;
+
+      final score = 0.35 * keywordScore
+          + 0.20 * substringScore
+          + 0.15 * recencyScore
+          + 0.15 * siblingScore
+          + categoryBoost;
       if (score > 0.01) {
         scored.add((task: candidate, score: score));
       }

@@ -17,11 +17,13 @@ class TriageResult {
 class TriageDialog extends StatefulWidget {
   final Task task;
   final TaskProvider provider;
+  final int remainingCount;
 
   const TriageDialog({
     super.key,
     required this.task,
     required this.provider,
+    this.remainingCount = 0,
   });
 
   @override
@@ -205,11 +207,24 @@ class _TriageDialogState extends State<TriageDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                'File "${widget.task.name}"',
-                style: Theme.of(context).textTheme.titleMedium,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'File "${widget.task.name}"',
+                      style: Theme.of(context).textTheme.titleMedium,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (widget.remainingCount > 0)
+                    Text(
+                      '+${widget.remainingCount} more',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 12),
               Flexible(
