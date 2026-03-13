@@ -420,33 +420,12 @@ class _TriageDialogState extends State<TriageDialog> {
         const Divider(height: 1),
         const SizedBox(height: 6),
         if (_browseParent == null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Material(
-              color: colorScheme.primaryContainer.withAlpha(80),
-              borderRadius: BorderRadius.circular(12),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: () => Navigator.pop(
-                    context, const TriageResult(keepAtTopLevel: true)),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  child: Row(
-                    children: [
-                      Icon(Icons.vertical_align_top, size: 18,
-                          color: colorScheme.primary),
-                      const SizedBox(width: 10),
-                      Text(
-                        'Keep at top level',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+          _buildTaskCard(
+            Task(name: 'Keep at top level'),
+            onTap: () => Navigator.pop(
+                context, const TriageResult(keepAtTopLevel: true)),
+            trailing: Icon(Icons.vertical_align_top, size: 18,
+                color: colorScheme.onSurfaceVariant),
           ),
         Expanded(
           child: _browseLoading

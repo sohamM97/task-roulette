@@ -334,7 +334,7 @@ void main() {
       await openAddTaskDialogWithPin(tester,
           onResult: (_) {}, showPinOption: false);
 
-      expect(find.byTooltip('Pin for today'), findsNothing);
+      expect(find.text('Pin'), findsNothing);
       expect(find.byIcon(Icons.push_pin), findsNothing);
       expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
     });
@@ -344,7 +344,7 @@ void main() {
         (tester) async {
       await openAddTaskDialogWithPin(tester, onResult: (_) {});
 
-      expect(find.byTooltip('Pin for today'), findsOneWidget);
+      expect(find.text('Pin'), findsOneWidget);
       expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
     });
 
@@ -357,7 +357,7 @@ void main() {
       expect(find.byIcon(Icons.push_pin), findsNothing);
 
       // Tap the pin toggle
-      await tester.tap(find.byTooltip('Pin for today'));
+      await tester.tap(find.text('Pin'));
       await tester.pumpAndSettle();
 
       // Now pinned
@@ -372,7 +372,7 @@ void main() {
       await openAddTaskDialogWithPin(tester, onResult: (r) => result = r);
 
       // Toggle pin on
-      await tester.tap(find.byTooltip('Pin for today'));
+      await tester.tap(find.text('Pin'));
       await tester.pumpAndSettle();
 
       // Enter text and submit
@@ -409,14 +409,14 @@ void main() {
   // ---------------------------------------------------------------------------
   group('BrainDumpDialog', () {
     Future<void> openBrainDumpDialog(WidgetTester tester,
-        {required ValueChanged<List<String>?> onResult}) async {
+        {required ValueChanged<BrainDumpResult?> onResult}) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: Builder(
               builder: (context) => ElevatedButton(
                 onPressed: () async {
-                  final result = await showDialog<List<String>>(
+                  final result = await showDialog<BrainDumpResult>(
                     context: context,
                     builder: (_) => const BrainDumpDialog(),
                   );
@@ -469,8 +469,8 @@ void main() {
       expect(find.text('2 tasks'), findsOneWidget);
     });
 
-    testWidgets('submit returns list of task names', (tester) async {
-      List<String>? result;
+    testWidgets('submit returns BrainDumpResult with task names', (tester) async {
+      BrainDumpResult? result;
       await openBrainDumpDialog(tester, onResult: (r) => result = r);
 
       await tester.enterText(
@@ -484,7 +484,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(result, isNotNull);
-      expect(result, ['Buy groceries', 'Call dentist', 'Finish report']);
+      expect(result!.names, ['Buy groceries', 'Call dentist', 'Finish report']);
+      expect(result!.addToInbox, isFalse); // showInboxOption is false by default
     });
 
     testWidgets('Add button is disabled when text is empty', (tester) async {
@@ -501,7 +502,7 @@ void main() {
             body: Builder(
               builder: (context) => ElevatedButton(
                 onPressed: () async {
-                  await showDialog<List<String>>(
+                  await showDialog<BrainDumpResult>(
                     context: context,
                     builder: (_) =>
                         const BrainDumpDialog(initialText: 'Carried over'),

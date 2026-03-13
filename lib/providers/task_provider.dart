@@ -87,8 +87,7 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Inserts multiple tasks in a single transaction, refreshes once at the end.
-  Future<void> addTasksBatch(List<String> names) async {
-    final isInbox = _currentParent == null;
+  Future<void> addTasksBatch(List<String> names, {bool isInbox = false}) async {
     final tasks = names.map((name) => Task(name: name, isInbox: isInbox)).toList();
     await _db.insertTasksBatch(tasks, _currentParent?.id);
     await _refreshAfterMutation();

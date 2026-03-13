@@ -2952,21 +2952,17 @@ void main() {
       expect(inboxTasks, isEmpty);
     });
 
-    test('addTasksBatch at root sets isInbox on all tasks', () async {
+    test('addTasksBatch with isInbox sets flag on all tasks', () async {
       await provider.loadRootTasks();
-      await provider.addTasksBatch(['A', 'B', 'C']);
+      await provider.addTasksBatch(['A', 'B', 'C'], isInbox: true);
 
       final inboxTasks = await provider.getInboxTasks();
       expect(inboxTasks, hasLength(3));
       expect(inboxTasks.every((t) => t.isInbox), isTrue);
     });
 
-    test('addTasksBatch under parent does not set isInbox', () async {
-      final parentId = await db.insertTask(Task(name: 'Parent'));
+    test('addTasksBatch without isInbox does not set flag', () async {
       await provider.loadRootTasks();
-      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
-      await provider.navigateInto(parent);
-
       await provider.addTasksBatch(['A', 'B']);
 
       final inboxTasks = await provider.getInboxTasks();

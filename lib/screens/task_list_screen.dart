@@ -339,13 +339,14 @@ class TaskListScreenState extends State<TaskListScreen>
     final parentId = provider.currentParent?.id;
     final parentIsPinned = parentId != null &&
         (_todays5PinnedIds?.contains(parentId) ?? false);
-    final names = await showDialog<List<String>>(
+    final result = await showDialog<BrainDumpResult>(
       context: context,
-      builder: (_) => BrainDumpDialog(initialText: initialText),
+      builder: (_) => BrainDumpDialog(initialText: initialText, showInboxOption: provider.isRoot),
     );
-    if (names != null && names.isNotEmpty && mounted) {
+    if (result != null && result.names.isNotEmpty && mounted) {
+      final names = result.names;
       final beforeIds = provider.tasks.map((t) => t.id!).toSet();
-      await provider.addTasksBatch(names);
+      await provider.addTasksBatch(names, isInbox: result.addToInbox);
       if (parentIsPinned && mounted) {
         // Pick one of the NEW subtasks to inherit the pin (not pre-existing children)
         final newChildren = provider.tasks.where((t) => !beforeIds.contains(t.id)).toList();
@@ -975,6 +976,13 @@ class TaskListScreenState extends State<TaskListScreen>
             else
               ...(_inboxTasks!.map((task) {
                 final cardColor = AppColors.cardColor(context, task.id ?? 0);
+                final age = DateTime.now().difference(
+                    DateTime.fromMillisecondsSinceEpoch(task.createdAt));
+                final ageText = age.inDays > 0
+                    ? '${age.inDays}d ago'
+                    : age.inHours > 0
+                        ? '${age.inHours}h ago'
+                        : 'just now';
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   child: Material(
@@ -989,11 +997,25 @@ class TaskListScreenState extends State<TaskListScreen>
                         child: Row(
                           children: [
                             Expanded(
-                              child: Text(
-                                task.name,
-                                style: Theme.of(context).textTheme.bodyMedium,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    task.name,
+                                    style: Theme.of(context).textTheme.bodyMedium,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  Text(
+                                    ageText,
+                                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      fontSize: 11,
+                                      color: age.inDays >= 3
+                                          ? colorScheme.error.withAlpha(180)
+                                          : colorScheme.onSurfaceVariant.withAlpha(120),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                             Icon(
