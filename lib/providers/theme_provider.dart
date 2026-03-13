@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class ThemeProvider extends ChangeNotifier {
   static const _key = 'theme_mode';
   late ThemeMode _themeMode;
+  bool _manuallyToggled = false;
 
   ThemeProvider() {
     final brightness = SchedulerBinding.instance.platformDispatcher.platformBrightness;
@@ -17,13 +18,14 @@ class ThemeProvider extends ChangeNotifier {
   Future<void> _loadPreference() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_key);
-    if (saved != null) {
+    if (saved != null && !_manuallyToggled) {
       _themeMode = saved == 'dark' ? ThemeMode.dark : ThemeMode.light;
       notifyListeners();
     }
   }
 
   void toggle() {
+    _manuallyToggled = true;
     _themeMode = _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
     notifyListeners();
     _savePreference();
