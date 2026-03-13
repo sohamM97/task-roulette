@@ -292,6 +292,32 @@ class _TriageDialogState extends State<TriageDialog> {
     );
   }
 
+  Widget _buildKeepAtTopLevel() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: OutlinedButton.icon(
+        onPressed: () =>
+            Navigator.pop(context, const TriageResult(keepAtTopLevel: true)),
+        icon: Icon(Icons.vertical_align_top, size: 18,
+            color: colorScheme.onSurfaceVariant),
+        label: Text('Keep at top level',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+          ),
+        ),
+        style: OutlinedButton.styleFrom(
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          side: BorderSide(color: colorScheme.outlineVariant),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSuggestions() {
     if (_suggestionsLoading) {
       return const Center(child: CircularProgressIndicator());
@@ -307,9 +333,10 @@ class _TriageDialogState extends State<TriageDialog> {
     }
     return ListView.builder(
       shrinkWrap: true,
-      itemCount: suggestions.length,
+      itemCount: suggestions.length + 1, // +1 for "Keep at top level"
       itemBuilder: (context, index) {
-        final s = suggestions[index];
+        if (index == 0) return _buildKeepAtTopLevel();
+        final s = suggestions[index - 1];
         final parents = _suggestionParentNames?[s.task.id!];
         final subtitle =
             parents != null && parents.isNotEmpty ? 'under ${parents.join(', ')}' : null;
@@ -434,14 +461,7 @@ class _TriageDialogState extends State<TriageDialog> {
         ),
         const Divider(height: 1),
         const SizedBox(height: 6),
-        if (_browseParent == null)
-          _buildTaskCard(
-            Task(name: 'Keep at top level'),
-            onTap: () => Navigator.pop(
-                context, const TriageResult(keepAtTopLevel: true)),
-            trailing: Icon(Icons.vertical_align_top, size: 18,
-                color: colorScheme.onSurfaceVariant),
-          ),
+        if (_browseParent == null) _buildKeepAtTopLevel(),
         Expanded(
           child: _browseLoading
               ? const Center(child: CircularProgressIndicator())

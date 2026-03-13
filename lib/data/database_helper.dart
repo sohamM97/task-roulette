@@ -837,6 +837,17 @@ class DatabaseHelper {
     );
   }
 
+  /// Sets the inbox flag on a task and marks it dirty for sync.
+  Future<void> setInboxFlag(int taskId) async {
+    final db = await database;
+    await db.update(
+      'tasks',
+      {'is_inbox': 1, ..._dirtyFields()},
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
   /// Returns {parentId: mostRecentChildCreatedAt} for the given parent IDs.
   Future<Map<int, int>> getMostRecentChildCreatedAt(List<int> parentIds) async {
     if (parentIds.isEmpty) return {};

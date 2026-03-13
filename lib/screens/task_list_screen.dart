@@ -145,6 +145,7 @@ class TaskListScreenState extends State<TaskListScreen>
 
   Future<void> _fileTask(Task task, {bool autoAdvance = false}) async {
     final provider = context.read<TaskProvider>();
+    final messenger = ScaffoldMessenger.of(context);
     final remaining = autoAdvance ? (_inboxCount - 1) : 0;
     final result = await showDialog<TriageResult>(
       context: context,
@@ -162,23 +163,33 @@ class TaskListScreenState extends State<TaskListScreen>
     }
 
     if (result.parent != null) {
-      final success = await provider.fileTask(task.id!, result.parent!.id!);
+      final parentId = result.parent!.id!;
+      final success = await provider.fileTask(task.id!, parentId);
       if (!mounted) return;
       if (success) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Filed "${task.name}" under "${result.parent!.name}"'),
-            showCloseIcon: true,
-            persist: false,
-          ),
-        );
         await _loadInboxTasks();
+        if (!autoAdvance) {
+          messenger.clearSnackBars();
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text('Filed "${task.name}" under "${result.parent!.name}"'),
+              showCloseIcon: true,
+              persist: false,
+              action: SnackBarAction(
+                label: 'Undo',
+                onPressed: () async {
+                  await provider.unfileTask(task.id!, parentId);
+                  if (mounted) await _loadInboxTasks();
+                },
+              ),
+            ),
+          );
+        }
         if (autoAdvance && _inboxTasks != null && _inboxTasks!.isNotEmpty && mounted) {
           await _fileTask(_inboxTasks!.first, autoAdvance: true);
         }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(content: Text('Cannot file: would create a cycle'), showCloseIcon: true, persist: false),
         );
       }
@@ -189,23 +200,42 @@ class TaskListScreenState extends State<TaskListScreen>
     final provider = context.read<TaskProvider>();
     await provider.dismissFromInbox(task.id!);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Kept "${task.name}" at top level'),
-        showCloseIcon: true,
-        persist: false,
-      ),
-    );
+    if (!autoAdvance) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Kept "${task.name}" at top level'),
+          showCloseIcon: true,
+          persist: false,
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () async {
+              await provider.undoDismissFromInbox(task.id!);
+              if (mounted) await _loadInboxTasks();
+            },
+          ),
+        ),
+      );
+    }
     await _loadInboxTasks();
     if (autoAdvance && _inboxTasks != null && _inboxTasks!.isNotEmpty && mounted) {
       await _fileTask(_inboxTasks!.first, autoAdvance: true);
     }
   }
 
-  Future<void> _triageAll() async {
+  Future<void> _fileAll() async {
     if (_inboxTasks == null || _inboxTasks!.isEmpty) return;
     await _fileTask(_inboxTasks!.first, autoAdvance: true);
+    // Show summary snackbar after batch completes
+    if (mounted) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      final remaining = _inboxTasks?.length ?? 0;
+      if (remaining == 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Inbox cleared!'), showCloseIcon: true, persist: false),
+        );
+      }
+    }
   }
 
   /// Returns true if the user confirmed (or task isn't pinned), false to abort.
@@ -973,9 +1003,9 @@ class TaskListScreenState extends State<TaskListScreen>
                   ),
                   if (_inboxExpanded && _inboxCount > 1)
                     GestureDetector(
-                      onTap: _triageAll,
+                      onTap: _fileAll,
                       child: Text(
-                        'Triage all',
+                        'File all',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: colorScheme.primary,
                         ),

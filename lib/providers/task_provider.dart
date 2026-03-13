@@ -56,7 +56,8 @@ class TaskProvider extends ChangeNotifier {
 
   Future<void> navigateInto(Task task) async {
     _parentStack.add(_currentParent);
-    _currentParent = task;
+    // Reload from DB to avoid stale data (e.g. inbox tasks cached in local state).
+    _currentParent = await _db.getTaskById(task.id!) ?? task;
     await _refreshCurrentList();
   }
 
@@ -816,6 +817,19 @@ class TaskProvider extends ChangeNotifier {
     await _db.clearInboxFlag(taskId);
     await _refreshAfterMutation();
     return true;
+  }
+
+  /// Undoes a fileTask: removes the relationship and restores the inbox flag.
+  Future<void> unfileTask(int taskId, int parentId) async {
+    await _db.removeRelationship(parentId, taskId);
+    await _db.setInboxFlag(taskId);
+    await _refreshAfterMutation();
+  }
+
+  /// Undoes a dismissFromInbox: restores the inbox flag.
+  Future<void> undoDismissFromInbox(int taskId) async {
+    await _db.setInboxFlag(taskId);
+    await _refreshAfterMutation();
   }
 
   /// Dismisses a task from inbox without assigning a parent (keeps it at root).
