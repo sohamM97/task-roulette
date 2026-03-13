@@ -10,6 +10,11 @@ class TaskProvider extends ChangeNotifier {
   final DatabaseHelper _db = DatabaseHelper();
   final Random _random = Random();
 
+  /// Exponential base for diversity penalty in pickWeightedN.
+  /// After n picks from the same root, remaining same-root tasks get
+  /// weight × (this ^ n). Lower = stronger penalty.
+  static const _diversityPenaltyBase = 0.3;
+
   /// Callback invoked after every local mutation, used by SyncService
   /// to schedule a debounced push.
   void Function()? onMutation;
@@ -367,7 +372,7 @@ class TaskProvider extends ChangeNotifier {
             if (c > maxPicks) maxPicks = c;
           }
           if (maxPicks > 0) {
-            w *= pow(0.3, maxPicks).toDouble();
+            w *= pow(_diversityPenaltyBase, maxPicks).toDouble();
           }
         }
 
@@ -396,6 +401,10 @@ class TaskProvider extends ChangeNotifier {
 
     return picked;
   }
+
+  /// Computes normalization data for fair Today's 5 selection.
+  Future<NormalizationData> getNormalizationData(List<int> leafIds) =>
+      _db.getNormalizationData(leafIds);
 
   Future<List<Task>> getAllTasks() async {
     return _db.getAllTasks();
