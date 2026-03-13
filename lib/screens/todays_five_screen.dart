@@ -1266,6 +1266,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                       padding: const EdgeInsets.only(right: 4),
                       child: Icon(Icons.flag, size: 14, color: colorScheme.error),
                     ),
+                  if (task.isSomeday)
+                    const Padding(
+                      padding: EdgeInsets.only(right: 4),
+                      child: Icon(Icons.bedtime, size: 14,
+                          color: Color(0xFF7EB8D8)),
+                    ),
                   if (task.isStarted && !isDone)
                     Padding(
                       padding: const EdgeInsets.only(right: 4),

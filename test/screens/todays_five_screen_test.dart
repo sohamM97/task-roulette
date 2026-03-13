@@ -226,6 +226,16 @@ void main() {
       expect(find.byIcon(Icons.flag), findsOneWidget);
     });
 
+    testWidgets('shows someday bedtime icon', (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Eventually', isSomeday: true));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.byIcon(Icons.bedtime), findsOneWidget);
+    });
+
     testWidgets('refresh button shows confirmation dialog', (tester) async {
       await tester.runAsync(() async {
         await db.insertTask(Task(name: 'Task 1'));
