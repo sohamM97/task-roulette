@@ -4501,4 +4501,130 @@ void main() {
       expect(schedules.first.dayOfWeek, 1);
     });
   });
+
+  group('Root normalization queries', () {
+    test('getRootAncestorsForLeaves: standalone root-leaf maps to itself', () async {
+      final id = await db.insertTask(Task(name: 'Solo'));
+      final result = await db.getRootAncestorsForLeaves([id]);
+      expect(result[id], {id});
+    });
+
+    test('getRootAncestorsForLeaves: leaf under single root returns that root', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(root, child);
+
+      final result = await db.getRootAncestorsForLeaves([child]);
+      expect(result[child], {root});
+    });
+
+    test('getRootAncestorsForLeaves: deep nesting returns ultimate root', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final mid = await db.insertTask(Task(name: 'Mid'));
+      final leaf = await db.insertTask(Task(name: 'Leaf'));
+      await db.addRelationship(root, mid);
+      await db.addRelationship(mid, leaf);
+
+      final result = await db.getRootAncestorsForLeaves([leaf]);
+      expect(result[leaf], {root});
+    });
+
+    test('getRootAncestorsForLeaves: multi-parent returns multiple roots', () async {
+      final rootA = await db.insertTask(Task(name: 'Root A'));
+      final rootB = await db.insertTask(Task(name: 'Root B'));
+      final leaf = await db.insertTask(Task(name: 'Leaf'));
+      await db.addRelationship(rootA, leaf);
+      await db.addRelationship(rootB, leaf);
+
+      final result = await db.getRootAncestorsForLeaves([leaf]);
+      expect(result[leaf], {rootA, rootB});
+    });
+
+    test('getRootAncestorsForLeaves: completed root excluded', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final leaf = await db.insertTask(Task(name: 'Leaf'));
+      await db.addRelationship(root, leaf);
+      await db.completeTask(root);
+
+      final result = await db.getRootAncestorsForLeaves([leaf]);
+      // Completed root should be excluded; leaf maps to itself as standalone
+      expect(result[leaf], {leaf});
+    });
+
+    test('getRootAncestorsForLeaves: empty input returns empty map', () async {
+      final result = await db.getRootAncestorsForLeaves([]);
+      expect(result, isEmpty);
+    });
+
+    test('getLeafCountPerRoot: root with N leaves returns N', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final c1 = await db.insertTask(Task(name: 'C1'));
+      final c2 = await db.insertTask(Task(name: 'C2'));
+      final c3 = await db.insertTask(Task(name: 'C3'));
+      await db.addRelationship(root, c1);
+      await db.addRelationship(root, c2);
+      await db.addRelationship(root, c3);
+
+      final result = await db.getLeafCountPerRoot([root]);
+      expect(result[root], 3);
+    });
+
+    test('getLeafCountPerRoot: root that is itself a leaf returns 1', () async {
+      final root = await db.insertTask(Task(name: 'Solo root'));
+      final result = await db.getLeafCountPerRoot([root]);
+      expect(result[root], 1);
+    });
+
+    test('getLeafCountPerRoot: completed leaves excluded', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final c1 = await db.insertTask(Task(name: 'C1'));
+      final c2 = await db.insertTask(Task(name: 'C2'));
+      await db.addRelationship(root, c1);
+      await db.addRelationship(root, c2);
+      await db.completeTask(c1);
+
+      final result = await db.getLeafCountPerRoot([root]);
+      expect(result[root], 1);
+    });
+
+    test('getNormalizationData: standalone gets factor 1.0', () async {
+      final id = await db.insertTask(Task(name: 'Solo'));
+      final normData = await db.getNormalizationData([id]);
+      expect(normData.normFactors[id], closeTo(1.0, 0.001));
+    });
+
+    test('getNormalizationData: leaf under root with 4 leaves gets factor 0.5', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final ids = <int>[];
+      for (var i = 0; i < 4; i++) {
+        final c = await db.insertTask(Task(name: 'C$i'));
+        await db.addRelationship(root, c);
+        ids.add(c);
+      }
+
+      final normData = await db.getNormalizationData(ids);
+      // 1/sqrt(4) = 0.5
+      for (final id in ids) {
+        expect(normData.normFactors[id], closeTo(0.5, 0.001));
+      }
+    });
+
+    test('getNormalizationData: multi-parent uses minimum count', () async {
+      final rootA = await db.insertTask(Task(name: 'Root A'));
+      final rootB = await db.insertTask(Task(name: 'Root B'));
+      // Root A has 9 leaves, Root B has 1 leaf (the shared one)
+      for (var i = 0; i < 8; i++) {
+        final c = await db.insertTask(Task(name: 'A$i'));
+        await db.addRelationship(rootA, c);
+      }
+      final shared = await db.insertTask(Task(name: 'Shared'));
+      await db.addRelationship(rootA, shared);
+      await db.addRelationship(rootB, shared);
+
+      final normData = await db.getNormalizationData([shared]);
+      // Root A has 9 leaves, Root B has 1 → min is 1 → factor = 1/sqrt(1) = 1.0
+      expect(normData.normFactors[shared], closeTo(1.0, 0.001));
+      expect(normData.leafToRoots[shared], {rootA, rootB});
+    });
+  });
 }

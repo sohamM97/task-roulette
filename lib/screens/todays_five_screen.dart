@@ -182,8 +182,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         final eligible = allLeaves.where(
           (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
         ).toList();
+        // Use all leafIds (not just eligible) so norm factors reflect true root sizes
+        final normData = await provider.getNormalizationData(leafIds);
         final replacements = provider.pickWeightedN(
-          eligible, 5 - tasks.length,
+          eligible, 5 - tasks.length, normData: normData,
         );
         tasks.addAll(replacements);
       }
@@ -311,8 +313,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       final eligible = allLeaves.where(
         (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
       ).toList();
+      // Use all leafIds (not just eligible) so norm factors reflect true root sizes
+      final normData = await provider.getNormalizationData(leafIds);
       final replacements = provider.pickWeightedN(
-        eligible, _todaysTasks.length - refreshed.length,
+        eligible, _todaysTasks.length - refreshed.length, normData: normData,
       );
       refreshed.addAll(replacements);
     }
@@ -370,9 +374,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       (t) => !blockedIds.contains(t.id) && !keptIds.contains(t.id),
     ).toList();
 
+    // Use all leafIds (not just eligible) so norm factors reflect true root sizes
+    final normData = await provider.getNormalizationData(leafIds);
+
     final slotsToFill = 5 - kept.length;
     final picked = provider.pickWeightedN(eligible, slotsToFill,
-        scheduleBoostedIds: scheduleBoostedIds);
+        scheduleBoostedIds: scheduleBoostedIds, normData: normData);
     if (!mounted) return;
     _todaysTasks = [...kept, ...picked];
     await _loadOtherDoneToday();
