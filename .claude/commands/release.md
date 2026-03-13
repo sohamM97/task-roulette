@@ -13,7 +13,7 @@ The user may provide a version number (e.g. `0.5.0`). If not provided, recommend
 3. Read `pubspec.yaml` to get the current version.
 4. Determine the new version:
    - If the user provided one, use it.
-   - Otherwise, **always ask** the user to choose. Default suggestion is the next patch version. Patch releases are the norm — they're used to get APKs for phone testing. Minor/major releases are reserved for when the user is satisfied with overall stability. **Never assume a minor/major release without explicit confirmation.**
+   - Otherwise, use the `AskUserQuestion` tool to ask the user which version to release. Suggest the next patch version as the default. Patch releases are the norm — they're used to get APKs for phone testing. Minor/major releases are reserved for when the user is satisfied with overall stability. **Never assume a minor/major release — always use AskUserQuestion to confirm.**
 5. **For minor/major releases only**: Remind the user to run `/code-review` and `/sec-review` before a minor/major release. Check for recent updates to `docs/CODE_REVIEW.md` and `docs/SECURITY_REVIEW.md` since the last tag. If either looks stale, mention it — but if the user wants to proceed anyway, don't block the release.
 6. Update `version:` in `pubspec.yaml` to the new version (keep the `+1` build number).
 7. Commit the version bump with message: `Bump version to <version>`.
