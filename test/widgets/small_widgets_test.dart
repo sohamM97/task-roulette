@@ -405,6 +405,169 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // AddTaskDialog — Inbox toggle
+  // ---------------------------------------------------------------------------
+  group('AddTaskDialog inbox toggle', () {
+    Future<void> openAddTaskDialogWithInbox(WidgetTester tester,
+        {required ValueChanged<AddTaskResult?> onResult,
+        bool showInboxOption = true}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  final result = await showDialog<AddTaskResult>(
+                    context: context,
+                    builder: (_) =>
+                        AddTaskDialog(showInboxOption: showInboxOption),
+                  );
+                  onResult(result);
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('inbox toggle visible when showInboxOption is true',
+        (tester) async {
+      await openAddTaskDialogWithInbox(tester, onResult: (_) {});
+      expect(find.text('Inbox'), findsOneWidget);
+      expect(find.byIcon(Icons.inbox), findsOneWidget);
+    });
+
+    testWidgets('inbox toggle hidden when showInboxOption is false',
+        (tester) async {
+      await openAddTaskDialogWithInbox(tester,
+          onResult: (_) {}, showInboxOption: false);
+      expect(find.text('Inbox'), findsNothing);
+    });
+
+    testWidgets('inbox defaults ON, submitting returns addToInbox=true',
+        (tester) async {
+      AddTaskResult? result;
+      await openAddTaskDialogWithInbox(tester, onResult: (r) => result = r);
+
+      // Inbox icon should be filled (on by default)
+      expect(find.byIcon(Icons.inbox), findsOneWidget);
+      expect(find.byIcon(Icons.inbox_outlined), findsNothing);
+
+      await tester.enterText(find.byType(TextField), 'Inbox task');
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+
+      expect(result, isA<SingleTask>());
+      expect((result as SingleTask).addToInbox, isTrue);
+    });
+
+    testWidgets('toggling inbox OFF then submitting returns addToInbox=false',
+        (tester) async {
+      AddTaskResult? result;
+      await openAddTaskDialogWithInbox(tester, onResult: (r) => result = r);
+
+      // Tap to toggle off
+      await tester.tap(find.text('Inbox'));
+      await tester.pumpAndSettle();
+
+      // Now should show outlined icon
+      expect(find.byIcon(Icons.inbox_outlined), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), 'Regular task');
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+
+      expect(result, isA<SingleTask>());
+      expect((result as SingleTask).addToInbox, isFalse);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // BrainDumpDialog — Inbox toggle
+  // ---------------------------------------------------------------------------
+  group('BrainDumpDialog inbox toggle', () {
+    Future<void> openBrainDumpWithInbox(WidgetTester tester,
+        {required ValueChanged<BrainDumpResult?> onResult,
+        bool showInboxOption = true}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  final result = await showDialog<BrainDumpResult>(
+                    context: context,
+                    builder: (_) =>
+                        BrainDumpDialog(showInboxOption: showInboxOption),
+                  );
+                  onResult(result);
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('inbox toggle visible when showInboxOption is true and has text',
+        (tester) async {
+      await openBrainDumpWithInbox(tester, onResult: (_) {});
+
+      // Initially no inbox toggle (no text entered yet)
+      // Enter some text to show the toggle
+      await tester.enterText(find.byType(TextField), 'Task 1\nTask 2');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Inbox'), findsOneWidget);
+    });
+
+    testWidgets('submitting brain dump with inbox ON returns addToInbox=true',
+        (tester) async {
+      BrainDumpResult? result;
+      await openBrainDumpWithInbox(tester, onResult: (r) => result = r);
+
+      await tester.enterText(find.byType(TextField), 'Task A\nTask B');
+      await tester.pumpAndSettle();
+
+      // Inbox should be ON by default
+      expect(find.byIcon(Icons.inbox), findsOneWidget);
+
+      await tester.tap(find.text('Add 2'));
+      await tester.pumpAndSettle();
+
+      expect(result, isNotNull);
+      expect(result!.names, ['Task A', 'Task B']);
+      expect(result!.addToInbox, isTrue);
+    });
+
+    testWidgets('toggling inbox OFF in brain dump returns addToInbox=false',
+        (tester) async {
+      BrainDumpResult? result;
+      await openBrainDumpWithInbox(tester, onResult: (r) => result = r);
+
+      await tester.enterText(find.byType(TextField), 'Task X');
+      await tester.pumpAndSettle();
+
+      // Toggle off
+      await tester.tap(find.text('Inbox'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Add 1'));
+      await tester.pumpAndSettle();
+
+      expect(result, isNotNull);
+      expect(result!.addToInbox, isFalse);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // BrainDumpDialog
   // ---------------------------------------------------------------------------
   group('BrainDumpDialog', () {

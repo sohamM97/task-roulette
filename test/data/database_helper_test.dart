@@ -4682,6 +4682,26 @@ void main() {
       expect(task!.isInbox, isFalse);
     });
 
+    test('setInboxFlag sets is_inbox to 1', () async {
+      final id = await db.insertTask(Task(name: 'Regular'));
+      expect(await db.getInboxCount(), 0);
+
+      await db.setInboxFlag(id);
+      expect(await db.getInboxCount(), 1);
+
+      final task = await db.getTaskById(id);
+      expect(task!.isInbox, isTrue);
+    });
+
+    test('setInboxFlag after clearInboxFlag restores inbox state', () async {
+      final id = await db.insertTask(Task(name: 'Inbox', isInbox: true));
+      await db.clearInboxFlag(id);
+      expect(await db.getInboxCount(), 0);
+
+      await db.setInboxFlag(id);
+      expect(await db.getInboxCount(), 1);
+    });
+
     test('getMostRecentChildCreatedAt returns max created_at per parent', () async {
       final parentId = await db.insertTask(Task(name: 'Parent'));
       final child1Id = await db.insertTask(Task(name: 'Child 1', createdAt: 1000));

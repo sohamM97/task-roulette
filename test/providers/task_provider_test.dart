@@ -3022,6 +3022,51 @@ void main() {
 
       expect(await provider.getInboxCount(), 2);
     });
+
+    test('unfileTask restores inbox flag and removes relationship', () async {
+      await provider.loadRootTasks();
+      final taskId = await provider.addTask('Inbox task', isInbox: true);
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+
+      // File it
+      final success = await provider.fileTask(taskId, parentId);
+      expect(success, isTrue);
+      expect(await provider.getInboxCount(), 0);
+
+      // Undo
+      await provider.unfileTask(taskId, parentId);
+      expect(await provider.getInboxCount(), 1);
+      final parents = await provider.getParents(taskId);
+      expect(parents.any((p) => p.id == parentId), isFalse);
+    });
+
+    test('undoDismissFromInbox restores inbox flag', () async {
+      await provider.loadRootTasks();
+      final taskId = await provider.addTask('Dismiss me', isInbox: true);
+
+      await provider.dismissFromInbox(taskId);
+      expect(await provider.getInboxCount(), 0);
+
+      await provider.undoDismissFromInbox(taskId);
+      expect(await provider.getInboxCount(), 1);
+    });
+
+    test('navigateInto loads fresh task data from DB', () async {
+      await provider.loadRootTasks();
+      final taskId = await provider.addTask('Test task', isInbox: true);
+
+      // Get a reference to the task (priority 0)
+      final inboxTasks = await provider.getInboxTasks();
+      final staleTask = inboxTasks.first;
+      expect(staleTask.priority, 0);
+
+      // Update priority directly in DB
+      await db.updateTaskPriority(taskId, 1);
+
+      // navigateInto should reload from DB, not use the stale object
+      await provider.navigateInto(staleTask);
+      expect(provider.currentParent!.priority, 1);
+    });
   });
 
   group('computeParentSuggestions', () {
@@ -3083,6 +3128,56 @@ void main() {
 
       final suggestions = await provider.computeParentSuggestions('Task', limit: 3);
       expect(suggestions.length, lessThanOrEqualTo(3));
+    });
+
+    test('excludeTaskId omits the specified task', () async {
+      final taskA = await db.insertTask(Task(name: 'Shopping list'));
+      await db.insertTask(Task(name: 'Shopping cart'));
+
+      final suggestions = await provider.computeParentSuggestions(
+        'Shopping',
+        excludeTaskId: taskA,
+      );
+      expect(suggestions.any((s) => s.task.id == taskA), isFalse);
+    });
+
+    test('substring match: parent name containing query scores higher', () async {
+      // "Groceries" should match "Buy groceries" via substring
+      final groceries = await db.insertTask(Task(name: 'Groceries'));
+      final unrelated = await db.insertTask(Task(name: 'Meetings'));
+
+      final suggestions = await provider.computeParentSuggestions('Buy groceries');
+      final groceriesScore = suggestions.firstWhere((s) => s.task.id == groceries).score;
+      // Unrelated task may or may not appear; if it does, it should score lower
+      final unrelatedEntry = suggestions.where((s) => s.task.id == unrelated);
+      if (unrelatedEntry.isNotEmpty) {
+        expect(groceriesScore, greaterThan(unrelatedEntry.first.score));
+      }
+    });
+
+    test('category boost: parent with 3+ children scores higher than parent with 0', () async {
+      // Both parents have the same keyword match so any score difference is from category boost
+      final bigParent = await db.insertTask(Task(name: 'Chores list'));
+      for (int i = 0; i < 4; i++) {
+        final childId = await db.insertTask(Task(name: 'Chore item $i'));
+        await db.addRelationship(bigParent, childId);
+      }
+      final smallParent = await db.insertTask(Task(name: 'Chores backlog'));
+
+      final suggestions = await provider.computeParentSuggestions('Chores');
+      final bigScore = suggestions.firstWhere((s) => s.task.id == bigParent).score;
+      final smallScore = suggestions.firstWhere((s) => s.task.id == smallParent).score;
+      expect(bigScore, greaterThan(smallScore));
+    });
+
+    test('tasks with zero score are filtered out', () async {
+      // Insert a task with a completely unrelated name
+      await db.insertTask(Task(name: 'XYZZY'));
+
+      // Query something with no overlap at all
+      final suggestions = await provider.computeParentSuggestions('Quantum physics');
+      // XYZZY should not appear since it has no keyword, substring, or sibling match
+      expect(suggestions.any((s) => s.task.name == 'XYZZY'), isFalse);
     });
   });
 }

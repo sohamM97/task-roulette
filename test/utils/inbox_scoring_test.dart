@@ -51,4 +51,34 @@ void main() {
       expect(jaccardSimilarity({'a', 'b'}, <String>{}), 0.0);
     });
   });
+
+  group('substringMatch', () {
+    test('returns 1.0 when a contains b', () {
+      expect(substringMatch('Buy groceries', 'groceries'), 1.0);
+    });
+
+    test('returns 1.0 when b contains a', () {
+      expect(substringMatch('groceries', 'Buy groceries'), 1.0);
+    });
+
+    test('case insensitive', () {
+      expect(substringMatch('GROCERIES', 'buy groceries'), 1.0);
+    });
+
+    test('returns 0.0 for no match', () {
+      expect(substringMatch('Buy groceries', 'Walk the dog'), 0.0);
+    });
+
+    test('exact match returns 1.0', () {
+      expect(substringMatch('Shopping', 'Shopping'), 1.0);
+    });
+
+    test('empty strings return 1.0 (empty contains empty)', () {
+      expect(substringMatch('', ''), 1.0);
+    });
+
+    test('empty a contained in non-empty b', () {
+      expect(substringMatch('', 'anything'), 1.0);
+    });
+  });
 }
