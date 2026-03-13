@@ -4540,6 +4540,17 @@ void main() {
       expect(result[leaf], {rootA, rootB});
     });
 
+    test('getRootAncestorsForLeaves: completed root excluded', () async {
+      final root = await db.insertTask(Task(name: 'Root'));
+      final leaf = await db.insertTask(Task(name: 'Leaf'));
+      await db.addRelationship(root, leaf);
+      await db.completeTask(root);
+
+      final result = await db.getRootAncestorsForLeaves([leaf]);
+      // Completed root should be excluded; leaf maps to itself as standalone
+      expect(result[leaf], {leaf});
+    });
+
     test('getRootAncestorsForLeaves: empty input returns empty map', () async {
       final result = await db.getRootAncestorsForLeaves([]);
       expect(result, isEmpty);

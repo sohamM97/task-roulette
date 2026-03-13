@@ -642,6 +642,9 @@ class DatabaseHelper {
         SELECT DISTINCT aa.leaf_id, aa.ancestor_id AS root_id
         FROM all_ancestors aa
         WHERE aa.ancestor_id NOT IN (SELECT child_id FROM task_relationships)
+        AND aa.ancestor_id IN (
+          SELECT id FROM tasks WHERE completed_at IS NULL AND skipped_at IS NULL
+        )
       ''', batch);
       for (final row in rows) {
         final leafId = row['leaf_id'] as int;
