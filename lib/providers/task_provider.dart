@@ -408,6 +408,10 @@ class TaskProvider extends ChangeNotifier {
   Future<NormalizationData> getNormalizationData(List<int> leafIds) =>
       _db.getNormalizationData(leafIds);
 
+  Future<List<Task>> getRootTasks() async {
+    return _db.getRootTasks();
+  }
+
   Future<List<Task>> getAllTasks() async {
     return _db.getAllTasks();
   }

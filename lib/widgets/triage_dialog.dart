@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../data/database_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 
@@ -114,7 +113,7 @@ class _TriageDialogState extends State<TriageDialog> {
     try {
       List<Task> children;
       if (_browseParent == null) {
-        children = await DatabaseHelper().getRootTasks();
+        children = await widget.provider.getRootTasks();
       } else {
         children = await widget.provider.getChildren(_browseParent!.id!);
       }

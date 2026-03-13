@@ -143,22 +143,20 @@ class TaskListScreenState extends State<TaskListScreen>
     });
   }
 
-  Future<void> _fileTask(Task task, {bool autoAdvance = false}) async {
+  Future<void> _fileTask(Task task) async {
     final provider = context.read<TaskProvider>();
     final messenger = ScaffoldMessenger.of(context);
-    final remaining = autoAdvance ? (_inboxCount - 1) : 0;
     final result = await showDialog<TriageResult>(
       context: context,
       builder: (_) => TriageDialog(
         task: task,
         provider: provider,
-        remainingCount: remaining,
       ),
     );
     if (result == null || !mounted) return;
 
     if (result.keepAtTopLevel) {
-      await _dismissFromInbox(task, autoAdvance: autoAdvance);
+      await _dismissFromInbox(task);
       return;
     }
 
@@ -168,26 +166,21 @@ class TaskListScreenState extends State<TaskListScreen>
       if (!mounted) return;
       if (success) {
         await _loadInboxTasks();
-        if (!autoAdvance) {
-          messenger.clearSnackBars();
-          messenger.showSnackBar(
-            SnackBar(
-              content: Text('Filed "${task.name}" under "${result.parent!.name}"'),
-              showCloseIcon: true,
-              persist: false,
-              action: SnackBarAction(
-                label: 'Undo',
-                onPressed: () async {
-                  await provider.unfileTask(task.id!, parentId);
-                  if (mounted) await _loadInboxTasks();
-                },
-              ),
+        messenger.clearSnackBars();
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Filed "${task.name}" under "${result.parent!.name}"'),
+            showCloseIcon: true,
+            persist: false,
+            action: SnackBarAction(
+              label: 'Undo',
+              onPressed: () async {
+                await provider.unfileTask(task.id!, parentId);
+                if (mounted) await _loadInboxTasks();
+              },
             ),
-          );
-        }
-        if (autoAdvance && _inboxTasks != null && _inboxTasks!.isNotEmpty && mounted) {
-          await _fileTask(_inboxTasks!.first, autoAdvance: true);
-        }
+          ),
+        );
       } else {
         messenger.showSnackBar(
           const SnackBar(content: Text('Cannot file: would create a cycle'), showCloseIcon: true, persist: false),
@@ -196,42 +189,68 @@ class TaskListScreenState extends State<TaskListScreen>
     }
   }
 
-  Future<void> _dismissFromInbox(Task task, {bool autoAdvance = false}) async {
+  Future<void> _dismissFromInbox(Task task) async {
     final provider = context.read<TaskProvider>();
     await provider.dismissFromInbox(task.id!);
     if (!mounted) return;
-    if (!autoAdvance) {
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Kept "${task.name}" at top level'),
-          showCloseIcon: true,
-          persist: false,
-          action: SnackBarAction(
-            label: 'Undo',
-            onPressed: () async {
-              await provider.undoDismissFromInbox(task.id!);
-              if (mounted) await _loadInboxTasks();
-            },
-          ),
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Kept "${task.name}" at top level'),
+        showCloseIcon: true,
+        persist: false,
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () async {
+            await provider.undoDismissFromInbox(task.id!);
+            if (mounted) await _loadInboxTasks();
+          },
         ),
-      );
-    }
+      ),
+    );
     await _loadInboxTasks();
-    if (autoAdvance && _inboxTasks != null && _inboxTasks!.isNotEmpty && mounted) {
-      await _fileTask(_inboxTasks!.first, autoAdvance: true);
-    }
   }
 
   Future<void> _fileAll() async {
     if (_inboxTasks == null || _inboxTasks!.isEmpty) return;
-    await _fileTask(_inboxTasks!.first, autoAdvance: true);
+    final provider = context.read<TaskProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+    // Iterative loop instead of recursion to avoid deep call stacks
+    while (_inboxTasks != null && _inboxTasks!.isNotEmpty && mounted) {
+      final task = _inboxTasks!.first;
+      final remaining = _inboxTasks!.length - 1;
+      if (!mounted) break;
+      final result = await showDialog<TriageResult>(
+        context: context,
+        builder: (_) => TriageDialog(
+          task: task,
+          provider: provider,
+          remainingCount: remaining,
+        ),
+      );
+      if (result == null || !mounted) break; // user cancelled — stop batch
+
+      if (result.keepAtTopLevel) {
+        await provider.dismissFromInbox(task.id!);
+      } else if (result.parent != null) {
+        final success = await provider.fileTask(task.id!, result.parent!.id!);
+        if (!mounted) break;
+        if (!success) {
+          messenger.showSnackBar(
+            const SnackBar(content: Text('Cannot file: would create a cycle'), showCloseIcon: true, persist: false),
+          );
+          continue; // retry same task
+        }
+      }
+      if (!mounted) break;
+      await _loadInboxTasks();
+    }
     // Show summary snackbar after batch completes
     if (mounted) {
-      ScaffoldMessenger.of(context).clearSnackBars();
+      messenger.clearSnackBars();
       final remaining = _inboxTasks?.length ?? 0;
       if (remaining == 0) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(content: Text('Inbox cleared!'), showCloseIcon: true, persist: false),
         );
       }
