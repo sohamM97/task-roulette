@@ -1,5 +1,3 @@
-export 'dart:math' show exp;
-
 const _stopWords = <String>{
   'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
   'of', 'with', 'by', 'from', 'is', 'it', 'my', 'do', 'up',

@@ -8,6 +8,7 @@ import '../models/task.dart';
 import '../models/task_schedule.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
+import '../theme/app_colors.dart';
 import '../widgets/add_task_dialog.dart';
 import '../widgets/brain_dump_dialog.dart';
 import '../widgets/completion_animation.dart';
@@ -929,68 +930,88 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   Widget _buildInboxSection(TaskProvider provider) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        InkWell(
-          onTap: () => setState(() => _inboxExpanded = !_inboxExpanded),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-            child: Row(
-              children: [
-                Icon(
-                  _inboxExpanded ? Icons.expand_more : Icons.chevron_right,
-                  size: 20,
-                ),
-                const SizedBox(width: 4),
-                Icon(Icons.inbox, size: 18,
-                    color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Inbox ($_inboxCount)',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    color: Theme.of(context).colorScheme.primary,
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withAlpha(60),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            onTap: () => setState(() => _inboxExpanded = !_inboxExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(Icons.inbox, size: 20, color: colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Inbox ($_inboxCount)',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: colorScheme.primary,
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                  Icon(
+                    _inboxExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 20,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-        if (_inboxExpanded) ...[
-          if (_inboxTasks == null)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else
-            ...(_inboxTasks!.map((task) => Card(
-              margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-              child: ListTile(
-                dense: true,
-                title: Text(task.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.drive_file_move_outline, size: 20),
-                      tooltip: 'File under...',
-                      onPressed: () => _fileTask(task),
+          if (_inboxExpanded) ...[
+            if (_inboxTasks == null)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else
+              ...(_inboxTasks!.map((task) {
+                final cardColor = AppColors.cardColor(context, task.id ?? 0);
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  child: Material(
+                    color: cardColor,
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => _fileTask(task),
+                      onLongPress: () => provider.navigateInto(task),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                task.name,
+                                style: Theme.of(context).textTheme.bodyMedium,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            Icon(
+                              Icons.chevron_right,
+                              size: 18,
+                              color: colorScheme.onSurfaceVariant.withAlpha(120),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.close, size: 18),
-                      tooltip: 'Keep at top level',
-                      onPressed: () => _dismissFromInbox(task),
-                    ),
-                  ],
-                ),
-                onTap: () => provider.navigateInto(task),
-              ),
-            ))),
-          const SizedBox(height: 12),
-          const Divider(height: 1),
-          const SizedBox(height: 8),
+                  ),
+                );
+              })),
+            const SizedBox(height: 8),
+          ],
         ],
-      ],
+      ),
     );
   }
 

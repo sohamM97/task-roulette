@@ -117,30 +117,62 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
               ),
               const Spacer(),
               if (widget.showInboxOption)
-                IconButton(
-                  icon: Icon(
-                    _inbox ? Icons.inbox : Icons.inbox_outlined,
-                    size: 20,
-                    color: _inbox
-                        ? colorScheme.primary
-                        : colorScheme.onSurfaceVariant.withAlpha(120),
+                InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => setState(() => _inbox = !_inbox),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _inbox ? Icons.inbox : Icons.inbox_outlined,
+                          size: 16,
+                          color: _inbox
+                              ? colorScheme.primary
+                              : colorScheme.onSurfaceVariant.withAlpha(120),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Inbox',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: _inbox
+                                ? colorScheme.primary
+                                : colorScheme.onSurfaceVariant.withAlpha(120),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  tooltip: _inbox ? 'Inbox: on' : 'Inbox: off',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => setState(() => _inbox = !_inbox),
                 ),
               if (widget.showPinOption)
-                IconButton(
-                  icon: Icon(
-                    _pin ? Icons.push_pin : Icons.push_pin_outlined,
-                    size: 20,
-                    color: _pin
-                        ? colorScheme.tertiary
-                        : colorScheme.onSurfaceVariant.withAlpha(120),
+                InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => setState(() => _pin = !_pin),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _pin ? Icons.push_pin : Icons.push_pin_outlined,
+                          size: 16,
+                          color: _pin
+                              ? colorScheme.tertiary
+                              : colorScheme.onSurfaceVariant.withAlpha(120),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Pin',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: _pin
+                                ? colorScheme.tertiary
+                                : colorScheme.onSurfaceVariant.withAlpha(120),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  tooltip: _pin ? 'Pinned for today' : 'Pin for today',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => setState(() => _pin = !_pin),
                 ),
             ],
           ),

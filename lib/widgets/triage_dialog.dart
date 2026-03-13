@@ -28,32 +28,38 @@ class TriageDialog extends StatefulWidget {
   State<TriageDialog> createState() => _TriageDialogState();
 }
 
-enum _TriagePhase { suggestions, browse, search }
+enum _TriagePhase { suggestions, browse }
 
 class _TriageDialogState extends State<TriageDialog> {
-  _TriagePhase _phase = _TriagePhase.browse;
+  _TriagePhase _phase = _TriagePhase.suggestions;
 
   // Suggestions state
   List<({Task task, double score})>? _suggestions;
   Map<int, List<String>>? _suggestionParentNames;
   bool _suggestionsLoading = false;
 
-  // Browse state
+  // Browse + search state (unified)
   final List<Task?> _browseStack = [];
   Task? _browseParent;
   List<Task> _browseChildren = [];
   bool _browseLoading = true;
   bool _browseShowAll = false;
-
-  // Search state
+  final _searchController = TextEditingController();
+  String _searchFilter = '';
   List<Task>? _allTasks;
   Map<int, List<String>>? _parentNamesMap;
-  String _searchFilter = '';
 
   @override
   void initState() {
     super.initState();
-    _loadBrowseChildren();
+    _loadSuggestions();
+    _loadBrowseChildren(); // pre-load for quick switch
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   // --- Suggestions ---
@@ -66,8 +72,6 @@ class _TriageDialogState extends State<TriageDialog> {
         widget.task.name,
         excludeTaskId: widget.task.id,
       );
-      // Reuse the cached parent names map (single query) instead of
-      // N sequential getAncestorPath calls that cause DB lock warnings.
       _parentNamesMap ??= await widget.provider.getParentNamesMap();
       if (!mounted) return;
       final paths = <int, List<String>>{};
@@ -77,11 +81,21 @@ class _TriageDialogState extends State<TriageDialog> {
           paths[s.task.id!] = parents;
         }
       }
-      setState(() {
-        _suggestions = suggestions;
-        _suggestionParentNames = paths;
-        _suggestionsLoading = false;
-      });
+      if (suggestions.isEmpty) {
+        // No useful suggestions — fall back to browse
+        setState(() {
+          _suggestions = suggestions;
+          _suggestionParentNames = paths;
+          _suggestionsLoading = false;
+          _phase = _TriagePhase.browse;
+        });
+      } else {
+        setState(() {
+          _suggestions = suggestions;
+          _suggestionParentNames = paths;
+          _suggestionsLoading = false;
+        });
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -110,7 +124,12 @@ class _TriageDialogState extends State<TriageDialog> {
         if (aMatch != bMatch) return aMatch.compareTo(bMatch);
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
-      children = children.where((t) => t.id != widget.task.id).toList();
+      children = children.where((t) {
+        if (t.id == widget.task.id) return false;
+        // At root level, hide other inbox tasks — they're not valid filing targets
+        if (_browseParent == null && t.isInbox) return false;
+        return true;
+      }).toList();
       if (!mounted) return;
       setState(() {
         _browseChildren = children;
@@ -138,12 +157,11 @@ class _TriageDialogState extends State<TriageDialog> {
     await _loadBrowseChildren();
   }
 
-  // --- Search ---
+  // --- Search data (loaded lazily when user starts typing) ---
 
   Future<void> _loadSearchData() async {
-    if (_allTasks != null) return; // already loaded
+    if (_allTasks != null) return;
     try {
-      // Sequential queries to avoid sqflite deadlock
       final allTasks = await widget.provider.getAllTasks();
       _parentNamesMap ??= await widget.provider.getParentNamesMap();
       if (!mounted) return;
@@ -161,7 +179,6 @@ class _TriageDialogState extends State<TriageDialog> {
 
   List<Task> get _filteredSearch {
     if (_allTasks == null) return [];
-    if (_searchFilter.isEmpty) return _allTasks!;
     final lower = _searchFilter.toLowerCase();
     return _allTasks!.where((t) {
       if (t.name.toLowerCase().contains(lower)) return true;
@@ -172,6 +189,8 @@ class _TriageDialogState extends State<TriageDialog> {
       return false;
     }).toList();
   }
+
+  bool get _isSearching => _searchFilter.isNotEmpty;
 
   // --- Build ---
 
@@ -196,8 +215,7 @@ class _TriageDialogState extends State<TriageDialog> {
               Flexible(
                 child: switch (_phase) {
                   _TriagePhase.suggestions => _buildSuggestions(),
-                  _TriagePhase.browse => _buildBrowse(),
-                  _TriagePhase.search => _buildSearch(),
+                  _TriagePhase.browse => _buildBrowseWithSearch(),
                 },
               ),
               const SizedBox(height: 8),
@@ -290,7 +308,77 @@ class _TriageDialogState extends State<TriageDialog> {
     );
   }
 
-  Widget _buildBrowse() {
+  Widget _buildBrowseWithSearch() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Search bar — always visible
+        TextField(
+          controller: _searchController,
+          maxLength: 500,
+          decoration: InputDecoration(
+            hintText: 'Search tasks...',
+            prefixIcon: const Icon(Icons.search, size: 20),
+            border: const OutlineInputBorder(),
+            isDense: true,
+            counterText: '',
+            suffixIcon: _isSearching
+                ? IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() => _searchFilter = '');
+                    },
+                  )
+                : null,
+          ),
+          onChanged: (value) {
+            if (value.isNotEmpty && _allTasks == null) _loadSearchData();
+            setState(() => _searchFilter = value);
+          },
+        ),
+        const SizedBox(height: 8),
+        // Content: search results OR browse tree
+        Expanded(
+          child: _isSearching ? _buildSearchResults() : _buildBrowseTree(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearchResults() {
+    if (_allTasks == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final filtered = _filteredSearch;
+    if (filtered.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text('No matching tasks'),
+        ),
+      );
+    }
+    return ListView.builder(
+      itemCount: filtered.length,
+      itemBuilder: (context, index) {
+        final task = filtered[index];
+        final parents = _parentNamesMap?[task.id!];
+        final subtitle =
+            parents != null && parents.isNotEmpty
+                ? 'under ${parents.join(', ')}'
+                : null;
+        return _buildTaskCard(
+          task,
+          subtitle: subtitle,
+          onTap: () => Navigator.pop(
+              context, TriageResult(parent: task)),
+        );
+      },
+    );
+  }
+
+  Widget _buildBrowseTree() {
     final colorScheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -310,17 +398,25 @@ class _TriageDialogState extends State<TriageDialog> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+            if (_browseParent != null)
+              TextButton.icon(
+                onPressed: () =>
+                    Navigator.pop(context, TriageResult(parent: _browseParent)),
+                icon: Icon(Icons.check, size: 16, color: colorScheme.primary),
+                label: Text('Here',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colorScheme.primary,
+                  ),
+                ),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
           ],
         ),
-        if (_browseParent != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: FilledButton.tonal(
-              onPressed: () =>
-                  Navigator.pop(context, TriageResult(parent: _browseParent)),
-              child: Text('Place under "${_browseParent!.name}"'),
-            ),
-          ),
         const Divider(height: 1),
         const SizedBox(height: 6),
         if (_browseParent == null)
@@ -390,92 +486,33 @@ class _TriageDialogState extends State<TriageDialog> {
     );
   }
 
-  Widget _buildSearch() {
-    final filtered = _filteredSearch;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          autofocus: true,
-          maxLength: 500,
-          decoration: const InputDecoration(
-            hintText: 'Search tasks...',
-            prefixIcon: Icon(Icons.search),
-            border: OutlineInputBorder(),
-            isDense: true,
-            counterText: '',
-          ),
-          onChanged: (value) => setState(() => _searchFilter = value),
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: _allTasks == null
-              ? const Center(child: CircularProgressIndicator())
-              : filtered.isEmpty
-                  ? const Center(
-                      child: Padding(
-                          padding: EdgeInsets.all(24),
-                          child: Text('No matching tasks')))
-                  : ListView.builder(
-                      itemCount: filtered.length,
-                      itemBuilder: (context, index) {
-                        final task = filtered[index];
-                        final parents = _parentNamesMap?[task.id!];
-                        final subtitle =
-                            parents != null && parents.isNotEmpty
-                                ? 'under ${parents.join(', ')}'
-                                : null;
-                        return _buildTaskCard(
-                          task,
-                          subtitle: subtitle,
-                          onTap: () => Navigator.pop(
-                              context, TriageResult(parent: task)),
-                        );
-                      },
-                    ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildBottomActions() {
-    return Wrap(
-      spacing: 8,
-      alignment: WrapAlignment.end,
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
       children: [
-        if (_phase != _TriagePhase.browse)
-          TextButton.icon(
-            icon: const Icon(Icons.folder_open, size: 18),
-            label: const Text('Browse'),
-            onPressed: () {
-              setState(() {
-                _phase = _TriagePhase.browse;
-                _browseStack.clear();
-                _browseParent = null;
-                _browseShowAll = false;
-              });
-              _loadBrowseChildren();
-            },
-          ),
-        if (_phase != _TriagePhase.search)
-          TextButton.icon(
-            icon: const Icon(Icons.search, size: 18),
-            label: const Text('Search'),
-            onPressed: () {
-              setState(() {
-                _phase = _TriagePhase.search;
-                _searchFilter = '';
-              });
-              _loadSearchData();
-            },
-          ),
-        if (_phase == _TriagePhase.browse || _phase == _TriagePhase.search)
+        if (_phase == _TriagePhase.browse)
           TextButton.icon(
             icon: const Icon(Icons.lightbulb_outline, size: 18),
             label: const Text('Suggestions'),
             onPressed: () {
               setState(() => _phase = _TriagePhase.suggestions);
               if (_suggestions == null) _loadSuggestions();
+            },
+          ),
+        if (_phase == _TriagePhase.suggestions)
+          TextButton.icon(
+            icon: const Icon(Icons.folder_open, size: 18),
+            label: const Text('Browse'),
+            onPressed: () {
+              setState(() {
+                _phase = _TriagePhase.browse;
+                _searchFilter = '';
+                _searchController.clear();
+                _browseStack.clear();
+                _browseParent = null;
+                _browseShowAll = false;
+              });
+              _loadBrowseChildren();
             },
           ),
       ],
