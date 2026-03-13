@@ -58,6 +58,8 @@ class TaskListScreenState extends State<TaskListScreen>
   @override
   bool get wantKeepAlive => true;
 
+  TaskProvider? _providerRef;
+
   @override
   void initState() {
     super.initState();
@@ -66,6 +68,33 @@ class TaskListScreenState extends State<TaskListScreen>
     // lazily builds this screen for the first time.
     loadTodaysFiveIds();
     _loadInboxCount();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final provider = context.read<TaskProvider>();
+    if (_providerRef != provider) {
+      _providerRef?.removeListener(_onProviderChanged);
+      _providerRef = provider;
+      provider.addListener(_onProviderChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    _providerRef?.removeListener(_onProviderChanged);
+    super.dispose();
+  }
+
+  void _onProviderChanged() {
+    // Refresh inbox when returning to root after mutations (e.g. complete/delete
+    // an inbox task from its leaf view). Without this, the cached _inboxTasks
+    // list shows stale entries.
+    final provider = _providerRef;
+    if (provider != null && provider.isRoot) {
+      _loadInboxTasks();
+    }
   }
 
   Future<void> loadTodaysFiveIds() async {
