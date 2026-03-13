@@ -19,9 +19,9 @@ Generate a checklist of manual tests the user should run for recent changes.
    - **Data/DB changes** — schema migrations, new queries
    - **Edge cases** — boundary conditions, empty states, error paths
 
-3. Generate a numbered checklist of manual tests. Keep each test **short** — one line for what to do, one line for what to expect. No verbose setup paragraphs. The user should be able to scan the list quickly without getting bored.
+3. **Before writing any test**, read the widget code for every screen/dialog touched by the changes. Note the exact button labels, icon names, menu item text, and how each interaction is triggered (tap, long press, swipe, overflow menu, etc.). Do NOT proceed to step 4 until you have read every relevant widget file.
 
-4. **IMPORTANT**: Before writing any test that references UI elements (button labels, icons, menu items, gestures), read the actual widget code to verify the element exists and how to interact with it. Never guess at UI details.
+4. Generate a numbered checklist of manual tests. Keep each test **short** — one line for what to do, one line for what to expect. No verbose setup paragraphs. The user should be able to scan the list quickly without getting bored. Every UI element referenced in a test step MUST come from step 3's reading — never from memory or assumption.
 
 5. Prioritize tests by risk:
    - Start with **happy path** tests that verify the core change works
@@ -49,7 +49,7 @@ Generate a checklist of manual tests the user should run for recent changes.
 
 ## Rules
 
-- Always verify UI elements by reading widget code before mentioning them in test steps.
+- BLOCKING: You must read every relevant widget file in step 3 before generating any tests. If a test step mentions a UI element you haven't read the code for, delete the test and read the code first.
 - Don't suggest tests that duplicate what automated tests already cover — check the test files first.
 - If a change is purely algorithmic with no UI impact, say so and focus tests on observable outcomes.
 - Mention which platform to test on (Linux via `./dev.sh` unless the change is mobile-specific).
