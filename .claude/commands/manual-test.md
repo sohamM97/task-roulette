@@ -19,10 +19,7 @@ Generate a checklist of manual tests the user should run for recent changes.
    - **Data/DB changes** — schema migrations, new queries
    - **Edge cases** — boundary conditions, empty states, error paths
 
-3. Generate a numbered checklist of manual tests. For each test:
-   - Describe the **setup** (what state to create — e.g. "create a root with 15+ leaf tasks")
-   - Describe the **action** (what to do — e.g. "generate Today's 5 three times")
-   - Describe the **expected result** (what to verify — e.g. "small root tasks appear at least once across 3 generations")
+3. Generate a numbered checklist of manual tests. Keep each test **short** — one line for what to do, one line for what to expect. No verbose setup paragraphs. The user should be able to scan the list quickly without getting bored.
 
 4. **IMPORTANT**: Before writing any test that references UI elements (button labels, icons, menu items, gestures), read the actual widget code to verify the element exists and how to interact with it. Never guess at UI details.
 

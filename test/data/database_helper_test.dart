@@ -2824,23 +2824,23 @@ void main() {
       await db.importDatabase(v14DbPath);
     });
 
-    test('rejects version 18 as too high', () async {
+    test('rejects version 19 as too high', () async {
       DatabaseHelper.testDatabasePath = mainDbPath;
       await db.reset();
       await db.database;
 
-      final v18DbPath = '${tempDir.path}/v18.db';
-      final v18Db = await openDatabase(v18DbPath, version: 18,
+      final v19DbPath = '${tempDir.path}/v19.db';
+      final v19Db = await openDatabase(v19DbPath, version: 19,
         onCreate: (db, version) async {
           await db.execute('CREATE TABLE tasks (id INTEGER PRIMARY KEY, name TEXT)');
           await db.execute('CREATE TABLE task_relationships (parent_id INTEGER, child_id INTEGER)');
           await db.execute('CREATE TABLE task_dependencies (task_id INTEGER, depends_on_task_id INTEGER)');
         },
       );
-      await v18Db.close();
+      await v19Db.close();
 
       expect(
-        () => db.importDatabase(v18DbPath),
+        () => db.importDatabase(v19DbPath),
         throwsA(isA<FormatException>().having(
           (e) => e.message, 'message', contains('Incompatible backup version'),
         )),
@@ -4625,6 +4625,151 @@ void main() {
       // Root A has 9 leaves, Root B has 1 → min is 1 → factor = 1/sqrt(1) = 1.0
       expect(normData.normFactors[shared], closeTo(1.0, 0.001));
       expect(normData.leafToRoots[shared], {rootA, rootB});
+    });
+  });
+
+  group('Inbox', () {
+    test('getInboxTasks returns only inbox tasks', () async {
+      await db.insertTask(Task(name: 'Inbox task', isInbox: true));
+      await db.insertTask(Task(name: 'Regular task', isInbox: false));
+      await db.insertTask(Task(name: 'Inbox task 2', isInbox: true));
+
+      final inboxTasks = await db.getInboxTasks();
+      expect(inboxTasks, hasLength(2));
+      expect(inboxTasks.map((t) => t.name), containsAll(['Inbox task', 'Inbox task 2']));
+    });
+
+    test('getInboxTasks excludes completed and skipped tasks', () async {
+      final id1 = await db.insertTask(Task(name: 'Active inbox', isInbox: true));
+      final id2 = await db.insertTask(Task(name: 'Done inbox', isInbox: true));
+      final id3 = await db.insertTask(Task(name: 'Skipped inbox', isInbox: true));
+
+      await db.completeTask(id2);
+      await db.skipTask(id3);
+
+      final inboxTasks = await db.getInboxTasks();
+      expect(inboxTasks, hasLength(1));
+      expect(inboxTasks.first.id, id1);
+    });
+
+    test('getInboxTasks returns newest first', () async {
+      await db.insertTask(Task(name: 'First', createdAt: 1000, isInbox: true));
+      await db.insertTask(Task(name: 'Second', createdAt: 2000, isInbox: true));
+
+      final inboxTasks = await db.getInboxTasks();
+      expect(inboxTasks.first.name, 'Second');
+      expect(inboxTasks.last.name, 'First');
+    });
+
+    test('getInboxCount returns correct count', () async {
+      await db.insertTask(Task(name: 'A', isInbox: true));
+      await db.insertTask(Task(name: 'B', isInbox: true));
+      await db.insertTask(Task(name: 'C', isInbox: false));
+
+      expect(await db.getInboxCount(), 2);
+    });
+
+    test('clearInboxFlag sets is_inbox to 0', () async {
+      final id = await db.insertTask(Task(name: 'Inbox', isInbox: true));
+      expect(await db.getInboxCount(), 1);
+
+      await db.clearInboxFlag(id);
+      expect(await db.getInboxCount(), 0);
+
+      // Verify the task still exists
+      final task = await db.getTaskById(id);
+      expect(task, isNotNull);
+      expect(task!.isInbox, isFalse);
+    });
+
+    test('setInboxFlag sets is_inbox to 1', () async {
+      final id = await db.insertTask(Task(name: 'Regular'));
+      expect(await db.getInboxCount(), 0);
+
+      await db.setInboxFlag(id);
+      expect(await db.getInboxCount(), 1);
+
+      final task = await db.getTaskById(id);
+      expect(task!.isInbox, isTrue);
+    });
+
+    test('setInboxFlag after clearInboxFlag restores inbox state', () async {
+      final id = await db.insertTask(Task(name: 'Inbox', isInbox: true));
+      await db.clearInboxFlag(id);
+      expect(await db.getInboxCount(), 0);
+
+      await db.setInboxFlag(id);
+      expect(await db.getInboxCount(), 1);
+    });
+
+    test('getMostRecentChildCreatedAt returns max created_at per parent', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final child1Id = await db.insertTask(Task(name: 'Child 1', createdAt: 1000));
+      final child2Id = await db.insertTask(Task(name: 'Child 2', createdAt: 3000));
+      await db.addRelationship(parentId, child1Id);
+      await db.addRelationship(parentId, child2Id);
+
+      final result = await db.getMostRecentChildCreatedAt([parentId]);
+      expect(result[parentId], 3000);
+    });
+
+    test('getMostRecentChildCreatedAt excludes completed children', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final child1Id = await db.insertTask(Task(name: 'Active', createdAt: 1000));
+      final child2Id = await db.insertTask(Task(name: 'Done', createdAt: 3000));
+      await db.addRelationship(parentId, child1Id);
+      await db.addRelationship(parentId, child2Id);
+      await db.completeTask(child2Id);
+
+      final result = await db.getMostRecentChildCreatedAt([parentId]);
+      expect(result[parentId], 1000);
+    });
+
+    test('getMostRecentChildCreatedAt returns empty for parentless', () async {
+      final id = await db.insertTask(Task(name: 'No children'));
+      final result = await db.getMostRecentChildCreatedAt([id]);
+      expect(result[id], isNull);
+    });
+
+    test('getChildNamesForParents returns child names', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final child1Id = await db.insertTask(Task(name: 'Alpha'));
+      final child2Id = await db.insertTask(Task(name: 'Beta'));
+      await db.addRelationship(parentId, child1Id);
+      await db.addRelationship(parentId, child2Id);
+
+      final result = await db.getChildNamesForParents([parentId]);
+      expect(result[parentId], containsAll(['Alpha', 'Beta']));
+    });
+
+    test('getChildNamesForParents excludes completed children', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final child1Id = await db.insertTask(Task(name: 'Active'));
+      final child2Id = await db.insertTask(Task(name: 'Done'));
+      await db.addRelationship(parentId, child1Id);
+      await db.addRelationship(parentId, child2Id);
+      await db.completeTask(child2Id);
+
+      final result = await db.getChildNamesForParents([parentId]);
+      expect(result[parentId], ['Active']);
+    });
+  });
+
+  group('Migration v17→v18', () {
+    test('adds is_inbox column with default 0', () async {
+      // Create a v17 database
+      await db.reset();
+      final dbInstance = await db.database;
+
+      // Verify the column exists
+      final columns = await dbInstance.rawQuery('PRAGMA table_info(tasks)');
+      final inboxColumn = columns.where((c) => c['name'] == 'is_inbox');
+      expect(inboxColumn, hasLength(1));
+
+      // Verify existing tasks have is_inbox = 0
+      final id = await db.insertTask(Task(name: 'Test'));
+      final task = await db.getTaskById(id);
+      expect(task!.isInbox, isFalse);
     });
   });
 }

@@ -14,6 +14,7 @@ class TaskCard extends StatelessWidget {
   final VoidCallback? onAddDependency;
   final VoidCallback? onSchedule;
   final VoidCallback? onStopWorking;
+  final VoidCallback? onFile;
   final bool isBlocked;
   final String? blockedByName;
   final bool isInTodaysFive;
@@ -32,6 +33,7 @@ class TaskCard extends StatelessWidget {
     this.onAddDependency,
     this.onSchedule,
     this.onStopWorking,
+    this.onFile,
     this.isBlocked = false,
     this.blockedByName,
     this.isInTodaysFive = false,
@@ -47,6 +49,15 @@ class TaskCard extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (onFile != null)
+                ListTile(
+                  leading: const Icon(Icons.drive_file_move_outline),
+                  title: const Text('File under...'),
+                  onTap: () {
+                    Navigator.pop(bottomSheetContext);
+                    onFile!();
+                  },
+                ),
               if (onRename != null)
                 ListTile(
                   leading: const Icon(Icons.edit),

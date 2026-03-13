@@ -5,6 +5,7 @@ import '../models/task.dart';
 import '../models/task_relationship.dart';
 import '../models/task_schedule.dart';
 import '../utils/display_utils.dart';
+import '../utils/inbox_scoring.dart';
 
 class TaskProvider extends ChangeNotifier {
   final DatabaseHelper _db = DatabaseHelper();
@@ -55,7 +56,8 @@ class TaskProvider extends ChangeNotifier {
 
   Future<void> navigateInto(Task task) async {
     _parentStack.add(_currentParent);
-    _currentParent = task;
+    // Reload from DB to avoid stale data (e.g. inbox tasks cached in local state).
+    _currentParent = await _db.getTaskById(task.id!) ?? task;
     await _refreshCurrentList();
   }
 
@@ -86,14 +88,14 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Inserts multiple tasks in a single transaction, refreshes once at the end.
-  Future<void> addTasksBatch(List<String> names) async {
-    final tasks = names.map((name) => Task(name: name)).toList();
+  Future<void> addTasksBatch(List<String> names, {bool isInbox = false}) async {
+    final tasks = names.map((name) => Task(name: name, isInbox: isInbox)).toList();
     await _db.insertTasksBatch(tasks, _currentParent?.id);
     await _refreshAfterMutation();
   }
 
-  Future<int> addTask(String name, {String? url, List<int>? additionalParentIds}) async {
-    final task = Task(name: name, url: url);
+  Future<int> addTask(String name, {String? url, List<int>? additionalParentIds, bool isInbox = false}) async {
+    final task = Task(name: name, url: url, isInbox: isInbox);
     final taskId = await _db.insertTask(task);
 
     if (_currentParent != null) {
@@ -405,6 +407,10 @@ class TaskProvider extends ChangeNotifier {
   /// Computes normalization data for fair Today's 5 selection.
   Future<NormalizationData> getNormalizationData(List<int> leafIds) =>
       _db.getNormalizationData(leafIds);
+
+  Future<List<Task>> getRootTasks() async {
+    return _db.getRootTasks();
+  }
 
   Future<List<Task>> getAllTasks() async {
     return _db.getAllTasks();
@@ -798,5 +804,106 @@ class TaskProvider extends ChangeNotifier {
 
   Future<Set<int>> getScheduleBoostedLeafIds() async {
     return _db.getScheduleBoostedLeafIds();
+  }
+
+  // --- Inbox methods ---
+
+  Future<int> getInboxCount() => _db.getInboxCount();
+
+  Future<List<Task>> getInboxTasks() => _db.getInboxTasks();
+
+  /// Files an inbox task under a parent: adds the relationship and clears
+  /// the inbox flag. Returns false if it would create a cycle.
+  Future<bool> fileTask(int taskId, int parentId) async {
+    final wouldCycle = await _db.hasPath(taskId, parentId);
+    if (wouldCycle) return false;
+    await _db.addRelationship(parentId, taskId);
+    await _db.clearInboxFlag(taskId);
+    await _refreshAfterMutation();
+    return true;
+  }
+
+  /// Undoes a fileTask: removes the relationship and restores the inbox flag.
+  Future<void> unfileTask(int taskId, int parentId) async {
+    await _db.removeRelationship(parentId, taskId);
+    await _db.setInboxFlag(taskId);
+    await _refreshAfterMutation();
+  }
+
+  /// Undoes a dismissFromInbox: restores the inbox flag.
+  Future<void> undoDismissFromInbox(int taskId) async {
+    await _db.setInboxFlag(taskId);
+    await _refreshAfterMutation();
+  }
+
+  /// Dismisses a task from inbox without assigning a parent (keeps it at root).
+  Future<void> dismissFromInbox(int taskId) async {
+    await _db.clearInboxFlag(taskId);
+    await _refreshAfterMutation();
+  }
+
+  /// Computes parent suggestions for an inbox task, scoring by keyword match,
+  /// recency of children, and sibling name similarity.
+  Future<List<({Task task, double score})>> computeParentSuggestions(
+    String taskName, {
+    int limit = 5,
+    int? excludeTaskId,
+  }) async {
+    final rawTasks = await _db.getAllTasks();
+    final allTasks = excludeTaskId != null
+        ? rawTasks.where((t) => t.id != excludeTaskId).toList()
+        : rawTasks;
+    if (allTasks.isEmpty) return [];
+
+    final candidateIds = allTasks.map((t) => t.id!).toList();
+
+    // Sequential to avoid sqflite deadlock (single-threaded DB queue)
+    final recencyMap = await _db.getMostRecentChildCreatedAt(candidateIds);
+    final childNamesMap = await _db.getChildNamesForParents(candidateIds);
+
+    final taskTokens = tokenize(taskName);
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    final scored = <({Task task, double score})>[];
+    for (final candidate in allTasks) {
+      final candidateTokens = tokenize(candidate.name);
+      final keywordScore = jaccardSimilarity(taskTokens, candidateTokens);
+
+      // Substring boost: "Buy groceries" matches parent "Groceries"
+      final substringScore = substringMatch(taskName, candidate.name);
+
+      double recencyScore = 0.0;
+      final lastChildCreated = recencyMap[candidate.id!];
+      if (lastChildCreated != null) {
+        final daysSince = (now - lastChildCreated) / (1000 * 60 * 60 * 24);
+        recencyScore = exp(-daysSince / 7);
+      }
+
+      double siblingScore = 0.0;
+      final childNames = childNamesMap[candidate.id!];
+      if (childNames != null && childNames.isNotEmpty) {
+        final allChildTokens = <String>{};
+        for (final name in childNames) {
+          allChildTokens.addAll(tokenize(name));
+        }
+        siblingScore = jaccardSimilarity(taskTokens, allChildTokens);
+      }
+
+      // Category boost: parents with more children are likely categories
+      final childCount = childNames?.length ?? 0;
+      final categoryBoost = childCount >= 3 ? 0.15 : childCount >= 1 ? 0.05 : 0.0;
+
+      final score = 0.35 * keywordScore
+          + 0.20 * substringScore
+          + 0.15 * recencyScore
+          + 0.15 * siblingScore
+          + categoryBoost;
+      if (score > 0.01) {
+        scored.add((task: candidate, score: score));
+      }
+    }
+
+    scored.sort((a, b) => b.score.compareTo(a.score));
+    return scored.take(limit).toList();
   }
 }

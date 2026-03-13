@@ -538,6 +538,7 @@ class FirestoreService {
       'updated_at': {'integerValue': (task.updatedAt ?? DateTime.now().millisecondsSinceEpoch).toString()},
       if (task.isSomeday) 'is_someday': {'booleanValue': true},
       if (task.isScheduleOverride) 'is_schedule_override': {'booleanValue': true},
+      if (task.isInbox) 'is_inbox': {'booleanValue': true},
     };
   }
 
@@ -574,6 +575,7 @@ class FirestoreService {
       syncStatus: 'synced',
       isSomeday: _boolField(fields, 'is_someday'),
       isScheduleOverride: _boolField(fields, 'is_schedule_override'),
+      isInbox: _boolField(fields, 'is_inbox'),
     );
   }
 

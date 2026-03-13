@@ -2,10 +2,18 @@ import 'package:flutter/material.dart';
 
 /// Dialog for rapid multi-task entry. Each line becomes a separate task.
 /// Returns a list of task names (non-empty, trimmed).
+/// Result from BrainDumpDialog: task names + inbox preference.
+class BrainDumpResult {
+  final List<String> names;
+  final bool addToInbox;
+  BrainDumpResult(this.names, {this.addToInbox = false});
+}
+
 class BrainDumpDialog extends StatefulWidget {
   final String initialText;
+  final bool showInboxOption;
 
-  const BrainDumpDialog({super.key, this.initialText = ''});
+  const BrainDumpDialog({super.key, this.initialText = '', this.showInboxOption = false});
 
   @override
   State<BrainDumpDialog> createState() => _BrainDumpDialogState();
@@ -14,6 +22,7 @@ class BrainDumpDialog extends StatefulWidget {
 class _BrainDumpDialogState extends State<BrainDumpDialog> {
   final _controller = TextEditingController();
   int _lineCount = 0;
+  bool _inbox = true;
 
   @override
   void initState() {
@@ -43,7 +52,7 @@ class _BrainDumpDialogState extends State<BrainDumpDialog> {
   void _submit() {
     final names = _parseNames();
     if (names.isNotEmpty) {
-      Navigator.pop(context, names);
+      Navigator.pop(context, BrainDumpResult(names, addToInbox: widget.showInboxOption && _inbox));
     }
   }
 
@@ -83,13 +92,48 @@ class _BrainDumpDialogState extends State<BrainDumpDialog> {
                 counterText: '',
               ),
             ),
-            if (_lineCount > 0) ...[
+            if (_lineCount > 0 || widget.showInboxOption) ...[
               const SizedBox(height: 8),
-              Text(
-                '$_lineCount ${_lineCount == 1 ? 'task' : 'tasks'}',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+              Row(
+                children: [
+                  if (_lineCount > 0)
+                    Text(
+                      '$_lineCount ${_lineCount == 1 ? 'task' : 'tasks'}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
                     ),
+                  const Spacer(),
+                  if (widget.showInboxOption)
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () => setState(() => _inbox = !_inbox),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _inbox ? Icons.inbox : Icons.inbox_outlined,
+                              size: 16,
+                              color: _inbox
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(context).colorScheme.onSurfaceVariant.withAlpha(120),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Inbox',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: _inbox
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context).colorScheme.onSurfaceVariant.withAlpha(120),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ],
           ],

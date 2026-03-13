@@ -23,6 +23,18 @@ flutter test                                      # test
 flutter test --coverage                           # with coverage
 ```
 
+**Test output handling:** `flutter test` uses `\r` for progress, making raw output huge. Save to a file and grep the summary:
+```bash
+# Linux/macOS
+flutter test 2>&1 | tr '\r' '\n' > /tmp/flutter_test_output.txt
+grep -E "passed|failed|All tests" /tmp/flutter_test_output.txt | tail -3
+
+# Windows (PowerShell)
+flutter test 2>&1 | Out-File -FilePath $env:TEMP\flutter_test_output.txt
+Select-String -Pattern "passed|failed|All tests" $env:TEMP\flutter_test_output.txt | Select-Object -Last 3
+```
+On failure, read the output file for details.
+
 ## Architecture
 
 - Tasks in `tasks` table, relationships in `task_relationships` (parent_id, child_id). Multi-parent DAG with cycle prevention via recursive CTE (`DatabaseHelper.hasPath()`).
@@ -62,7 +74,7 @@ Hooks in `.claude/hooks/` enforce guardrails automatically:
 - Ask user about committing and pushing occasionally — don't wait until asked. Remind them to review changes and test on Linux (via `./dev.sh`) first.
 - After completing a new feature, ask the user if they want to add test cases for it.
 - When a bug is found and confirmed reproducible, always add a test case for it.
-- When writing tests in bulk, use `flutter test --coverage` + `genhtml` to find gaps.
+- When writing tests in bulk, use `flutter test --coverage` to find gaps. Parse `coverage/lcov.info` directly (`genhtml` may not be installed).
 - **Manual test checklists**: Always verify UI elements (button labels, icon placements, interaction patterns) by reading the actual widget code before writing test instructions. Never guess.
 - Capture any user-mentioned future work items as todo tasks immediately.
 - When setup instructions change (new deps, build steps), ask user if they want to update README.

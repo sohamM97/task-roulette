@@ -103,7 +103,8 @@ class DatabaseHelper {
             updated_at INTEGER,
             sync_status TEXT NOT NULL DEFAULT 'synced',
             is_someday INTEGER NOT NULL DEFAULT 0,
-            is_schedule_override INTEGER NOT NULL DEFAULT 0
+            is_schedule_override INTEGER NOT NULL DEFAULT 0,
+            is_inbox INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_sync_id ON tasks(sync_id)');
@@ -311,6 +312,9 @@ class DatabaseHelper {
           await db.execute('CREATE INDEX IF NOT EXISTS idx_task_schedules_specific_date ON task_schedules(specific_date)');
           await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_task_schedules_sync_id ON task_schedules(sync_id)');
         }
+        if (oldVersion < 18) {
+          await db.execute('ALTER TABLE tasks ADD COLUMN is_inbox INTEGER NOT NULL DEFAULT 0');
+        }
       },
     );
   }
@@ -323,7 +327,7 @@ class DatabaseHelper {
   }
 
   static const _maxBackupSizeBytes = 100 * 1024 * 1024; // 100 MB
-  static const _dbVersion = 17;
+  static const _dbVersion = 18;
   static const _expectedTables = ['tasks', 'task_relationships', 'task_dependencies'];
 
   /// Validates that [sourcePath] is a valid TaskRoulette backup.
@@ -793,6 +797,94 @@ class DatabaseHelper {
       AND p.skipped_at IS NULL AND c.skipped_at IS NULL
     ''');
     return maps.map((m) => TaskRelationship.fromMap(m)).toList();
+  }
+
+  // --- Inbox methods ---
+
+  /// Returns active inbox tasks (not completed, not skipped), newest first.
+  Future<List<Task>> getInboxTasks() async {
+    final db = await database;
+    final maps = await db.rawQuery('''
+      SELECT * FROM tasks
+      WHERE is_inbox = 1
+      AND completed_at IS NULL
+      AND skipped_at IS NULL
+      ORDER BY created_at DESC
+    ''');
+    return _tasksFromMaps(maps);
+  }
+
+  /// Returns count of active inbox tasks.
+  Future<int> getInboxCount() async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      SELECT COUNT(*) as cnt FROM tasks
+      WHERE is_inbox = 1
+      AND completed_at IS NULL
+      AND skipped_at IS NULL
+    ''');
+    return result.first['cnt'] as int;
+  }
+
+  /// Clears the inbox flag on a task and marks it dirty for sync.
+  Future<void> clearInboxFlag(int taskId) async {
+    final db = await database;
+    await db.update(
+      'tasks',
+      {'is_inbox': 0, ..._dirtyFields()},
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
+  /// Sets the inbox flag on a task and marks it dirty for sync.
+  Future<void> setInboxFlag(int taskId) async {
+    final db = await database;
+    await db.update(
+      'tasks',
+      {'is_inbox': 1, ..._dirtyFields()},
+      where: 'id = ?',
+      whereArgs: [taskId],
+    );
+  }
+
+  /// Returns {parentId: mostRecentChildCreatedAt} for the given parent IDs.
+  Future<Map<int, int>> getMostRecentChildCreatedAt(List<int> parentIds) async {
+    if (parentIds.isEmpty) return {};
+    final db = await database;
+    final placeholders = parentIds.map((_) => '?').join(',');
+    final rows = await db.rawQuery('''
+      SELECT tr.parent_id, MAX(t.created_at) as max_created
+      FROM task_relationships tr
+      INNER JOIN tasks t ON tr.child_id = t.id
+      WHERE tr.parent_id IN ($placeholders)
+      AND t.completed_at IS NULL AND t.skipped_at IS NULL
+      GROUP BY tr.parent_id
+    ''', parentIds);
+    return {
+      for (final row in rows)
+        row['parent_id'] as int: row['max_created'] as int,
+    };
+  }
+
+  /// Returns {parentId: [childName, ...]} for the given parent IDs.
+  Future<Map<int, List<String>>> getChildNamesForParents(List<int> parentIds) async {
+    if (parentIds.isEmpty) return {};
+    final db = await database;
+    final placeholders = parentIds.map((_) => '?').join(',');
+    final rows = await db.rawQuery('''
+      SELECT tr.parent_id, t.name
+      FROM task_relationships tr
+      INNER JOIN tasks t ON tr.child_id = t.id
+      WHERE tr.parent_id IN ($placeholders)
+      AND t.completed_at IS NULL AND t.skipped_at IS NULL
+    ''', parentIds);
+    final result = <int, List<String>>{};
+    for (final row in rows) {
+      final parentId = row['parent_id'] as int;
+      result.putIfAbsent(parentId, () => []).add(row['name'] as String);
+    }
+    return result;
   }
 
   /// Returns true if a task has at least one child in task_relationships.
