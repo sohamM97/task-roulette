@@ -2,12 +2,18 @@
 
 You are fixing issues found during code review of the TaskRoulette Flutter codebase.
 
+## Arguments
+
+- Optional: `deferred` — skip to fixing open/deferred items from previous rounds instead of the latest round.
+
 ## Workflow
 
 1. **Branch**: Make sure you're on the `code-review` branch. If not, check it out.
-2. **Read findings**: Read `docs/CODE_REVIEW.md` and find the latest round's findings.
+2. **Read findings**: Read `docs/CODE_REVIEW.md`.
+   - If argument is `deferred`: skip to step 4 (deferred items only).
+   - Otherwise: find the latest round's findings and proceed normally.
 3. **Prioritize**: Fix in order — Critical first, then Important, then Minor. Skip items explicitly marked as "won't fix" or "deferred".
-4. **Deferred items**: After fixing the latest round's findings, check if there are open/deferred items from earlier rounds. If there are, ask the user whether they'd like to fix those too before proceeding.
+4. **Deferred items**: After fixing the latest round's findings (or immediately if `deferred` argument), check open/deferred items from earlier rounds. Categorize them by effort (quick/medium/large), present the list to the user, and ask which ones to fix.
 5. **Fix each issue**:
    - Read the relevant file(s) before making changes
    - Apply the fix
