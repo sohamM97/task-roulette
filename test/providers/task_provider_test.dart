@@ -2825,4 +2825,97 @@ void main() {
       expect(mutationCalled, isFalse);
     });
   });
+
+  group('pickWeightedN normalization', () {
+    test('normFactor reduces large-root dominance', () async {
+      // Create 2 roots: big (20 leaves) and small (2 leaves)
+      final bigRoot = await db.insertTask(Task(name: 'Big'));
+      final smallRoot = await db.insertTask(Task(name: 'Small'));
+      final bigLeaves = <Task>[];
+      final smallLeaves = <Task>[];
+
+      for (var i = 0; i < 20; i++) {
+        final id = await db.insertTask(Task(name: 'B$i'));
+        await db.addRelationship(bigRoot, id);
+        final t = await db.getTaskById(id);
+        bigLeaves.add(t!);
+      }
+      for (var i = 0; i < 2; i++) {
+        final id = await db.insertTask(Task(name: 'S$i'));
+        await db.addRelationship(smallRoot, id);
+        final t = await db.getTaskById(id);
+        smallLeaves.add(t!);
+      }
+
+      final allLeaves = [...bigLeaves, ...smallLeaves];
+      final leafIds = allLeaves.map((t) => t.id!).toList();
+      final normData = await db.getNormalizationData(leafIds);
+
+      final smallRootIds = smallLeaves.map((t) => t.id!).toSet();
+      var smallPicks = 0;
+      const runs = 200;
+
+      for (var i = 0; i < runs; i++) {
+        final picked = provider.pickWeightedN(allLeaves, 1, normData: normData);
+        if (picked.isNotEmpty && smallRootIds.contains(picked.first.id)) {
+          smallPicks++;
+        }
+      }
+
+      // Without normalization, small root would get ~2/22 ≈ 9%.
+      // With normalization, should be ≥15%.
+      expect(smallPicks / runs, greaterThanOrEqualTo(0.15),
+          reason: 'Small root should get ≥15% of picks with normalization '
+              '(got ${(smallPicks / runs * 100).toStringAsFixed(1)}%)');
+    });
+
+    test('diversity penalty spreads picks across roots', () async {
+      // 2 equal roots with 5 leaves each
+      final rootA = await db.insertTask(Task(name: 'A'));
+      final rootB = await db.insertTask(Task(name: 'B'));
+      final allLeaves = <Task>[];
+
+      for (var i = 0; i < 5; i++) {
+        final id = await db.insertTask(Task(name: 'A$i'));
+        await db.addRelationship(rootA, id);
+        final t = await db.getTaskById(id);
+        allLeaves.add(t!);
+      }
+      for (var i = 0; i < 5; i++) {
+        final id = await db.insertTask(Task(name: 'B$i'));
+        await db.addRelationship(rootB, id);
+        final t = await db.getTaskById(id);
+        allLeaves.add(t!);
+      }
+
+      final leafIds = allLeaves.map((t) => t.id!).toList();
+      final normData = await db.getNormalizationData(leafIds);
+
+      final rootALeafIds = allLeaves.sublist(0, 5).map((t) => t.id!).toSet();
+      var totalFromA = 0;
+      const runs = 100;
+
+      for (var i = 0; i < runs; i++) {
+        final picked = provider.pickWeightedN(allLeaves, 4, normData: normData);
+        totalFromA += picked.where((t) => rootALeafIds.contains(t.id)).length;
+      }
+
+      // With diversity penalty, expect roughly 2 from each root per run.
+      // Average from A should be between 1.2 and 2.8 (allowing variance).
+      final avgFromA = totalFromA / runs;
+      expect(avgFromA, greaterThan(1.2),
+          reason: 'Should pick from root A (avg=$avgFromA)');
+      expect(avgFromA, lessThan(2.8),
+          reason: 'Should not over-pick from root A (avg=$avgFromA)');
+    });
+
+    test('backward compatible when normData is null', () async {
+      final id = await db.insertTask(Task(name: 'Solo'));
+      final t = await db.getTaskById(id);
+
+      final picked = provider.pickWeightedN([t!], 1);
+      expect(picked, hasLength(1));
+      expect(picked.first.id, id);
+    });
+  });
 }

@@ -1,3 +1,4 @@
+import 'dart:math' show sqrt;
 import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
@@ -9,6 +10,15 @@ import 'todays_five_pin_helper.dart' show maxSlots;
 import '../models/task_schedule.dart';
 import '../platform/platform_utils.dart'
     if (dart.library.io) '../platform/platform_utils_native.dart' as platform;
+
+/// Normalization data for fair Today's 5 selection across root categories.
+class NormalizationData {
+  /// leafId → 1/sqrt(N) where N = leaf count under that task's root(s)
+  final Map<int, double> normFactors;
+  /// leafId → set of root ancestor IDs
+  final Map<int, Set<int>> leafToRoots;
+  NormalizationData(this.normFactors, this.leafToRoots);
+}
 
 /// Data holder for Today's 5 state loaded from / saved to the DB.
 class TodaysFiveData {
@@ -605,6 +615,118 @@ class DatabaseHelper {
       ORDER BY t.created_at ASC
     ''');
     return _tasksFromMaps(maps);
+  }
+
+  /// Returns the root ancestors for each leaf task ID.
+  /// Roots = ancestors that are not children in any relationship.
+  /// Standalone root-leaves (not in any relationship) map to themselves.
+  Future<Map<int, Set<int>>> getRootAncestorsForLeaves(List<int> leafIds) async {
+    if (leafIds.isEmpty) return {};
+    final db = await database;
+    final result = <int, Set<int>>{};
+
+    // Process in batches of 500 to stay under SQLite placeholder limit
+    for (var i = 0; i < leafIds.length; i += 500) {
+      final batch = leafIds.sublist(i, i + 500 > leafIds.length ? leafIds.length : i + 500);
+      final placeholders = batch.map((_) => '?').join(',');
+      final rows = await db.rawQuery('''
+        WITH RECURSIVE all_ancestors(leaf_id, ancestor_id) AS (
+          SELECT tr.child_id, tr.parent_id
+          FROM task_relationships tr
+          WHERE tr.child_id IN ($placeholders)
+          UNION
+          SELECT aa.leaf_id, tr.parent_id
+          FROM all_ancestors aa
+          INNER JOIN task_relationships tr ON aa.ancestor_id = tr.child_id
+        )
+        SELECT DISTINCT aa.leaf_id, aa.ancestor_id AS root_id
+        FROM all_ancestors aa
+        WHERE aa.ancestor_id NOT IN (SELECT child_id FROM task_relationships)
+      ''', batch);
+      for (final row in rows) {
+        final leafId = row['leaf_id'] as int;
+        final rootId = row['root_id'] as int;
+        result.putIfAbsent(leafId, () => <int>{}).add(rootId);
+      }
+    }
+
+    // Standalone root-leaves: not found in any relationship → map to self
+    for (final id in leafIds) {
+      if (!result.containsKey(id)) {
+        result[id] = {id};
+      }
+    }
+    return result;
+  }
+
+  /// Returns the number of active leaf descendants for each root ID.
+  /// Roots that are themselves leaves count as 1.
+  Future<Map<int, int>> getLeafCountPerRoot(List<int> rootIds) async {
+    if (rootIds.isEmpty) return {};
+    final db = await database;
+    final result = <int, int>{};
+
+    for (var i = 0; i < rootIds.length; i += 500) {
+      final batch = rootIds.sublist(i, i + 500 > rootIds.length ? rootIds.length : i + 500);
+      final placeholders = batch.map((_) => '?').join(',');
+      final rows = await db.rawQuery('''
+        WITH RECURSIVE all_descendants(root_id, descendant_id) AS (
+          SELECT tr.parent_id, tr.child_id
+          FROM task_relationships tr WHERE tr.parent_id IN ($placeholders)
+          UNION
+          SELECT ad.root_id, tr.child_id
+          FROM all_descendants ad
+          INNER JOIN task_relationships tr ON ad.descendant_id = tr.parent_id
+        )
+        SELECT ad.root_id, COUNT(DISTINCT ad.descendant_id) AS leaf_count
+        FROM all_descendants ad
+        WHERE ad.descendant_id NOT IN (
+          SELECT DISTINCT tr.parent_id FROM task_relationships tr
+          INNER JOIN tasks c ON tr.child_id = c.id
+          WHERE c.completed_at IS NULL AND c.skipped_at IS NULL
+        )
+        AND ad.descendant_id IN (
+          SELECT id FROM tasks WHERE completed_at IS NULL AND skipped_at IS NULL
+        )
+        GROUP BY ad.root_id
+      ''', batch);
+      for (final row in rows) {
+        result[row['root_id'] as int] = row['leaf_count'] as int;
+      }
+    }
+
+    // Roots not found in CTE = they are themselves leaves (count 1)
+    for (final id in rootIds) {
+      result.putIfAbsent(id, () => 1);
+    }
+    return result;
+  }
+
+  /// Computes normalization factors for fair Today's 5 selection.
+  /// Each leaf gets a factor of 1/sqrt(N) where N = leaf count under its
+  /// root ancestor(s). Multi-parent tasks use the minimum N (most generous).
+  Future<NormalizationData> getNormalizationData(List<int> leafIds) async {
+    final leafToRoots = await getRootAncestorsForLeaves(leafIds);
+
+    // Collect all unique root IDs
+    final allRootIds = <int>{};
+    for (final roots in leafToRoots.values) {
+      allRootIds.addAll(roots);
+    }
+
+    final rootLeafCounts = await getLeafCountPerRoot(allRootIds.toList());
+
+    // Compute norm factor per leaf: 1/sqrt(min leaf count across its roots)
+    final normFactors = <int, double>{};
+    for (final leafId in leafIds) {
+      final roots = leafToRoots[leafId] ?? {leafId};
+      final minCount = roots
+          .map((r) => rootLeafCounts[r] ?? 1)
+          .reduce((a, b) => a < b ? a : b);
+      normFactors[leafId] = 1.0 / sqrt(minCount);
+    }
+
+    return NormalizationData(normFactors, leafToRoots);
   }
 
   /// Returns a map of task ID → list of parent names (for disambiguation).

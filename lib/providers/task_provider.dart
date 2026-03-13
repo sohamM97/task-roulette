@@ -268,7 +268,7 @@ class TaskProvider extends ChangeNotifier {
     await _db.addRelationship(parentId, childId);
   }
 
-  double _taskWeight(Task t, {Set<int>? scheduleBoostedIds}) {
+  double _taskWeight(Task t, {Set<int>? scheduleBoostedIds, double normFactor = 1.0}) {
     double w = 1.0;
 
     // Priority: high = 3x
@@ -298,6 +298,9 @@ class TaskProvider extends ChangeNotifier {
         scheduleBoostedIds.contains(t.id)) {
       w *= 2.5;
     }
+
+    // Root-size normalization: dampens volume advantage of large root categories
+    w *= normFactor;
 
     return w;
   }
@@ -332,23 +335,45 @@ class TaskProvider extends ChangeNotifier {
   /// Tries to include at least 1 quick task if available.
   /// When [scheduleBoostedIds] is provided, tasks in that set get a 2.5x
   /// weight multiplier (scheduled for today).
+  /// When [normData] is provided, applies root-size normalization and
+  /// diversity penalty to spread picks across root categories.
   List<Task> pickWeightedN(List<Task> candidates, int n,
-      {Set<int>? scheduleBoostedIds}) {
+      {Set<int>? scheduleBoostedIds, NormalizationData? normData}) {
     if (candidates.isEmpty) return [];
     final eligible = candidates.where((t) =>
       !t.isWorkedOnToday
     ).toList();
     if (eligible.isEmpty) return [];
 
-    double weightFn(Task t) =>
-        _taskWeight(t, scheduleBoostedIds: scheduleBoostedIds);
-
     final picked = <Task>[];
     final remaining = List<Task>.from(eligible);
+    // Track how many picks came from each root (for diversity penalty)
+    final rootPickCounts = <int, int>{};
 
     // Fill slots via weighted random
     while (picked.length < n && remaining.isNotEmpty) {
-      final weights = remaining.map(weightFn).toList();
+      final weights = <double>[];
+      for (final t in remaining) {
+        final nf = normData?.normFactors[t.id] ?? 1.0;
+        var w = _taskWeight(t, scheduleBoostedIds: scheduleBoostedIds,
+            normFactor: nf);
+
+        // Diversity penalty: penalize tasks sharing roots with already-picked
+        if (normData != null && picked.isNotEmpty) {
+          final roots = normData.leafToRoots[t.id] ?? <int>{};
+          var maxPicks = 0;
+          for (final r in roots) {
+            final c = rootPickCounts[r] ?? 0;
+            if (c > maxPicks) maxPicks = c;
+          }
+          if (maxPicks > 0) {
+            w *= pow(0.3, maxPicks).toDouble();
+          }
+        }
+
+        weights.add(w);
+      }
+
       final total = weights.fold(0.0, (a, b) => a + b);
       var roll = _random.nextDouble() * total;
       Task? pick;
@@ -359,6 +384,14 @@ class TaskProvider extends ChangeNotifier {
       pick ??= remaining.last;
       picked.add(pick);
       remaining.remove(pick);
+
+      // Update root pick counts
+      if (normData != null) {
+        final roots = normData.leafToRoots[pick.id] ?? <int>{};
+        for (final r in roots) {
+          rootPickCounts[r] = (rootPickCounts[r] ?? 0) + 1;
+        }
+      }
     }
 
     return picked;
