@@ -163,7 +163,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          'Pin',
+                          widget.showInboxOption ? 'Pin' : 'Pin for today',
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: _pin
                                 ? colorScheme.tertiary
