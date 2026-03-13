@@ -17,7 +17,7 @@
 
 ### Staleness & Someday
 - **Logarithmic staleness curve** — task selection weight grows with days since last worked on, using a log curve to avoid runaway staleness.
-- **Someday flag** — mark tasks you don't want picked right now. They stay in the hierarchy but are excluded from Today's 5 selection.
+- **Someday flag** — mark tasks you don't want picked right now. They stay in the hierarchy but skip the staleness boost in Today's 5 selection.
 
 ### Today's 5 Improvements
 - **Sync Today's 5 across devices** via Firestore — selections persist across phone and web.
