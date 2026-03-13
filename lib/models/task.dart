@@ -15,6 +15,7 @@ class Task {
   final String syncStatus;
   final bool isSomeday;
   final bool isScheduleOverride;
+  final bool isInbox;
 
   static const priorityLabels = ['Normal', 'High'];
 
@@ -35,6 +36,7 @@ class Task {
     this.syncStatus = 'synced',
     this.isSomeday = false,
     this.isScheduleOverride = false,
+    this.isInbox = false,
   }) : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch;
 
   bool get isCompleted => completedAt != null;
@@ -73,6 +75,7 @@ class Task {
     String? syncStatus,
     bool? isSomeday,
     bool? isScheduleOverride,
+    bool? isInbox,
   }) {
     return Task(
       id: id ?? this.id,
@@ -91,6 +94,7 @@ class Task {
       syncStatus: syncStatus ?? this.syncStatus,
       isSomeday: isSomeday ?? this.isSomeday,
       isScheduleOverride: isScheduleOverride ?? this.isScheduleOverride,
+      isInbox: isInbox ?? this.isInbox,
     );
   }
 
@@ -112,6 +116,7 @@ class Task {
       'sync_status': syncStatus,
       'is_someday': isSomeday ? 1 : 0,
       'is_schedule_override': isScheduleOverride ? 1 : 0,
+      'is_inbox': isInbox ? 1 : 0,
     };
   }
 
@@ -133,6 +138,7 @@ class Task {
       syncStatus: map['sync_status'] as String? ?? 'synced',
       isSomeday: (map['is_someday'] as int? ?? 0) == 1,
       isScheduleOverride: (map['is_schedule_override'] as int? ?? 0) == 1,
+      isInbox: (map['is_inbox'] as int? ?? 0) == 1,
     );
   }
 }

@@ -2918,4 +2918,175 @@ void main() {
       expect(picked.first.id, id);
     });
   });
+
+  group('Inbox', () {
+    test('addTask at root with isInbox sets isInbox to true', () async {
+      await provider.loadRootTasks();
+      await provider.addTask('Inbox task', isInbox: true);
+
+      final inboxTasks = await provider.getInboxTasks();
+      expect(inboxTasks, hasLength(1));
+      expect(inboxTasks.first.name, 'Inbox task');
+      expect(inboxTasks.first.isInbox, isTrue);
+    });
+
+    test('addTask under parent does not set isInbox', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      await provider.addTask('Child task');
+
+      final inboxTasks = await provider.getInboxTasks();
+      expect(inboxTasks, isEmpty);
+    });
+
+    test('addTask with additionalParentIds does not set isInbox', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      await provider.loadRootTasks();
+
+      await provider.addTask('Multi-parent task', additionalParentIds: [parentId]);
+
+      final inboxTasks = await provider.getInboxTasks();
+      expect(inboxTasks, isEmpty);
+    });
+
+    test('addTasksBatch at root sets isInbox on all tasks', () async {
+      await provider.loadRootTasks();
+      await provider.addTasksBatch(['A', 'B', 'C']);
+
+      final inboxTasks = await provider.getInboxTasks();
+      expect(inboxTasks, hasLength(3));
+      expect(inboxTasks.every((t) => t.isInbox), isTrue);
+    });
+
+    test('addTasksBatch under parent does not set isInbox', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      await provider.addTasksBatch(['A', 'B']);
+
+      final inboxTasks = await provider.getInboxTasks();
+      expect(inboxTasks, isEmpty);
+    });
+
+    test('fileTask clears inbox flag and adds relationship', () async {
+      await provider.loadRootTasks();
+      final taskId = await provider.addTask('Inbox task', isInbox: true);
+      final parentId = await db.insertTask(Task(name: 'Target parent'));
+
+      expect(await provider.getInboxCount(), 1);
+
+      final success = await provider.fileTask(taskId, parentId);
+      expect(success, isTrue);
+
+      expect(await provider.getInboxCount(), 0);
+      final parents = await provider.getParents(taskId);
+      expect(parents.any((p) => p.id == parentId), isTrue);
+    });
+
+    test('fileTask rejects cycles', () async {
+      await provider.loadRootTasks();
+      final parentId = await provider.addTask('Parent');
+      final childId = await db.insertTask(Task(name: 'Child', isInbox: true));
+      await db.addRelationship(parentId, childId);
+
+      // Try to file the parent under its own child
+      final success = await provider.fileTask(parentId, childId);
+      expect(success, isFalse);
+    });
+
+    test('dismissFromInbox clears flag without adding parent', () async {
+      await provider.loadRootTasks();
+      final taskId = await provider.addTask('Keep at root', isInbox: true);
+
+      expect(await provider.getInboxCount(), 1);
+
+      await provider.dismissFromInbox(taskId);
+
+      expect(await provider.getInboxCount(), 0);
+      // Task should still be a root task (no parents)
+      final parents = await provider.getParents(taskId);
+      expect(parents, isEmpty);
+    });
+
+    test('getInboxCount returns correct count', () async {
+      await provider.loadRootTasks();
+      await provider.addTask('A', isInbox: true);
+      await provider.addTask('B', isInbox: true);
+      // Add one under a parent
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+      await provider.addTask('C under parent');
+
+      expect(await provider.getInboxCount(), 2);
+    });
+  });
+
+  group('computeParentSuggestions', () {
+    test('returns empty for no tasks', () async {
+      final suggestions = await provider.computeParentSuggestions('Anything');
+      expect(suggestions, isEmpty);
+    });
+
+    test('keyword scoring: matching names score higher', () async {
+      await db.insertTask(Task(name: 'Shopping list'));
+      await db.insertTask(Task(name: 'Work projects'));
+      await db.insertTask(Task(name: 'Grocery shopping'));
+
+      final suggestions = await provider.computeParentSuggestions('Shopping items');
+      // Tasks with "shopping" in name should appear
+      expect(suggestions.isNotEmpty, isTrue);
+      final names = suggestions.map((s) => s.task.name).toList();
+      expect(names, contains('Shopping list'));
+      expect(names, contains('Grocery shopping'));
+    });
+
+    test('recency scoring: parent with recent children scores higher', () async {
+      final recentParent = await db.insertTask(Task(name: 'Recent'));
+      final staleParent = await db.insertTask(Task(name: 'Stale'));
+      // Recent parent has a child added just now
+      final recentChild = await db.insertTask(Task(name: 'New child'));
+      await db.addRelationship(recentParent, recentChild);
+      // Stale parent has a child added 30 days ago
+      final staleChild = await db.insertTask(Task(
+        name: 'Old child',
+        createdAt: DateTime.now().subtract(const Duration(days: 30)).millisecondsSinceEpoch,
+      ));
+      await db.addRelationship(staleParent, staleChild);
+
+      final suggestions = await provider.computeParentSuggestions('task');
+      if (suggestions.length >= 2) {
+        final recentScore = suggestions.firstWhere((s) => s.task.id == recentParent).score;
+        final staleScore = suggestions.firstWhere((s) => s.task.id == staleParent).score;
+        expect(recentScore, greaterThan(staleScore));
+      }
+    });
+
+    test('sibling scoring: matching child names increase score', () async {
+      final parentId = await db.insertTask(Task(name: 'Errands'));
+      final child1 = await db.insertTask(Task(name: 'Buy groceries'));
+      final child2 = await db.insertTask(Task(name: 'Pick up dry cleaning'));
+      await db.addRelationship(parentId, child1);
+      await db.addRelationship(parentId, child2);
+
+      final suggestions = await provider.computeParentSuggestions('Buy milk');
+      // "Errands" should appear because its child "Buy groceries" shares "buy" token
+      expect(suggestions.any((s) => s.task.id == parentId), isTrue);
+    });
+
+    test('respects limit parameter', () async {
+      for (int i = 0; i < 10; i++) {
+        await db.insertTask(Task(name: 'Task $i'));
+      }
+
+      final suggestions = await provider.computeParentSuggestions('Task', limit: 3);
+      expect(suggestions.length, lessThanOrEqualTo(3));
+    });
+  });
 }

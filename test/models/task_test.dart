@@ -552,4 +552,40 @@ void main() {
       expect(restored.isSomeday, original.isSomeday);
     });
   });
+
+  group('isInbox', () {
+    test('defaults to false', () {
+      final task = Task(name: 'T');
+      expect(task.isInbox, isFalse);
+    });
+
+    test('toMap/fromMap round-trip preserves isInbox', () {
+      final original = Task(id: 1, name: 'T', createdAt: 100, isInbox: true);
+      final map = original.toMap();
+      expect(map['is_inbox'], 1);
+      final restored = Task.fromMap(map);
+      expect(restored.isInbox, isTrue);
+    });
+
+    test('fromMap defaults to false when is_inbox is missing', () {
+      final task = Task.fromMap({
+        'id': 1,
+        'name': 'T',
+        'created_at': 100,
+      });
+      expect(task.isInbox, isFalse);
+    });
+
+    test('copyWith can set isInbox', () {
+      final task = Task(name: 'T');
+      final updated = task.copyWith(isInbox: true);
+      expect(updated.isInbox, isTrue);
+    });
+
+    test('copyWith preserves isInbox when not specified', () {
+      final task = Task(name: 'T', isInbox: true);
+      final updated = task.copyWith(name: 'New');
+      expect(updated.isInbox, isTrue);
+    });
+  });
 }

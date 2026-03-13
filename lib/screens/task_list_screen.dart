@@ -19,6 +19,7 @@ import '../utils/display_utils.dart';
 import '../widgets/delete_task_dialog.dart';
 import '../widgets/schedule_dialog.dart';
 import '../widgets/task_picker_dialog.dart';
+import '../widgets/triage_dialog.dart';
 import '../services/backup_service.dart';
 import '../widgets/profile_icon.dart';
 import 'completed_tasks_screen.dart';
@@ -48,6 +49,11 @@ class TaskListScreenState extends State<TaskListScreen>
   // Cached Today's 5 pinned IDs — loaded lazily for the leaf detail pin icon.
   Set<int>? _todays5PinnedIds;
 
+  // Inbox state
+  int _inboxCount = 0;
+  List<Task>? _inboxTasks;
+  bool _inboxExpanded = true;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -58,6 +64,7 @@ class TaskListScreenState extends State<TaskListScreen>
     // Calling it here would overwrite navigateToTask() state when PageView
     // lazily builds this screen for the first time.
     loadTodaysFiveIds();
+    _loadInboxCount();
   }
 
   Future<void> loadTodaysFiveIds() async {
@@ -103,6 +110,88 @@ class TaskListScreenState extends State<TaskListScreen>
         _todays5PinnedIds = result.pinnedIds;
       });
     }
+  }
+
+  Future<void> _loadInboxCount() async {
+    final provider = context.read<TaskProvider>();
+    final count = await provider.getInboxCount();
+    if (!mounted) return;
+    if (count > 0) {
+      // Eagerly load tasks so the section renders immediately
+      final tasks = await provider.getInboxTasks();
+      if (!mounted) return;
+      setState(() {
+        _inboxCount = tasks.length;
+        _inboxTasks = tasks;
+      });
+    } else {
+      setState(() {
+        _inboxCount = 0;
+        _inboxTasks = null;
+      });
+    }
+  }
+
+  Future<void> _loadInboxTasks() async {
+    final provider = context.read<TaskProvider>();
+    final tasks = await provider.getInboxTasks();
+    if (!mounted) return;
+    setState(() {
+      _inboxTasks = tasks;
+      _inboxCount = tasks.length;
+    });
+  }
+
+  Future<void> _fileTask(Task task) async {
+    final provider = context.read<TaskProvider>();
+    final result = await showDialog<TriageResult>(
+      context: context,
+      builder: (_) => TriageDialog(
+        task: task,
+        provider: provider,
+      ),
+    );
+    if (result == null || !mounted) return;
+
+    if (result.keepAtTopLevel) {
+      await _dismissFromInbox(task);
+      return;
+    }
+
+    if (result.parent != null) {
+      final success = await provider.fileTask(task.id!, result.parent!.id!);
+      if (!mounted) return;
+      if (success) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Filed "${task.name}" under "${result.parent!.name}"'),
+            showCloseIcon: true,
+            persist: false,
+          ),
+        );
+        await _loadInboxTasks();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cannot file: would create a cycle'), showCloseIcon: true, persist: false),
+        );
+      }
+    }
+  }
+
+  Future<void> _dismissFromInbox(Task task) async {
+    final provider = context.read<TaskProvider>();
+    await provider.dismissFromInbox(task.id!);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Kept "${task.name}" at top level'),
+        showCloseIcon: true,
+        persist: false,
+      ),
+    );
+    await _loadInboxTasks();
   }
 
   /// Returns true if the user confirmed (or task isn't pinned), false to abort.
@@ -153,11 +242,11 @@ class TaskListScreenState extends State<TaskListScreen>
         (_todays5PinnedIds?.length ?? 0) < maxPins;
     final result = await showDialog<AddTaskResult>(
       context: context,
-      builder: (_) => AddTaskDialog(showPinOption: showPin),
+      builder: (_) => AddTaskDialog(showPinOption: showPin, showInboxOption: provider.isRoot),
     );
     if (!mounted || result == null) return;
     if (result is SingleTask) {
-      final taskId = await provider.addTask(result.name, url: result.url);
+      final taskId = await provider.addTask(result.name, url: result.url, isInbox: result.addToInbox);
       if (result.pinInTodays5 && mounted) {
         await _pinNewTaskInTodays5(taskId);
       } else if (parentIsPinned && mounted) {
@@ -166,6 +255,7 @@ class TaskListScreenState extends State<TaskListScreen>
         // appears immediately without waiting for a tab switch.
         await _transferPinToChild(parentId, taskId);
       }
+      if (provider.isRoot && mounted) await _loadInboxCount();
     } else if (result is SwitchToBrainDump) {
       await _brainDump(initialText: result.initialText);
     }
@@ -271,6 +361,7 @@ class TaskListScreenState extends State<TaskListScreen>
           SnackBar(content: Text('Added ${names.length} tasks'), showCloseIcon: true, persist: false),
         );
       }
+      if (provider.isRoot && mounted) await _loadInboxCount();
     }
   }
 
@@ -837,6 +928,72 @@ class TaskListScreenState extends State<TaskListScreen>
     }
   }
 
+  Widget _buildInboxSection(TaskProvider provider) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: () => setState(() => _inboxExpanded = !_inboxExpanded),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            child: Row(
+              children: [
+                Icon(
+                  _inboxExpanded ? Icons.expand_more : Icons.chevron_right,
+                  size: 20,
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.inbox, size: 18,
+                    color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  'Inbox ($_inboxCount)',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (_inboxExpanded) ...[
+          if (_inboxTasks == null)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else
+            ...(_inboxTasks!.map((task) => Card(
+              margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: ListTile(
+                dense: true,
+                title: Text(task.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.drive_file_move_outline, size: 20),
+                      tooltip: 'File under...',
+                      onPressed: () => _fileTask(task),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      tooltip: 'Keep at top level',
+                      onPressed: () => _dismissFromInbox(task),
+                    ),
+                  ],
+                ),
+                onTap: () => provider.navigateInto(task),
+              ),
+            ))),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+
   Widget _buildBreadcrumb(TaskProvider provider) {
     final crumbs = provider.breadcrumb;
     return Container(
@@ -1164,54 +1321,69 @@ class TaskListScreenState extends State<TaskListScreen>
                 if (!provider.isRoot)
                   _buildBreadcrumb(provider),
                 Expanded(
-                  child: provider.tasks.isEmpty
+                  child: provider.tasks.isEmpty && _inboxCount == 0
                     ? (provider.isRoot
                         ? const EmptyState(isRoot: true)
                         : _buildLeafTaskDetail(provider))
+                    : provider.tasks.isEmpty && !provider.isRoot
+                    ? _buildLeafTaskDetail(provider)
                     : LayoutBuilder(
                     builder: (context, constraints) {
                       final columns = _crossAxisCount(constraints.maxWidth);
+                      // At root, filter inbox tasks out of the grid — they show
+                      // in the inbox section above.
+                      final gridTasks = provider.isRoot && _inboxCount > 0
+                          ? provider.tasks.where((t) => !t.isInbox).toList()
+                          : provider.tasks;
                       return SingleChildScrollView(
                         padding: const EdgeInsets.all(8),
-                        child: GridView.builder(
-                        physics: const NeverScrollableScrollPhysics(),
-                        shrinkWrap: true,
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          childAspectRatio: _childAspectRatio(columns),
-                          crossAxisSpacing: 8,
-                          mainAxisSpacing: 8,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (provider.isRoot && _inboxCount > 0)
+                              _buildInboxSection(provider),
+                            GridView.builder(
+                            physics: const NeverScrollableScrollPhysics(),
+                            shrinkWrap: true,
+                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: columns,
+                              childAspectRatio: _childAspectRatio(columns),
+                              crossAxisSpacing: 8,
+                              mainAxisSpacing: 8,
+                            ),
+                            itemCount: gridTasks.length,
+                            itemBuilder: (context, index) {
+                              final task = gridTasks[index];
+                              return TaskCard(
+                                task: task,
+                                onTap: () => provider.navigateInto(task),
+                                onDelete: () => _deleteTaskWithUndo(task),
+                                onAddParent: () => _addParentToTask(task),
+                                onUnlink: provider.isRoot
+                                    ? null
+                                    : () => _unlinkTask(task),
+                                onMove: provider.isRoot
+                                    ? null
+                                    : () => _moveTask(task),
+                                onRename: () => _renameTask(task),
+                                onAddDependency: () => _addDependencyToTask(task),
+                                onSchedule: () => _editSchedule(task),
+                                onFile: task.isInbox ? () => _fileTask(task) : null,
+                                onStopWorking: task.isStarted
+                                    ? () => _toggleStarted(task)
+                                    : null,
+                                isBlocked: provider.blockedTaskIds.contains(task.id),
+                                blockedByName: provider.blockedByNames[task.id],
+                                isInTodaysFive: _todaysFiveIds.contains(task.id),
+                                isPinnedInTodaysFive: _todays5PinnedIds?.contains(task.id) ?? false,
+                                parentNames: (provider.parentNamesMap[task.id] ?? [])
+                                    .where((name) => name != provider.currentParent?.name)
+                                    .toList(),
+                              );
+                            },
+                          ),
+                          ],
                         ),
-                        itemCount: provider.tasks.length,
-                        itemBuilder: (context, index) {
-                          final task = provider.tasks[index];
-                          return TaskCard(
-                            task: task,
-                            onTap: () => provider.navigateInto(task),
-                            onDelete: () => _deleteTaskWithUndo(task),
-                            onAddParent: () => _addParentToTask(task),
-                            onUnlink: provider.isRoot
-                                ? null
-                                : () => _unlinkTask(task),
-                            onMove: provider.isRoot
-                                ? null
-                                : () => _moveTask(task),
-                            onRename: () => _renameTask(task),
-                            onAddDependency: () => _addDependencyToTask(task),
-                            onSchedule: () => _editSchedule(task),
-                            onStopWorking: task.isStarted
-                                ? () => _toggleStarted(task)
-                                : null,
-                            isBlocked: provider.blockedTaskIds.contains(task.id),
-                            blockedByName: provider.blockedByNames[task.id],
-                            isInTodaysFive: _todaysFiveIds.contains(task.id),
-                            isPinnedInTodaysFive: _todays5PinnedIds?.contains(task.id) ?? false,
-                            parentNames: (provider.parentNamesMap[task.id] ?? [])
-                                .where((name) => name != provider.currentParent?.name)
-                                .toList(),
-                          );
-                        },
-                      ),
                       );
                     },
                   ),
