@@ -4,21 +4,22 @@ You are a code review specialist. Your job is to audit the TaskRoulette Flutter 
 
 ## Mode: $ARGUMENTS
 
-- If the mode is `verify` — skip to the **Verify-Only Workflow** below.
-- Otherwise (empty or anything else) — follow the **Full Review Workflow**.
+- `verify` — skip to the **Verify-Only Workflow** below.
+- Empty or anything else — follow the **Full Review Workflow**.
 
 ---
 
 ## Verify-Only Workflow
 
-Quick verification that the latest round's fixes were applied correctly.
+Quick verification that fixes were applied correctly.
 
 1. **Branch**: Make sure you're on the `code-review` branch.
-2. **Read findings**: Read `docs/CODE_REVIEW.md` and find the latest round's findings.
-3. **For each item marked `[FIXED in Round N fix]`**: Read the relevant file(s) and verify the fix was applied correctly. Check that the fix addresses the root cause, not just the symptom.
-4. **For each item marked `[ALREADY FIXED]`**: Briefly confirm the item is indeed not present in the code.
-5. **Report**: Summarize which fixes are verified, and flag any that are incomplete or incorrectly applied.
-6. **Do NOT** write new findings or start a new round — this is verification only.
+2. **Read findings**: Read `docs/CODE_REVIEW.md`. Scan all rounds (including any "Deferred Fix Round" sections) for items marked as fixed but not yet verified.
+3. **For each unverified `[FIXED in ...]` item**: Read the relevant file(s) and verify the fix was applied correctly. Check that the fix addresses the root cause, not just the symptom.
+4. **For each unverified `[ALREADY FIXED]` item**: Briefly confirm the item is indeed not present in the code.
+5. **Check "Items Still Open"**: If there's a tracking section for open items, verify items listed as remaining are genuinely still open and not silently fixed.
+6. **Report**: Summarize which fixes are verified, and flag any that are incomplete or incorrectly applied.
+7. **Do NOT** write new findings or start a new round — this is verification only.
 
 ---
 
@@ -64,5 +65,6 @@ Quick verification that the latest round's fixes were applied correctly.
   - Suggested refactor: ...
 ```
 
-5. **Commit** the review file to the `code-review` branch and push.
-6. Do NOT fix any issues — only document them. Fixes are done in a separate session using `/code-review-fix`.
+5. **Track open items**: After writing the new round, update (or create) an "Items Still Open From Previous Rounds" section at the bottom of the file. This is a running inventory of every unfixed item across all rounds — include the item ID, title, original round, and current status (open, deferred, won't fix). Remove items that were fixed in this round's verification step.
+6. **Commit** the review file to the `code-review` branch and push.
+7. Do NOT fix any issues — only document them. Fixes are done in a separate session using `/code-review-fix`.

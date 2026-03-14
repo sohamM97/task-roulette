@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../models/task.dart';
 
@@ -29,6 +31,13 @@ class TaskPickerDialog extends StatefulWidget {
 
 class _TaskPickerDialogState extends State<TaskPickerDialog> {
   String _filter = '';
+  Timer? _debounce;
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
 
   List<Task> get _filtered {
     final base = _filter.isEmpty
@@ -120,7 +129,12 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
                   isDense: true,
                   counterText: '',
                 ),
-                onChanged: (value) => setState(() => _filter = value),
+                onChanged: (value) {
+                  _debounce?.cancel();
+                  _debounce = Timer(const Duration(milliseconds: 200), () {
+                    if (mounted) setState(() => _filter = value);
+                  });
+                },
               ),
               const SizedBox(height: 8),
               if (widget.headerAction != null && _filter.isEmpty)

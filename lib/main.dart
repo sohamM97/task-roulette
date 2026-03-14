@@ -28,6 +28,25 @@ void main() async {
 class TaskRouletteApp extends StatelessWidget {
   const TaskRouletteApp({super.key});
 
+  static ThemeData _buildTheme(Brightness brightness) {
+    return ThemeData(
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: Colors.deepPurple,
+        brightness: brightness,
+      ),
+      useMaterial3: true,
+      cardTheme: CardThemeData(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        clipBehavior: Clip.antiAlias,
+      ),
+      snackBarTheme: const SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
@@ -45,35 +64,8 @@ class TaskRouletteApp extends StatelessWidget {
           return MaterialApp(
             title: 'TaskRoulette',
             debugShowCheckedModeBanner: false,
-            theme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-              useMaterial3: true,
-              cardTheme: CardThemeData(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                clipBehavior: Clip.antiAlias,
-              ),
-              snackBarTheme: const SnackBarThemeData(
-                behavior: SnackBarBehavior.floating,
-              ),
-            ),
-            darkTheme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: Colors.deepPurple,
-                brightness: Brightness.dark,
-              ),
-              useMaterial3: true,
-              cardTheme: CardThemeData(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                clipBehavior: Clip.antiAlias,
-              ),
-              snackBarTheme: const SnackBarThemeData(
-                behavior: SnackBarBehavior.floating,
-              ),
-            ),
+            theme: _buildTheme(Brightness.light),
+            darkTheme: _buildTheme(Brightness.dark),
             themeMode: themeProvider.themeMode,
             home: const AppShell(),
           );
@@ -130,13 +122,17 @@ class _AppShellState extends State<AppShell> {
       if (mounted) taskProvider.refreshCurrentView();
     };
 
-    await authProvider.init();
-    if (authProvider.isSignedIn && mounted) {
-      final needsMigration = await syncService.needsInitialMigration();
-      if (needsMigration) {
-        await syncService.initialMigration();
+    try {
+      await authProvider.init();
+      if (authProvider.isSignedIn && mounted) {
+        final needsMigration = await syncService.needsInitialMigration();
+        if (needsMigration) {
+          await syncService.initialMigration();
+        }
+        syncService.startPeriodicPull();
       }
-      syncService.startPeriodicPull();
+    } catch (e) {
+      debugPrint('Failed to initialize auth/sync: $e');
     }
   }
 
@@ -182,11 +178,7 @@ class _AppShellState extends State<AppShell> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) {
-          if (index == 0) {
-            _todaysFiveKey.currentState?.refreshSnapshots();
-          } else if (index == 1) {
-            _taskListKey.currentState?.loadTodaysFiveIds();
-          }
+          // Refresh happens in onPageChanged — no need to duplicate here.
           _pageController.animateToPage(
             index,
             duration: const Duration(milliseconds: 300),

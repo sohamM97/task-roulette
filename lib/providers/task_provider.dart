@@ -637,6 +637,10 @@ class TaskProvider extends ChangeNotifier {
     return _db.getChildIds(parentId);
   }
 
+  Future<Set<int>> getChildIdsForParents(List<int> parentIds) async {
+    return _db.getChildIdsForParents(parentIds);
+  }
+
   Future<List<int>> getRootTaskIds() async {
     return _db.getRootTaskIds();
   }

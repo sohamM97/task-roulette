@@ -57,10 +57,28 @@ class _DagViewScreenState extends State<DagViewScreen> {
   double _regularNodeHeight = 42.0;
   double _nodeHPadding = 12.0;
 
+  Size? _lastScreenSize;
+
   @override
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final size = MediaQuery.sizeOf(context);
+    if (_lastScreenSize != null && _lastScreenSize != size && !_loading) {
+      _lastScreenSize = size;
+      _rebuildGraph().then((_) {
+        if (mounted) {
+          setState(() {});
+          _fitToScreen();
+        }
+      });
+    }
+    _lastScreenSize = size;
   }
 
   @override

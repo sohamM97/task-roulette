@@ -312,34 +312,7 @@ void main() {
       expect(task.lastWorkedAt, 2000);
     });
 
-    // --- Repeating task tests ---
-
-    test('isRepeating returns false when repeatInterval is null', () {
-      final task = Task(name: 'Test');
-      expect(task.isRepeating, isFalse);
-    });
-
-    test('isRepeating returns true when repeatInterval is set', () {
-      final task = Task(name: 'Test', repeatInterval: 'daily');
-      expect(task.isRepeating, isTrue);
-    });
-
-    test('isDue returns true when nextDueAt is null', () {
-      final task = Task(name: 'Test');
-      expect(task.isDue, isTrue);
-    });
-
-    test('isDue returns true when nextDueAt is in the past', () {
-      final past = DateTime.now().subtract(const Duration(hours: 1));
-      final task = Task(name: 'Test', nextDueAt: past.millisecondsSinceEpoch);
-      expect(task.isDue, isTrue);
-    });
-
-    test('isDue returns false when nextDueAt is in the future', () {
-      final future = DateTime.now().add(const Duration(hours: 1));
-      final task = Task(name: 'Test', nextDueAt: future.millisecondsSinceEpoch);
-      expect(task.isDue, isFalse);
-    });
+    // --- Repeating task fields (DB columns exist but no UI/provider code uses them) ---
 
     test('toMap includes repeatInterval and nextDueAt', () {
       final task = Task(
@@ -364,7 +337,7 @@ void main() {
       });
       expect(task.repeatInterval, 'monthly');
       expect(task.nextDueAt, 5000);
-      expect(task.isRepeating, isTrue);
+      expect(task.repeatInterval, 'monthly');
     });
 
     test('toMap/fromMap round-trip preserves all new fields', () {

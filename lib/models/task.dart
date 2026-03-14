@@ -46,8 +46,6 @@ class Task {
 
   bool get isHighPriority => priority >= 1;
   String get priorityLabel => isHighPriority ? 'High' : 'Normal';
-  bool get isRepeating => repeatInterval != null;
-  bool get isDue => nextDueAt == null || nextDueAt! <= DateTime.now().millisecondsSinceEpoch;
 
   bool get isWorkedOnToday {
     if (lastWorkedAt == null) return false;

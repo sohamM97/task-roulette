@@ -2535,26 +2535,26 @@ and Today's 5 pin state / eager pin transfer feature (d184bdc).
 
 ### Items Still Open From Previous Rounds
 
-- I6: Loading indicators for async UI transitions — still open
-- M3: `_renameTask` dialog leaks TextEditingController — still open
-- M5: `BackupService` hardcodes Android download path — still open
-- M6: DAG view doesn't recompute layout on rotation — still open
-- M9: N+1 queries in `_addParent` for grandparent siblings — still open
-- M-10: `showEditUrlDialog` leaks TextEditingController — still open
-- M-12: Repeating task code is dead code — still open
-- M-14: Firestore `integerValue` null guard on `lastSyncAt` — still open
-- M-15: Refresh token stored in plaintext SharedPreferences — still open (future)
-- M-16: No error handling in `_loadTodaysTasks()` initial load — still open
-- M-18: `_preWorkedOnTimestamps` map grows unboundedly — still open
-- M-19: Double refresh on tab navigation — still open
-- M-20: Missing `WidgetsFlutterBinding.ensureInitialized()` in `main()` — still open
-- M-21: `_initAuth` has no error handling — still open
-- M-22: Theme data duplicated between light and dark — still open
-- M-23: `ThemeProvider` race between `_loadPreference()` and `toggle()` — still open
-- M-24: `_autoStartedIds` never cleaned up on day rollover — still open
-- M-26: `BackupService.importDatabase` doesn't trigger Today's 5 refresh — still open
-- M-27: `_EdgePainter.shouldRepaint` uses identity comparison on lists — still open
-- N1–N4: All still open
+- I6: Loading indicators for async UI transitions — **FIXED (deferred fix round)** — loading spinner shown during `_fetchCandidateData`
+- M3: `_renameTask` dialog leaks TextEditingController — **FIXED (deferred fix round)**
+- M5: `BackupService` hardcodes Android download path — **ALREADY FIXED** — Android uses SAF save dialog; Linux `~/Downloads` is acceptable (dev-only)
+- M6: DAG view doesn't recompute layout on rotation — **FIXED (deferred fix round)** — `didChangeDependencies` detects size changes
+- M9: N+1 queries in `_addParent` for grandparent siblings — **FIXED (deferred fix round)** — batch `getChildIdsForParents` query
+- M-10: `showEditUrlDialog` leaks TextEditingController — **FIXED (deferred fix round)**
+- M-12: Repeating task code is dead code — **FIXED (deferred fix round)** — removed dead DB methods and model getters
+- M-14: Firestore `integerValue` null guard on `lastSyncAt` — **ALREADY FIXED** — `lastSyncAt` is guarded at call site (non-null when passed)
+- M-15: Refresh token stored in plaintext SharedPreferences — still open (needs `flutter_secure_storage` dep)
+- M-16: No error handling in `_loadTodaysTasks()` initial load — **ALREADY FIXED** — try-catch wrapper added in earlier round
+- M-18: `_preWorkedOnTimestamps` map grows unboundedly — **FIXED (deferred fix round)** — cleared on provider change
+- M-19: Double refresh on tab navigation — **FIXED (deferred fix round)** — removed duplicate refresh from `onDestinationSelected`
+- M-20: Missing `WidgetsFlutterBinding.ensureInitialized()` in `main()` — **ALREADY FIXED** — present on line 17
+- M-21: `_initAuth` has no error handling — **FIXED (deferred fix round)** — wrapped in try-catch
+- M-22: Theme data duplicated between light and dark — **FIXED (deferred fix round)** — extracted `_buildTheme(Brightness)`
+- M-23: `ThemeProvider` race between `_loadPreference()` and `toggle()` — **FIXED (deferred fix round)** — `_manuallyToggled` flag
+- M-24: `_autoStartedIds` never cleaned up on day rollover — **ALREADY FIXED** — cleared in `_generateNewSet()`
+- M-26: `BackupService.importDatabase` doesn't trigger Today's 5 refresh — **acceptable** — `refreshSnapshots()` runs on tab switch
+- M-27: `_EdgePainter.shouldRepaint` uses identity comparison on lists — **ALREADY FIXED** — uses `listEquals`
+- N1–N4: N2 **FIXED (deferred fix round)** — 200ms debounce on TaskPickerDialog filter, N3 **ALREADY FIXED** (no const warnings from analyzer), N4 **ALREADY FIXED** (v8 migration normalizes defaults)
 
 ---
 
@@ -2763,3 +2763,46 @@ detection in `refreshSnapshots()`.
 5. **I-38** / **R-9** — Consolidate Today's 5 state management (larger refactor, future)
 6. **M-31** — Standardize `onMutation` pattern (10 min, `task_provider.dart`)
 7. **Remaining open items** from previous rounds — as time permits
+
+---
+
+## Deferred Fix Round (2026-03-13)
+
+Batch fix of all remaining open items from rounds 1–9.
+
+### Fixed in this round
+
+| Item | Fix | File(s) |
+|------|-----|---------|
+| I6 | Loading spinner during `_fetchCandidateData` for picker dialogs | `task_list_screen.dart` |
+| M3 | `controller.dispose()` after rename dialog | `task_list_screen.dart` |
+| M6 | `didChangeDependencies` detects size changes, rebuilds graph | `dag_view_screen.dart` |
+| M9 | Batch `getChildIdsForParents(List<int>)` replaces N+1 loop | `database_helper.dart`, `task_provider.dart`, `task_list_screen.dart` |
+| M-10 | `.then((_) => controller.dispose())` on URL edit dialog | `leaf_task_detail.dart` |
+| M-12 | Removed dead `updateRepeatInterval`, `completeRepeatingTask`, `isRepeating`, `isDue` | `database_helper.dart`, `task.dart`, tests |
+| M-18 | `_preWorkedOnTimestamps` cleared on provider change | `task_list_screen.dart` |
+| M-19 | Removed duplicate refresh from `onDestinationSelected` | `main.dart` |
+| M-21 | `_initAuth` wrapped in try-catch | `main.dart` |
+| M-22 | Extracted `_buildTheme(Brightness)` to deduplicate light/dark | `main.dart` |
+| M-23 | `_manuallyToggled` flag prevents async load overwriting user toggle | `theme_provider.dart` |
+| N2 | 200ms debounce on TaskPickerDialog filter | `task_picker_dialog.dart` |
+
+### Already fixed (confirmed in this round)
+
+| Item | Status |
+|------|--------|
+| M5 | Android uses SAF; Linux `~/Downloads` acceptable (dev-only) |
+| M-14 | `lastSyncAt` guarded at call site (non-null when passed) |
+| M-16 | try-catch wrapper already present |
+| M-20 | `WidgetsFlutterBinding.ensureInitialized()` on line 17 |
+| M-24 | Cleared in `_generateNewSet()` |
+| M-27 | Uses `listEquals` |
+| N3 | No const warnings from analyzer |
+| N4 | v8 migration normalizes defaults |
+
+### Remaining open
+
+| Item | Reason |
+|------|--------|
+| M-15 | Needs `flutter_secure_storage` dependency — future |
+| M-26 | Acceptable: `refreshSnapshots()` runs on tab switch |

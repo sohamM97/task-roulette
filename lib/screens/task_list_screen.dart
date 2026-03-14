@@ -88,6 +88,9 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   void _onProviderChanged() {
+    // Clear stale undo data — snackbars are dismissed on navigation anyway.
+    _preWorkedOnTimestamps.clear();
+
     // Refresh inbox when returning to root after mutations (e.g. complete/delete
     // an inbox task from its leaf view). Without this, the cached _inboxTasks
     // list shows stale entries.
@@ -460,14 +463,25 @@ class TaskListScreenState extends State<TaskListScreen>
 
   /// Fetches allTasks and parentNamesMap concurrently.
   Future<(List<Task>, Map<int, List<String>>)> _fetchCandidateData() async {
-    final provider = context.read<TaskProvider>();
-    late List<Task> allTasks;
-    late Map<int, List<String>> parentNamesMap;
-    await Future.wait([
-      provider.getAllTasks().then((v) => allTasks = v),
-      provider.getParentNamesMap().then((v) => parentNamesMap = v),
-    ]);
-    return (allTasks, parentNamesMap);
+    // Show a brief loading indicator while fetching task data for picker dialogs.
+    final navigator = Navigator.of(context);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    try {
+      final provider = context.read<TaskProvider>();
+      late List<Task> allTasks;
+      late Map<int, List<String>> parentNamesMap;
+      await Future.wait([
+        provider.getAllTasks().then((v) => allTasks = v),
+        provider.getParentNamesMap().then((v) => parentNamesMap = v),
+      ]);
+      return (allTasks, parentNamesMap);
+    } finally {
+      if (mounted) navigator.pop();
+    }
   }
 
   Future<void> _linkExistingTask() async {
@@ -540,10 +554,7 @@ class TaskListScreenState extends State<TaskListScreen>
     final currentParent = provider.currentParent;
     if (currentParent != null) {
       final grandparentIds = await provider.getParentIds(currentParent.id!);
-      for (final gpId in grandparentIds) {
-        final gpChildren = await provider.getChildIds(gpId);
-        parentSiblingIds.addAll(gpChildren);
-      }
+      parentSiblingIds = await provider.getChildIdsForParents(grandparentIds);
       // If parent is a root task, other root tasks are its siblings
       if (grandparentIds.isEmpty) {
         final rootTasks = await provider.getRootTaskIds();

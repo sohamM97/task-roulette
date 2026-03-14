@@ -934,6 +934,20 @@ class DatabaseHelper {
     return maps.map((m) => m['child_id'] as int).toList();
   }
 
+  /// Returns all child IDs for multiple parent IDs in a single query.
+  Future<Set<int>> getChildIdsForParents(List<int> parentIds) async {
+    if (parentIds.isEmpty) return {};
+    final db = await database;
+    final placeholders = List.filled(parentIds.length, '?').join(',');
+    final maps = await db.query(
+      'task_relationships',
+      columns: ['child_id'],
+      where: 'parent_id IN ($placeholders)',
+      whereArgs: parentIds,
+    );
+    return maps.map((m) => m['child_id'] as int).toSet();
+  }
+
   Future<void> updateTaskName(int taskId, String name) async {
     final db = await database;
     await db.update('tasks', {'name': name, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
@@ -974,47 +988,6 @@ class DatabaseHelper {
     );
   }
 
-  Future<void> updateRepeatInterval(int taskId, String? interval) async {
-    final db = await database;
-    await db.update(
-      'tasks',
-      {'repeat_interval': interval, 'next_due_at': null, ..._dirtyFields()},
-      where: 'id = ?',
-      whereArgs: [taskId],
-    );
-  }
-
-  /// Completes a repeating task: computes next_due_at, clears started_at/last_worked_at.
-  Future<void> completeRepeatingTask(int taskId, String repeatInterval) async {
-    final db = await database;
-    final now = DateTime.now();
-    final Duration offset;
-    switch (repeatInterval) {
-      case 'daily':
-        offset = const Duration(days: 1);
-      case 'weekly':
-        offset = const Duration(days: 7);
-      case 'biweekly':
-        offset = const Duration(days: 14);
-      case 'monthly':
-        offset = const Duration(days: 30);
-      default:
-        assert(false, 'Unknown repeat interval: $repeatInterval');
-        offset = const Duration(days: 1);
-    }
-    final nextDue = now.add(offset).millisecondsSinceEpoch;
-    await db.update(
-      'tasks',
-      {
-        'started_at': null,
-        'last_worked_at': null,
-        'next_due_at': nextDue,
-        ..._dirtyFields(),
-      },
-      where: 'id = ?',
-      whereArgs: [taskId],
-    );
-  }
 
   Future<void> removeRelationship(int parentId, int childId) async {
     final db = await database;
