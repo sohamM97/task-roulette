@@ -130,7 +130,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                           size: 16,
                           color: _inbox
                               ? colorScheme.primary
-                              : colorScheme.onSurfaceVariant.withAlpha(120),
+                              : colorScheme.onSurfaceVariant,
                         ),
                         const SizedBox(width: 4),
                         Text(
@@ -138,7 +138,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: _inbox
                                 ? colorScheme.primary
-                                : colorScheme.onSurfaceVariant.withAlpha(120),
+                                : colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -159,7 +159,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                           size: 16,
                           color: _pin
                               ? colorScheme.tertiary
-                              : colorScheme.onSurfaceVariant.withAlpha(120),
+                              : colorScheme.onSurfaceVariant,
                         ),
                         const SizedBox(width: 4),
                         Text(
@@ -167,7 +167,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: _pin
                                 ? colorScheme.tertiary
-                                : colorScheme.onSurfaceVariant.withAlpha(120),
+                                : colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
