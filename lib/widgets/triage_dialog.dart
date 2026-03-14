@@ -226,11 +226,39 @@ class _TriageDialogState extends State<TriageDialog> {
                 ],
               ),
               const SizedBox(height: 12),
-              Flexible(
-                child: switch (_phase) {
-                  _TriagePhase.suggestions => _buildSuggestions(),
-                  _TriagePhase.browse => _buildBrowseWithSearch(),
+              // Search bar — always visible regardless of phase
+              TextField(
+                controller: _searchController,
+                maxLength: 500,
+                decoration: InputDecoration(
+                  hintText: 'Search tasks...',
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                  counterText: '',
+                  suffixIcon: _isSearching
+                      ? IconButton(
+                          icon: const Icon(Icons.close, size: 18),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _searchFilter = '');
+                          },
+                        )
+                      : null,
+                ),
+                onChanged: (value) {
+                  if (value.isNotEmpty && _allTasks == null) _loadSearchData();
+                  setState(() => _searchFilter = value);
                 },
+              ),
+              const SizedBox(height: 8),
+              Flexible(
+                child: _isSearching
+                    ? _buildSearchResults()
+                    : switch (_phase) {
+                        _TriagePhase.suggestions => _buildSuggestions(),
+                        _TriagePhase.browse => _buildBrowseTree(),
+                      },
               ),
               const SizedBox(height: 8),
               _buildBottomActions(),
@@ -260,6 +288,9 @@ class _TriageDialogState extends State<TriageDialog> {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             child: Row(
               children: [
+                Icon(Icons.folder_outlined, size: 18,
+                    color: colorScheme.primary.withAlpha(180)),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -294,23 +325,24 @@ class _TriageDialogState extends State<TriageDialog> {
   Widget _buildKeepAtTopLevel() {
     final colorScheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: OutlinedButton.icon(
-        onPressed: () =>
+      padding: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () =>
             Navigator.pop(context, const TriageResult(keepAtTopLevel: true)),
-        icon: Icon(Icons.vertical_align_top, size: 18,
-            color: colorScheme.onSurfaceVariant),
-        label: Text('Keep at top level',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: colorScheme.onSurfaceVariant,
-          ),
-        ),
-        style: OutlinedButton.styleFrom(
-          alignment: Alignment.centerLeft,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          side: BorderSide(color: colorScheme.outlineVariant),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          child: Row(
+            children: [
+              Icon(Icons.vertical_align_top, size: 16,
+                  color: colorScheme.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Text('Keep at top level',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -330,12 +362,26 @@ class _TriageDialogState extends State<TriageDialog> {
         ),
       );
     }
+    final colorScheme = Theme.of(context).colorScheme;
+    // +2 for "Keep at top level" and "Suggested" label
     return ListView.builder(
       shrinkWrap: true,
-      itemCount: suggestions.length + 1, // +1 for "Keep at top level"
+      itemCount: suggestions.length + 2,
       itemBuilder: (context, index) {
         if (index == 0) return _buildKeepAtTopLevel();
-        final s = suggestions[index - 1];
+        if (index == 1) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              'Suggested',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+                letterSpacing: 0.5,
+              ),
+            ),
+          );
+        }
+        final s = suggestions[index - 2];
         final parents = _suggestionParentNames?[s.task.id!];
         final subtitle =
             parents != null && parents.isNotEmpty ? 'under ${parents.join(', ')}' : null;
@@ -346,44 +392,6 @@ class _TriageDialogState extends State<TriageDialog> {
           trailing: const Icon(Icons.arrow_forward_rounded, size: 18),
         );
       },
-    );
-  }
-
-  Widget _buildBrowseWithSearch() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // Search bar — always visible
-        TextField(
-          controller: _searchController,
-          maxLength: 500,
-          decoration: InputDecoration(
-            hintText: 'Search tasks...',
-            prefixIcon: const Icon(Icons.search, size: 20),
-            border: const OutlineInputBorder(),
-            isDense: true,
-            counterText: '',
-            suffixIcon: _isSearching
-                ? IconButton(
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: () {
-                      _searchController.clear();
-                      setState(() => _searchFilter = '');
-                    },
-                  )
-                : null,
-          ),
-          onChanged: (value) {
-            if (value.isNotEmpty && _allTasks == null) _loadSearchData();
-            setState(() => _searchFilter = value);
-          },
-        ),
-        const SizedBox(height: 8),
-        // Content: search results OR browse tree
-        Expanded(
-          child: _isSearching ? _buildSearchResults() : _buildBrowseTree(),
-        ),
-      ],
     );
   }
 
@@ -424,22 +432,21 @@ class _TriageDialogState extends State<TriageDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            if (_browseStack.isNotEmpty || _browseParent != null)
+        if (_browseParent != null) ...[
+          Row(
+            children: [
               IconButton(
                 icon: const Icon(Icons.arrow_back, size: 20),
                 onPressed: _browseBack,
                 visualDensity: VisualDensity.compact,
               ),
-            Expanded(
-              child: Text(
-                _browseParent?.name ?? 'Top level',
-                style: Theme.of(context).textTheme.titleSmall,
-                overflow: TextOverflow.ellipsis,
+              Expanded(
+                child: Text(
+                  _browseParent!.name,
+                  style: Theme.of(context).textTheme.titleSmall,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-            ),
-            if (_browseParent != null)
               TextButton.icon(
                 onPressed: () =>
                     Navigator.pop(context, TriageResult(parent: _browseParent)),
@@ -456,10 +463,11 @@ class _TriageDialogState extends State<TriageDialog> {
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
               ),
-          ],
-        ),
-        const Divider(height: 1),
-        const SizedBox(height: 6),
+            ],
+          ),
+          const Divider(height: 1),
+          const SizedBox(height: 6),
+        ],
         if (_browseParent == null) _buildKeepAtTopLevel(),
         Expanded(
           child: _browseLoading
