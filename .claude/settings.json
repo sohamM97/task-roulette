@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(flutter test*)"
+      "Bash(flutter test*)",
+      "Bash(flutter test 2>&1 | tr * > /tmp/flutter_test_output.txt*)"
     ]
   },
   "hooks": {

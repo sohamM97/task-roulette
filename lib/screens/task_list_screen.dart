@@ -894,6 +894,9 @@ class TaskListScreenState extends State<TaskListScreen>
             await _addDependencyToTask(task);
             _leafDepsTaskId = null; // invalidate — may have added a dep
           },
+          onNavigateToDependency: (dep) async {
+            await provider.navigateToTask(dep);
+          },
           parentNames: parentNames,
           isPinnedInTodays5: _todays5PinnedIds?.contains(task.id) ?? false,
           atMaxPins: (_todays5PinnedIds?.length ?? 0) >= maxPins,
@@ -1224,20 +1227,59 @@ class TaskListScreenState extends State<TaskListScreen>
       }
     }
 
+    // Check if task already has a dependency — show remove option if so
+    final existingDeps = await provider.getDependencies(task.id!);
+
     if (!mounted) return;
 
-    final selected = await showDialog<Task>(
+    final colorScheme = Theme.of(context).colorScheme;
+    // Use Object? so we can return either a Task or 'remove' sentinel
+    final result = await showDialog<Object>(
       context: context,
-      builder: (_) => TaskPickerDialog(
+      builder: (ctx) => TaskPickerDialog(
         candidates: candidates,
         title: 'Do "${task.name}" after...',
         parentNamesMap: parentNamesMap,
         priorityIds: siblingIds,
+        headerAction: existingDeps.isNotEmpty
+            ? Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => Navigator.pop(ctx, 'remove'),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 4, vertical: 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.link_off, size: 18,
+                            color: colorScheme.error),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Remove dependency on "${existingDeps.first.name}"',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: colorScheme.error),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              )
+            : null,
       ),
     );
 
-    if (selected == null || !mounted) return;
+    if (result == null || !mounted) return;
 
+    if (result == 'remove') {
+      _leafDepsTaskId = null;
+      await provider.removeDependency(task.id!, existingDeps.first.id!);
+      return;
+    }
+
+    final selected = result as Task;
     final success = await provider.addDependency(task.id!, selected.id!);
     if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

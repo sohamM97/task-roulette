@@ -367,4 +367,76 @@ void main() {
       expect(textField.maxLength, 500);
     });
   });
+
+  group('TaskPickerDialog headerAction', () {
+    testWidgets('headerAction is shown when provided and no search filter',
+        (tester) async {
+      final tasks = makeTasks(['Alpha', 'Beta']);
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () {
+                showDialog<Object>(
+                  context: context,
+                  builder: (_) => TaskPickerDialog(
+                    candidates: tasks,
+                    headerAction: const Text('Remove dependency'),
+                  ),
+                );
+              },
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Remove dependency'), findsOneWidget);
+    });
+
+    testWidgets('headerAction is hidden when search filter is active',
+        (tester) async {
+      final tasks = makeTasks(['Alpha', 'Beta']);
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () {
+                showDialog<Object>(
+                  context: context,
+                  builder: (_) => TaskPickerDialog(
+                    candidates: tasks,
+                    headerAction: const Text('Remove dependency'),
+                  ),
+                );
+              },
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Remove dependency'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), 'alpha');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Remove dependency'), findsNothing);
+    });
+
+    testWidgets('headerAction is not shown when not provided',
+        (tester) async {
+      final tasks = makeTasks(['Alpha']);
+      await tester.pumpWidget(buildDialog(candidates: tasks));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      // Only the task list and search, no header action
+      expect(find.text('Remove dependency'), findsNothing);
+    });
+  });
 }

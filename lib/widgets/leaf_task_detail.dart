@@ -16,6 +16,7 @@ class LeafTaskDetail extends StatelessWidget {
   final List<Task> dependencies;
   final void Function(int)? onRemoveDependency;
   final VoidCallback? onAddDependency;
+  final void Function(Task)? onNavigateToDependency;
   final List<String> parentNames;
   final bool isPinnedInTodays5;
   final bool atMaxPins;
@@ -35,6 +36,7 @@ class LeafTaskDetail extends StatelessWidget {
     this.dependencies = const [],
     this.onRemoveDependency,
     this.onAddDependency,
+    this.onNavigateToDependency,
     this.parentNames = const [],
     this.isPinnedInTodays5 = false,
     this.atMaxPins = false,
@@ -256,29 +258,36 @@ class LeafTaskDetail extends StatelessWidget {
                 ),
                 // Dependency icon — shown when callback available
                 if (onAddDependency != null || dependencies.isNotEmpty)
-                  IconButton(
-                    onPressed: dependencies.isNotEmpty
-                        ? () {
-                            final dep = dependencies.first;
-                            if (onRemoveDependency != null) {
-                              onRemoveDependency!(dep.id!);
-                            }
-                          }
-                        : onAddDependency,
-                    tooltip: dependencies.isNotEmpty
-                        ? 'After: ${dependencies.first.name}'
-                        : 'Do after...',
-                    visualDensity: VisualDensity.compact,
-                    icon: Icon(
-                      dependencies.isNotEmpty
-                          ? Icons.hourglass_top
-                          : Icons.add_task,
-                      size: 20,
-                      color: dependencies.isNotEmpty
-                          ? colorScheme.primary
-                          : colorScheme.onSurfaceVariant.withAlpha(120),
+                  if (dependencies.isNotEmpty)
+                    Tooltip(
+                      message: 'After: ${dependencies.first.name}',
+                      triggerMode: TooltipTriggerMode.manual,
+                      child: GestureDetector(
+                        onTap: onNavigateToDependency != null
+                            ? () => onNavigateToDependency!(dependencies.first)
+                            : null,
+                        onLongPress: onAddDependency,
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Icon(
+                            Icons.hourglass_top,
+                            size: 20,
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    IconButton(
+                      onPressed: onAddDependency,
+                      tooltip: 'Do after...',
+                      visualDensity: VisualDensity.compact,
+                      icon: Icon(
+                        Icons.add_task,
+                        size: 20,
+                        color: colorScheme.onSurfaceVariant.withAlpha(120),
+                      ),
                     ),
-                  ),
               ],
             ),
             const SizedBox(height: 16),
@@ -352,5 +361,6 @@ class LeafTaskDetail extends StatelessWidget {
       ),
     );
   }
+
 }
 
