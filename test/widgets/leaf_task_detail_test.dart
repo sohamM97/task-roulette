@@ -410,7 +410,7 @@ void main() {
             dependencies: [
               Task(id: 2, name: 'Blocker', createdAt: DateTime.now().millisecondsSinceEpoch),
             ],
-            onRemoveDependency: (_) {},
+
           ),
         ),
       ));
@@ -418,8 +418,9 @@ void main() {
       expect(find.byIcon(Icons.hourglass_top), findsOneWidget);
     });
 
-    testWidgets('tapping dependency icon with deps calls onRemoveDependency', (tester) async {
-      int? removedId;
+    testWidgets('tapping dependency icon navigates to dependency task', (tester) async {
+      Task? navigatedTo;
+      final blocker = Task(id: 42, name: 'Blocker', createdAt: DateTime.now().millisecondsSinceEpoch);
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
           body: LeafTaskDetail(
@@ -431,16 +432,42 @@ void main() {
             onUpdateUrl: (_) {},
             onUpdatePriority: (_) {},
             onUpdateSomeday: (_) {},
-            dependencies: [
-              Task(id: 42, name: 'Blocker', createdAt: DateTime.now().millisecondsSinceEpoch),
-            ],
-            onRemoveDependency: (id) => removedId = id,
+            dependencies: [blocker],
+
+            onNavigateToDependency: (dep) => navigatedTo = dep,
           ),
         ),
       ));
 
       await tester.tap(find.byIcon(Icons.hourglass_top));
-      expect(removedId, 42);
+      expect(navigatedTo?.id, 42);
+    });
+
+    testWidgets('long-pressing dependency icon calls onAddDependency for editing', (tester) async {
+      var addCalled = false;
+      final blocker = Task(id: 42, name: 'Blocker', createdAt: DateTime.now().millisecondsSinceEpoch);
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LeafTaskDetail(
+            task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+            onDone: () {},
+            onSkip: () {},
+            onToggleStarted: () {},
+            onRename: () {},
+            onUpdateUrl: (_) {},
+            onUpdatePriority: (_) {},
+            onUpdateSomeday: (_) {},
+            dependencies: [blocker],
+
+            onAddDependency: () => addCalled = true,
+            onNavigateToDependency: (_) {},
+          ),
+        ),
+      ));
+
+      await tester.longPress(find.byIcon(Icons.hourglass_top));
+      await tester.pumpAndSettle();
+      expect(addCalled, isTrue);
     });
 
     testWidgets('no dependency icon when no callback and no deps', (tester) async {

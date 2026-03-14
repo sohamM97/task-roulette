@@ -10,6 +10,8 @@ class TaskPickerDialog extends StatefulWidget {
   final Set<int> priorityIds;
   /// Task IDs to show after primary priority (e.g. parent's siblings).
   final Set<int> secondaryPriorityIds;
+  /// Optional action widget shown before the list (e.g. "Remove dependency").
+  final Widget? headerAction;
 
   const TaskPickerDialog({
     super.key,
@@ -18,6 +20,7 @@ class TaskPickerDialog extends StatefulWidget {
     this.parentNamesMap = const {},
     this.priorityIds = const {},
     this.secondaryPriorityIds = const {},
+    this.headerAction,
   });
 
   @override
@@ -120,6 +123,8 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
                 onChanged: (value) => setState(() => _filter = value),
               ),
               const SizedBox(height: 8),
+              if (widget.headerAction != null && _filter.isEmpty)
+                widget.headerAction!,
               Flexible(
                 child: filtered.isEmpty
                     ? const Center(
