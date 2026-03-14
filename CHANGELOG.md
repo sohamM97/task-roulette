@@ -27,9 +27,6 @@
 - **Midnight refresh** — Today's 5 resets correctly at midnight.
 - **Sync-on-open** — pulls remote state immediately on app launch.
 
-### Notifications
-- **Daily 8 AM notification** on Android reminding you to check Today's 5. Uses exact alarms.
-
 ### UI & Polish
 - **URL field on Add Task dialog** — attach a link when creating a task, with shared `UrlTextField` widget.
 - **"Also done today" box** fully tappable for expand/collapse.
