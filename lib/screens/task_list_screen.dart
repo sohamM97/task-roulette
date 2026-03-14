@@ -886,10 +886,6 @@ class TaskListScreenState extends State<TaskListScreen>
             await provider.unmarkWorkedOn(task.id!, restoreTo: restoreTo);
           },
           dependencies: deps,
-          onRemoveDependency: (depId) async {
-            _leafDepsTaskId = null; // invalidate before await
-            await provider.removeDependency(task.id!, depId);
-          },
           onAddDependency: () async {
             await _addDependencyToTask(task);
             _leafDepsTaskId = null; // invalidate — may have added a dep

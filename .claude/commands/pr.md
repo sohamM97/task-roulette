@@ -14,7 +14,7 @@ Create a PR from the current branch to the target branch.
 6. Draft a PR title (short, under 70 chars) and body summarizing all commits — not just the latest.
 7. Create the PR using `gh pr create` with a HEREDOC body. Target branch is `$ARGUMENTS` if provided, otherwise `main`.
 8. Report the PR URL.
-9. For large or feature PRs, suggest running `/review` in a **fresh session** before merging.
+9. **Review recommendation:** Assess whether `/review` (in a fresh session) would be valuable for this PR. Suggest it with a rationale when: the changeset is large (10+ files or 200+ lines), touches architectural patterns (providers, DB schema, sync flow), involves security-sensitive code, or has complex logic prone to subtle bugs. Skip the suggestion for small/focused changes, straightforward UI tweaks, or well-tested behavior — just say the user can merge directly.
 
 ## Rules
 

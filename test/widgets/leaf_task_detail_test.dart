@@ -410,7 +410,7 @@ void main() {
             dependencies: [
               Task(id: 2, name: 'Blocker', createdAt: DateTime.now().millisecondsSinceEpoch),
             ],
-            onRemoveDependency: (_) {},
+
           ),
         ),
       ));
@@ -433,7 +433,7 @@ void main() {
             onUpdatePriority: (_) {},
             onUpdateSomeday: (_) {},
             dependencies: [blocker],
-            onRemoveDependency: (_) {},
+
             onNavigateToDependency: (dep) => navigatedTo = dep,
           ),
         ),
@@ -458,7 +458,7 @@ void main() {
             onUpdatePriority: (_) {},
             onUpdateSomeday: (_) {},
             dependencies: [blocker],
-            onRemoveDependency: (_) {},
+
             onAddDependency: () => addCalled = true,
             onNavigateToDependency: (_) {},
           ),

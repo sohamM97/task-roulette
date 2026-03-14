@@ -14,7 +14,6 @@ class LeafTaskDetail extends StatelessWidget {
   final VoidCallback? onWorkedOn;
   final VoidCallback? onUndoWorkedOn;
   final List<Task> dependencies;
-  final void Function(int)? onRemoveDependency;
   final VoidCallback? onAddDependency;
   final void Function(Task)? onNavigateToDependency;
   final List<String> parentNames;
@@ -34,7 +33,6 @@ class LeafTaskDetail extends StatelessWidget {
     this.onWorkedOn,
     this.onUndoWorkedOn,
     this.dependencies = const [],
-    this.onRemoveDependency,
     this.onAddDependency,
     this.onNavigateToDependency,
     this.parentNames = const [],
