@@ -597,6 +597,10 @@ class TaskListScreenState extends State<TaskListScreen>
     await context.read<TaskProvider>().updateTaskSomeday(task.id!, isSomeday);
   }
 
+  Future<void> _updateStarred(Task task, bool isStarred) async {
+    await context.read<TaskProvider>().updateTaskStarred(task.id!, isStarred);
+  }
+
   Future<void> _workedOn(Task task) async {
     final provider = context.read<TaskProvider>();
     final previousLastWorkedAt = task.lastWorkedAt;
@@ -1518,6 +1522,8 @@ class TaskListScreenState extends State<TaskListScreen>
                                     .where((name) => name != provider.currentParent?.name)
                                     .toList(),
                                 effectiveDeadline: provider.effectiveDeadlines[task.id],
+                                isStarred: task.isStarred,
+                                onToggleStar: () => _updateStarred(task, !task.isStarred),
                               );
                             },
                           ),

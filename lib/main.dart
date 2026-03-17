@@ -8,6 +8,7 @@ import 'platform/platform_utils.dart'
 import 'providers/auth_provider.dart';
 import 'providers/task_provider.dart';
 import 'providers/theme_provider.dart';
+import 'screens/starred_screen.dart';
 import 'screens/task_list_screen.dart';
 import 'screens/todays_five_screen.dart';
 import 'services/notification_service.dart';
@@ -85,6 +86,7 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _currentIndex = 0;
   final _todaysFiveKey = GlobalKey<TodaysFiveScreenState>();
+  final _starredKey = GlobalKey<StarredScreenState>();
   final _taskListKey = GlobalKey<TaskListScreenState>();
   final _pageController = PageController();
 
@@ -152,7 +154,7 @@ class _AppShellState extends State<AppShell> {
         onPageChanged: (index) {
           if (index == 0) {
             _todaysFiveKey.currentState?.refreshSnapshots();
-          } else if (index == 1) {
+          } else if (index == 2) {
             _taskListKey.currentState?.loadTodaysFiveIds();
           }
           setState(() {
@@ -166,7 +168,19 @@ class _AppShellState extends State<AppShell> {
               await context.read<TaskProvider>().navigateToTask(task);
               if (!mounted) return;
               _pageController.animateToPage(
-                1,
+                2,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+            },
+          ),
+          StarredScreen(
+            key: _starredKey,
+            onNavigateToTask: (task) async {
+              await context.read<TaskProvider>().navigateToTask(task);
+              if (!mounted) return;
+              _pageController.animateToPage(
+                2,
                 duration: const Duration(milliseconds: 300),
                 curve: Curves.easeInOut,
               );
@@ -190,6 +204,11 @@ class _AppShellState extends State<AppShell> {
             icon: Icon(Icons.today_outlined),
             selectedIcon: Icon(Icons.today),
             label: 'Today',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.star_outline),
+            selectedIcon: Icon(Icons.star),
+            label: 'Starred',
           ),
           NavigationDestination(
             icon: Icon(Icons.list_outlined),

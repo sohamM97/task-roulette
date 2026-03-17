@@ -20,6 +20,8 @@ class Task {
   /// 'due_by' (default) = gradual weight boost + color ramp.
   /// 'on' = silent until the date, then auto-pin. No ramp-up.
   final String deadlineType;
+  final bool isStarred;
+  final int? starOrder;
 
   static const priorityLabels = ['Normal', 'High'];
 
@@ -43,6 +45,8 @@ class Task {
     this.isInbox = false,
     this.deadline,
     this.deadlineType = 'due_by',
+    this.isStarred = false,
+    this.starOrder,
   }) : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch;
 
   bool get isCompleted => completedAt != null;
@@ -101,6 +105,8 @@ class Task {
     bool? isInbox,
     String? Function()? deadline,
     String? deadlineType,
+    bool? isStarred,
+    int? Function()? starOrder,
   }) {
     return Task(
       id: id ?? this.id,
@@ -122,6 +128,8 @@ class Task {
       isInbox: isInbox ?? this.isInbox,
       deadline: deadline != null ? deadline() : this.deadline,
       deadlineType: deadlineType ?? this.deadlineType,
+      isStarred: isStarred ?? this.isStarred,
+      starOrder: starOrder != null ? starOrder() : this.starOrder,
     );
   }
 
@@ -146,6 +154,8 @@ class Task {
       'is_inbox': isInbox ? 1 : 0,
       'deadline': deadline,
       'deadline_type': deadlineType,
+      'is_starred': isStarred ? 1 : 0,
+      'star_order': starOrder,
     };
   }
 
@@ -170,6 +180,8 @@ class Task {
       isInbox: (map['is_inbox'] as int? ?? 0) == 1,
       deadline: map['deadline'] as String?,
       deadlineType: map['deadline_type'] as String? ?? 'due_by',
+      isStarred: (map['is_starred'] as int? ?? 0) == 1,
+      starOrder: map['star_order'] as int?,
     );
   }
 }
