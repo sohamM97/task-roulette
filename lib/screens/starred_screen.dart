@@ -19,8 +19,8 @@ class StarredScreenState extends State<StarredScreen>
   bool get wantKeepAlive => true;
 
   List<Task> _starredTasks = [];
-  /// taskId → list of children (max 3), each child has its own grandchildren list
-  Map<int, List<({Task child, List<Task> grandchildren})>> _treeData = {};
+  /// taskId → tree preview data
+  Map<int, ({List<({Task child, List<Task> grandchildren, int totalGrandchildren})> children, int totalChildren})> _treeData = {};
   bool _loading = true;
   TaskProvider? _provider;
 
@@ -48,25 +48,28 @@ class StarredScreenState extends State<StarredScreen>
     final starred = await provider.getStarredTasks();
 
     // Load tree preview data for each starred task
-    final treeData = <int, List<({Task child, List<Task> grandchildren})>>{};
+    final treeData = <int, ({List<({Task child, List<Task> grandchildren, int totalGrandchildren})> children, int totalChildren})>{};
     for (final task in starred) {
       final children = await provider.getChildren(task.id!);
-      final activeChildren = children
+      final allActive = children
           .where((c) => c.completedAt == null && c.skippedAt == null)
-          .take(3)
           .toList();
+      final shownChildren = allActive.take(3).toList();
 
-      final childEntries = <({Task child, List<Task> grandchildren})>[];
-      for (final child in activeChildren) {
+      final childEntries = <({Task child, List<Task> grandchildren, int totalGrandchildren})>[];
+      for (final child in shownChildren) {
         final grandchildren = await provider.getChildren(child.id!);
-        final activeGrandchildren = grandchildren
+        final allActiveGc = grandchildren
             .where((g) => g.completedAt == null && g.skippedAt == null)
-            .take(2)
             .toList();
-        childEntries.add((child: child, grandchildren: activeGrandchildren));
+        childEntries.add((
+          child: child,
+          grandchildren: allActiveGc.take(2).toList(),
+          totalGrandchildren: allActiveGc.length,
+        ));
       }
 
-      treeData[task.id!] = childEntries;
+      treeData[task.id!] = (children: childEntries, totalChildren: allActive.length);
     }
 
     if (!mounted) return;
@@ -135,12 +138,13 @@ class StarredScreenState extends State<StarredScreen>
       },
       itemBuilder: (context, index) {
         final task = _starredTasks[index];
-        final tree = _treeData[task.id!] ?? [];
+        final treeInfo = _treeData[task.id!];
         return _StarredTaskCard(
           key: ValueKey(task.id),
           index: index,
           task: task,
-          tree: tree,
+          tree: treeInfo?.children ?? [],
+          totalChildren: treeInfo?.totalChildren ?? 0,
           onTap: () => widget.onNavigateToTask?.call(task),
         );
       },
@@ -150,7 +154,8 @@ class StarredScreenState extends State<StarredScreen>
 
 class _StarredTaskCard extends StatelessWidget {
   final Task task;
-  final List<({Task child, List<Task> grandchildren})> tree;
+  final List<({Task child, List<Task> grandchildren, int totalGrandchildren})> tree;
+  final int totalChildren;
   final VoidCallback onTap;
   final int index;
 
@@ -158,6 +163,7 @@ class _StarredTaskCard extends StatelessWidget {
     super.key,
     required this.task,
     required this.tree,
+    required this.totalChildren,
     required this.onTap,
     required this.index,
   });
@@ -208,14 +214,27 @@ class _StarredTaskCard extends StatelessWidget {
                         ...tree.asMap().entries.map((entry) {
                           final i = entry.key;
                           final item = entry.value;
-                          final isLast = i == tree.length - 1;
+                          final moreChildren = totalChildren - tree.length;
+                          final isLast = i == tree.length - 1 && moreChildren == 0;
                           return _buildTreeNode(
                             context,
                             child: item.child,
                             grandchildren: item.grandchildren,
+                            totalGrandchildren: item.totalGrandchildren,
                             isLast: isLast,
                           );
                         }),
+                        if (totalChildren > tree.length)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 4),
+                            child: Text(
+                              '└─ +${totalChildren - tree.length} more',
+                              style: textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurfaceVariant.withAlpha(100),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
                       ],
                     ],
                   ),
@@ -238,11 +257,15 @@ class _StarredTaskCard extends StatelessWidget {
     BuildContext context, {
     required Task child,
     required List<Task> grandchildren,
+    required int totalGrandchildren,
     required bool isLast,
   }) {
     final textTheme = Theme.of(context).textTheme;
     final mutedColor = Theme.of(context).colorScheme.onSurfaceVariant.withAlpha(140);
+    final faintColor = Theme.of(context).colorScheme.onSurfaceVariant.withAlpha(100);
     final prefix = isLast ? '└─' : '├─';
+    final vertBar = isLast ? '   ' : '│  ';
+    final moreGc = totalGrandchildren - grandchildren.length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -259,8 +282,7 @@ class _StarredTaskCard extends StatelessWidget {
         ...grandchildren.asMap().entries.map((gcEntry) {
           final gi = gcEntry.key;
           final gc = gcEntry.value;
-          final gcIsLast = gi == grandchildren.length - 1;
-          final vertBar = isLast ? '   ' : '│  ';
+          final gcIsLast = gi == grandchildren.length - 1 && moreGc == 0;
           final gcPrefix = gcIsLast ? '└─' : '├─';
           return Padding(
             padding: const EdgeInsets.only(left: 4),
@@ -275,6 +297,17 @@ class _StarredTaskCard extends StatelessWidget {
             ),
           );
         }),
+        if (moreGc > 0)
+          Padding(
+            padding: const EdgeInsets.only(left: 4),
+            child: Text(
+              '$vertBar└─ +$moreGc more',
+              style: textTheme.bodySmall?.copyWith(
+                color: faintColor,
+                fontSize: 11,
+              ),
+            ),
+          ),
       ],
     );
   }
