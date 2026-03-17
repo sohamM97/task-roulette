@@ -3357,4 +3357,109 @@ void main() {
           reason: 'Far-deadline task should not dominate (no boost)');
     });
   });
+
+  group('Starred tasks', () {
+    test('updateTaskStarred assigns next star_order when starring', () async {
+      final id1 = await db.insertTask(Task(name: 'First'));
+      final id2 = await db.insertTask(Task(name: 'Second'));
+
+      await provider.updateTaskStarred(id1, true);
+      await provider.updateTaskStarred(id2, true);
+
+      final starred = await provider.getStarredTasks();
+      expect(starred.length, 2);
+      // First starred task gets order 0, second gets order 1
+      expect(starred[0].id, id1);
+      expect(starred[0].starOrder, 0);
+      expect(starred[1].id, id2);
+      expect(starred[1].starOrder, 1);
+    });
+
+    test('updateTaskStarred unstarring clears star_order', () async {
+      final id = await db.insertTask(Task(name: 'Star then unstar'));
+      await provider.updateTaskStarred(id, true);
+
+      // Verify it's starred
+      var starred = await provider.getStarredTasks();
+      expect(starred.length, 1);
+
+      // Unstar
+      await provider.updateTaskStarred(id, false);
+      starred = await provider.getStarredTasks();
+      expect(starred, isEmpty);
+
+      // Verify task still exists but is not starred
+      final task = await db.getTaskById(id);
+      expect(task!.isStarred, isFalse);
+    });
+
+    test('reorderStarredTasks normalizes star_order to 0..N-1', () async {
+      final id1 = await db.insertTask(Task(name: 'A'));
+      final id2 = await db.insertTask(Task(name: 'B'));
+      final id3 = await db.insertTask(Task(name: 'C'));
+
+      await provider.updateTaskStarred(id1, true);
+      await provider.updateTaskStarred(id2, true);
+      await provider.updateTaskStarred(id3, true);
+
+      // Reorder: C, A, B
+      await provider.reorderStarredTasks([id3, id1, id2]);
+
+      final starred = await provider.getStarredTasks();
+      expect(starred[0].id, id3);
+      expect(starred[0].starOrder, 0);
+      expect(starred[1].id, id1);
+      expect(starred[1].starOrder, 1);
+      expect(starred[2].id, id2);
+      expect(starred[2].starOrder, 2);
+    });
+
+    test('starred completed task excluded from getStarredTasks', () async {
+      final id = await db.insertTask(Task(name: 'Complete me'));
+      await provider.updateTaskStarred(id, true);
+
+      await db.completeTask(id);
+      final starred = await provider.getStarredTasks();
+      expect(starred.where((t) => t.id == id), isEmpty);
+    });
+
+    test('starred skipped task excluded from getStarredTasks', () async {
+      final id = await db.insertTask(Task(name: 'Skip me'));
+      await provider.updateTaskStarred(id, true);
+
+      await db.skipTask(id);
+      final starred = await provider.getStarredTasks();
+      expect(starred.where((t) => t.id == id), isEmpty);
+    });
+
+    test('uncompleting a starred task restores it in getStarredTasks', () async {
+      final id = await db.insertTask(Task(name: 'Restore me'));
+      await provider.updateTaskStarred(id, true);
+      await db.completeTask(id);
+
+      // Not visible while completed
+      expect((await provider.getStarredTasks()).where((t) => t.id == id), isEmpty);
+
+      await db.uncompleteTask(id);
+
+      // Visible again
+      final starred = await provider.getStarredTasks();
+      expect(starred.where((t) => t.id == id), hasLength(1));
+    });
+
+    test('updateTaskStarred updates currentParent when task is current', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parentId, childId);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      // Now currentParent is parent — star it
+      await provider.updateTaskStarred(parentId, true);
+      expect(provider.currentParent!.isStarred, isTrue);
+      expect(provider.currentParent!.starOrder, 0);
+    });
+  });
 }

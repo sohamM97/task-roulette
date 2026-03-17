@@ -697,4 +697,78 @@ void main() {
       expect(task.daysUntilDeadline, isNull);
     });
   });
+
+  group('Starred fields', () {
+    test('defaults isStarred to false and starOrder to null', () {
+      final task = Task(name: 'T');
+      expect(task.isStarred, isFalse);
+      expect(task.starOrder, isNull);
+    });
+
+    test('creates with isStarred true and starOrder', () {
+      final task = Task(name: 'T', isStarred: true, starOrder: 3);
+      expect(task.isStarred, isTrue);
+      expect(task.starOrder, 3);
+    });
+
+    test('toMap stores isStarred as integer', () {
+      final task = Task(id: 1, name: 'T', createdAt: 100, isStarred: true, starOrder: 5);
+      expect(task.toMap()['is_starred'], 1);
+      expect(task.toMap()['star_order'], 5);
+
+      final task2 = Task(id: 2, name: 'T2', createdAt: 100);
+      expect(task2.toMap()['is_starred'], 0);
+      expect(task2.toMap()['star_order'], isNull);
+    });
+
+    test('fromMap parses is_starred and star_order', () {
+      final task = Task.fromMap({
+        'id': 1, 'name': 'T', 'created_at': 100,
+        'is_starred': 1, 'star_order': 7,
+      });
+      expect(task.isStarred, isTrue);
+      expect(task.starOrder, 7);
+
+      final task2 = Task.fromMap({
+        'id': 2, 'name': 'T2', 'created_at': 100,
+        'is_starred': 0, 'star_order': null,
+      });
+      expect(task2.isStarred, isFalse);
+      expect(task2.starOrder, isNull);
+    });
+
+    test('fromMap defaults is_starred to false when missing', () {
+      final task = Task.fromMap({'id': 1, 'name': 'T', 'created_at': 100});
+      expect(task.isStarred, isFalse);
+      expect(task.starOrder, isNull);
+    });
+
+    test('copyWith updates isStarred and starOrder', () {
+      final task = Task(name: 'T');
+      final updated = task.copyWith(isStarred: true, starOrder: () => 2);
+      expect(updated.isStarred, isTrue);
+      expect(updated.starOrder, 2);
+    });
+
+    test('copyWith can clear starOrder to null', () {
+      final task = Task(name: 'T', isStarred: true, starOrder: 5);
+      final updated = task.copyWith(isStarred: false, starOrder: () => null);
+      expect(updated.isStarred, isFalse);
+      expect(updated.starOrder, isNull);
+    });
+
+    test('copyWith preserves starred fields when not specified', () {
+      final task = Task(name: 'T', isStarred: true, starOrder: 3);
+      final updated = task.copyWith(name: 'New');
+      expect(updated.isStarred, isTrue);
+      expect(updated.starOrder, 3);
+    });
+
+    test('toMap/fromMap round-trip preserves starred fields', () {
+      final original = Task(id: 1, name: 'T', createdAt: 100, isStarred: true, starOrder: 4);
+      final restored = Task.fromMap(original.toMap());
+      expect(restored.isStarred, original.isStarred);
+      expect(restored.starOrder, original.starOrder);
+    });
+  });
 }
