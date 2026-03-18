@@ -75,9 +75,7 @@ class LeafTaskDetail extends StatelessWidget {
             final url = normalizeUrl(trimmed);
             if (url == null || !isAllowedUrl(url)) {
               Navigator.pop(dialogContext);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Only web links (http/https) are supported'), persist: false),
-              );
+              showInfoSnackBar(context, 'Only web links (http/https) are supported');
               return;
             }
             Navigator.pop(dialogContext);
@@ -108,9 +106,7 @@ class LeafTaskDetail extends StatelessWidget {
               final url = normalizeUrl(trimmed);
               if (url == null || !isAllowedUrl(url)) {
                 Navigator.pop(dialogContext);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Only web links (http/https) are supported'), persist: false),
-                );
+                showInfoSnackBar(context, 'Only web links (http/https) are supported');
                 return;
               }
               Navigator.pop(dialogContext);

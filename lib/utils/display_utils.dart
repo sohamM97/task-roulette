@@ -5,6 +5,24 @@ import 'package:url_launcher/url_launcher.dart';
 /// Icon used for the archive/completed-tasks screen.
 const IconData archiveIcon = Icons.inventory_2_outlined;
 
+/// Returns the deadline icon color based on days until deadline.
+/// Used by task cards, Today's 5, and schedule dialog.
+Color deadlineProximityColor(int daysUntil, ColorScheme colorScheme) {
+  if (daysUntil <= 2) return Colors.deepOrange;
+  if (daysUntil <= 7) return Colors.orange;
+  return colorScheme.primary;
+}
+
+/// Shows a brief informational snackbar with a close icon (or Undo action).
+void showInfoSnackBar(BuildContext context, String message, {VoidCallback? onUndo}) {
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+    content: Text(message),
+    showCloseIcon: onUndo == null,
+    action: onUndo != null ? SnackBarAction(label: 'Undo', onPressed: onUndo) : null,
+    duration: const Duration(seconds: 3),
+  ));
+}
+
 /// Returns today's date as a 'YYYY-MM-DD' string, used as a key for
 /// Today's 5 state in the DB and Firestore.
 String todayDateKey() {
@@ -43,9 +61,7 @@ bool isAllowedUrl(String url) {
 Future<void> launchSafeUrl(BuildContext context, String url) async {
   if (!isAllowedUrl(url)) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Only web links (http/https) are supported'), showCloseIcon: true, persist: false),
-      );
+      showInfoSnackBar(context, 'Only web links (http/https) are supported');
     }
     return;
   }
@@ -56,9 +72,7 @@ Future<void> launchSafeUrl(BuildContext context, String url) async {
     opened = false;
   }
   if (!opened && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Could not open link'), showCloseIcon: true, persist: false),
-    );
+    showInfoSnackBar(context, 'Could not open link');
   }
 }
 

@@ -104,7 +104,9 @@ class DatabaseHelper {
             sync_status TEXT NOT NULL DEFAULT 'synced',
             is_someday INTEGER NOT NULL DEFAULT 0,
             is_schedule_override INTEGER NOT NULL DEFAULT 0,
-            is_inbox INTEGER NOT NULL DEFAULT 0
+            is_inbox INTEGER NOT NULL DEFAULT 0,
+            deadline TEXT,
+            deadline_type TEXT NOT NULL DEFAULT 'due_by'
           )
         ''');
         await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_sync_id ON tasks(sync_id)');
@@ -315,6 +317,22 @@ class DatabaseHelper {
         if (oldVersion < 18) {
           await db.execute('ALTER TABLE tasks ADD COLUMN is_inbox INTEGER NOT NULL DEFAULT 0');
         }
+        if (oldVersion < 19) {
+          // Note: version 19 was used by the starred-tasks feature on another branch.
+          // On DBs that went through that branch, this is a no-op (they already have
+          // is_starred/star_order but not deadline — handled in v20 below).
+        }
+        if (oldVersion < 20) {
+          // Add deadline column if missing (safe: ALTER TABLE ADD COLUMN is a no-op check)
+          final cols = await db.rawQuery('PRAGMA table_info(tasks)');
+          final colNames = cols.map((c) => c['name'] as String).toSet();
+          if (!colNames.contains('deadline')) {
+            await db.execute('ALTER TABLE tasks ADD COLUMN deadline TEXT');
+          }
+        }
+        if (oldVersion < 21) {
+          await db.execute("ALTER TABLE tasks ADD COLUMN deadline_type TEXT NOT NULL DEFAULT 'due_by'");
+        }
       },
     );
   }
@@ -327,7 +345,7 @@ class DatabaseHelper {
   }
 
   static const _maxBackupSizeBytes = 100 * 1024 * 1024; // 100 MB
-  static const _dbVersion = 18;
+  static const _dbVersion = 21;
   static const _expectedTables = ['tasks', 'task_relationships', 'task_dependencies'];
 
   /// Validates that [sourcePath] is a valid TaskRoulette backup.
@@ -966,6 +984,189 @@ class DatabaseHelper {
   Future<void> updateTaskSomeday(int taskId, bool isSomeday) async {
     final db = await database;
     await db.update('tasks', {'is_someday': isSomeday ? 1 : 0, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
+  }
+
+  Future<void> updateTaskDeadline(int taskId, String? deadline, {String deadlineType = 'due_by'}) async {
+    final db = await database;
+    await db.update('tasks', {'deadline': deadline, 'deadline_type': deadlineType, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
+  }
+
+  /// Returns leaf task IDs that should be auto-pinned due to deadlines.
+  /// Includes both leaves with their own deadline <= today AND leaf
+  /// descendants of parent tasks with deadline <= today.
+  Future<Set<int>> getDeadlinePinLeafIds({DateTime? now}) async {
+    final db = await database;
+    final date = now ?? DateTime.now();
+    final today = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    final rows = await db.rawQuery('''
+      WITH
+        deadline_due(task_id) AS (
+          SELECT id FROM tasks
+          WHERE deadline IS NOT NULL AND deadline <= ?
+          AND completed_at IS NULL AND skipped_at IS NULL
+        ),
+        all_descendants(id) AS (
+          SELECT task_id FROM deadline_due
+          UNION
+          SELECT tr.child_id FROM task_relationships tr
+          INNER JOIN all_descendants d ON tr.parent_id = d.id
+          INNER JOIN tasks c ON tr.child_id = c.id
+          WHERE c.completed_at IS NULL AND c.skipped_at IS NULL
+        )
+      SELECT DISTINCT d.id FROM all_descendants d
+      INNER JOIN tasks t ON d.id = t.id
+      WHERE t.completed_at IS NULL
+      AND t.skipped_at IS NULL
+      AND t.id NOT IN (
+        SELECT DISTINCT tr2.parent_id FROM task_relationships tr2
+        INNER JOIN tasks c ON tr2.child_id = c.id
+        WHERE c.completed_at IS NULL AND c.skipped_at IS NULL
+      )
+    ''', [today]);
+    return rows.map((r) => r['id'] as int).toSet();
+  }
+
+  /// Returns the nearest ancestor's deadline info for a task, or null if none.
+  /// Walks up the ancestor chain and returns the closest deadline found.
+  Future<({String deadline, String deadlineType, String sourceName})?> getInheritedDeadline(int taskId) async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      WITH RECURSIVE ancestors(id, depth) AS (
+        SELECT parent_id, 1 FROM task_relationships WHERE child_id = ?
+        UNION ALL
+        SELECT tr.parent_id, a.depth + 1
+        FROM task_relationships tr
+        INNER JOIN ancestors a ON tr.child_id = a.id
+      )
+      SELECT t.name, t.deadline, t.deadline_type FROM tasks t
+      INNER JOIN ancestors a ON t.id = a.id
+      WHERE t.deadline IS NOT NULL
+      ORDER BY a.depth ASC
+      LIMIT 1
+    ''', [taskId]);
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return (
+      deadline: row['deadline'] as String,
+      deadlineType: row['deadline_type'] as String? ?? 'due_by',
+      sourceName: row['name'] as String,
+    );
+  }
+
+  /// Returns effective deadline info for a batch of task IDs.
+  /// For each task, returns the nearest deadline (own or inherited from ancestor).
+  /// Result maps task ID → deadline string.
+  Future<Map<int, ({String deadline, String type})>> getEffectiveDeadlines(List<int> taskIds) async {
+    if (taskIds.isEmpty) return {};
+    final db = await database;
+    final result = <int, ({String deadline, String type})>{};
+
+    // First, add tasks that have their own deadline
+    for (var i = 0; i < taskIds.length; i += 500) {
+      final batch = taskIds.sublist(i, i + 500 > taskIds.length ? taskIds.length : i + 500);
+      final placeholders = batch.map((_) => '?').join(',');
+      final rows = await db.rawQuery(
+        'SELECT id, deadline, deadline_type FROM tasks WHERE id IN ($placeholders) AND deadline IS NOT NULL',
+        batch,
+      );
+      for (final row in rows) {
+        result[row['id'] as int] = (
+          deadline: row['deadline'] as String,
+          type: row['deadline_type'] as String? ?? 'due_by',
+        );
+      }
+    }
+
+    // For tasks without own deadline, check ancestors
+    final remaining = taskIds.where((id) => !result.containsKey(id)).toList();
+    for (var i = 0; i < remaining.length; i += 500) {
+      final batch = remaining.sublist(i, i + 500 > remaining.length ? remaining.length : i + 500);
+      for (final taskId in batch) {
+        final rows = await db.rawQuery('''
+          WITH RECURSIVE ancestors(id, depth) AS (
+            SELECT parent_id, 1 FROM task_relationships WHERE child_id = ?
+            UNION ALL
+            SELECT tr.parent_id, a.depth + 1
+            FROM task_relationships tr
+            INNER JOIN ancestors a ON tr.child_id = a.id
+          )
+          SELECT t.deadline, t.deadline_type FROM tasks t
+          INNER JOIN ancestors a ON t.id = a.id
+          WHERE t.deadline IS NOT NULL
+          ORDER BY a.depth ASC
+          LIMIT 1
+        ''', [taskId]);
+        if (rows.isNotEmpty) {
+          result[taskId] = (
+            deadline: rows.first['deadline'] as String,
+            type: rows.first['deadline_type'] as String? ?? 'due_by',
+          );
+        }
+      }
+    }
+    return result;
+  }
+
+  /// Returns a map of leaf task ID → days until the nearest deadline
+  /// (from self or any ancestor). Used for weight boosting.
+  /// Only includes leaves within the 14-day window (or overdue up to 14 days).
+  Future<Map<int, int>> getDeadlineBoostedLeafData({DateTime? now}) async {
+    final db = await database;
+    final date = now ?? DateTime.now();
+    final today = DateTime(date.year, date.month, date.day);
+    // Fetch all tasks with 'due_by' deadlines (active only).
+    // 'on' type deadlines don't get weight boost — only auto-pin.
+    final deadlineTasks = await db.rawQuery('''
+      SELECT id, deadline FROM tasks
+      WHERE deadline IS NOT NULL
+      AND (deadline_type IS NULL OR deadline_type = 'due_by')
+      AND completed_at IS NULL AND skipped_at IS NULL
+    ''');
+    if (deadlineTasks.isEmpty) return {};
+
+    // For each deadline task, compute days until and find leaf descendants
+    final leafDaysMap = <int, int>{};
+
+    for (final row in deadlineTasks) {
+      final taskId = row['id'] as int;
+      final deadlineStr = row['deadline'] as String;
+      final deadlineDate = DateTime.tryParse(deadlineStr);
+      if (deadlineDate == null) continue;
+      final daysUntil = DateTime(deadlineDate.year, deadlineDate.month, deadlineDate.day)
+          .difference(today).inDays;
+      // Only boost within 14-day window (approaching or overdue)
+      if (daysUntil.abs() > 14) continue;
+
+      // Get leaf descendants (includes self if it's a leaf)
+      final leafRows = await db.rawQuery('''
+        WITH RECURSIVE descendants(id) AS (
+          SELECT ?
+          UNION
+          SELECT tr.child_id FROM task_relationships tr
+          INNER JOIN descendants d ON tr.parent_id = d.id
+          INNER JOIN tasks c ON tr.child_id = c.id
+          WHERE c.completed_at IS NULL AND c.skipped_at IS NULL
+        )
+        SELECT d.id FROM descendants d
+        INNER JOIN tasks t ON d.id = t.id
+        WHERE t.completed_at IS NULL AND t.skipped_at IS NULL
+        AND t.id NOT IN (
+          SELECT DISTINCT tr2.parent_id FROM task_relationships tr2
+          INNER JOIN tasks c ON tr2.child_id = c.id
+          WHERE c.completed_at IS NULL AND c.skipped_at IS NULL
+        )
+      ''', [taskId]);
+
+      for (final leafRow in leafRows) {
+        final leafId = leafRow['id'] as int;
+        // Keep the closest (smallest abs) deadline
+        final existing = leafDaysMap[leafId];
+        if (existing == null || daysUntil.abs() < existing.abs()) {
+          leafDaysMap[leafId] = daysUntil;
+        }
+      }
+    }
+    return leafDaysMap;
   }
 
   Future<void> markWorkedOn(int taskId) async {

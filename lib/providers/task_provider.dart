@@ -36,6 +36,10 @@ class TaskProvider extends ChangeNotifier {
   Map<int, List<String>> _parentNamesMap = {};
   Map<int, List<String>> get parentNamesMap => _parentNamesMap;
 
+  /// Task ID → effective deadline info (own or inherited) for each task in current view.
+  Map<int, ({String deadline, String type})> _effectiveDeadlines = {};
+  Map<int, ({String deadline, String type})> get effectiveDeadlines => _effectiveDeadlines;
+
   /// null means we're at the root level
   Task? _currentParent;
   Task? get currentParent => _currentParent;
@@ -275,7 +279,7 @@ class TaskProvider extends ChangeNotifier {
     await _db.addRelationship(parentId, childId);
   }
 
-  double _taskWeight(Task t, {Set<int>? scheduleBoostedIds, double normFactor = 1.0}) {
+  double _taskWeight(Task t, {Set<int>? scheduleBoostedIds, Map<int, int>? deadlineDaysMap, double normFactor = 1.0}) {
     double w = 1.0;
 
     // Priority: high = 3x
@@ -299,6 +303,19 @@ class TaskProvider extends ChangeNotifier {
         .difference(DateTime.fromMillisecondsSinceEpoch(t.createdAt))
         .inDays;
     if (daysOld <= 3) w *= 1.3;
+
+    // Deadline proximity: hyperbolic boost within 14-day window.
+    // Uses inherited deadline from deadlineDaysMap if available (for leaves
+    // under a parent with a deadline), falls back to task's own deadline.
+    final daysUntil = (deadlineDaysMap != null && t.id != null && deadlineDaysMap.containsKey(t.id))
+        ? deadlineDaysMap[t.id]
+        : t.daysUntilDeadline;
+    if (daysUntil != null) {
+      final absD = daysUntil.abs();
+      if (absD <= 14) {
+        w *= 1.0 + 7.0 / (absD + 1);
+      }
+    }
 
     // Scheduled for today: 2.5x boost
     if (scheduleBoostedIds != null && t.id != null &&
@@ -345,7 +362,7 @@ class TaskProvider extends ChangeNotifier {
   /// When [normData] is provided, applies root-size normalization and
   /// diversity penalty to spread picks across root categories.
   List<Task> pickWeightedN(List<Task> candidates, int n,
-      {Set<int>? scheduleBoostedIds, NormalizationData? normData}) {
+      {Set<int>? scheduleBoostedIds, Map<int, int>? deadlineDaysMap, NormalizationData? normData}) {
     if (candidates.isEmpty) return [];
     final eligible = candidates.where((t) =>
       !t.isWorkedOnToday
@@ -363,7 +380,7 @@ class TaskProvider extends ChangeNotifier {
       for (final t in remaining) {
         final nf = normData?.normFactors[t.id] ?? 1.0;
         var w = _taskWeight(t, scheduleBoostedIds: scheduleBoostedIds,
-            normFactor: nf);
+            deadlineDaysMap: deadlineDaysMap, normFactor: nf);
 
         // Diversity penalty: penalize tasks sharing roots with already-picked
         if (normData != null && picked.isNotEmpty) {
@@ -594,6 +611,29 @@ class TaskProvider extends ChangeNotifier {
     await _refreshAfterMutation();
   }
 
+  Future<void> updateTaskDeadline(int taskId, String? deadline, {String deadlineType = 'due_by'}) async {
+    await _db.updateTaskDeadline(taskId, deadline, deadlineType: deadlineType);
+    if (_currentParent?.id == taskId) {
+      _currentParent = _currentParent!.copyWith(
+        deadline: () => deadline,
+        deadlineType: deadlineType,
+      );
+    }
+    await _refreshAfterMutation();
+  }
+
+  Future<Set<int>> getDeadlinePinLeafIds() async {
+    return _db.getDeadlinePinLeafIds();
+  }
+
+  Future<Map<int, int>> getDeadlineBoostedLeafData() async {
+    return _db.getDeadlineBoostedLeafData();
+  }
+
+  Future<({String deadline, String deadlineType, String sourceName})?> getInheritedDeadline(int taskId) async {
+    return _db.getInheritedDeadline(taskId);
+  }
+
   Future<void> markWorkedOn(int taskId) async {
     await _db.markWorkedOn(taskId);
     if (_currentParent?.id == taskId) {
@@ -673,10 +713,12 @@ class TaskProvider extends ChangeNotifier {
     late Map<int, ({int blockerId, String blockerName})> blockedInfo;
     late Map<int, int> siblingDeps;
     late Map<int, List<String>> parentNames;
+    late Map<int, ({String deadline, String type})> effectiveDeadlines;
     await Future.wait([
       _db.getBlockedTaskInfo(taskIds).then((v) => blockedInfo = v),
       _db.getSiblingDependencyPairs(taskIds).then((v) => siblingDeps = v),
       _db.getParentNamesForTaskIds(parentNameIds).then((v) => parentNames = v),
+      _db.getEffectiveDeadlines(taskIds).then((v) => effectiveDeadlines = v),
     ]);
     // Derive the simple name map for UI display
     _blockedByNames = {
@@ -685,6 +727,7 @@ class TaskProvider extends ChangeNotifier {
     // Use ALL sibling dependency pairs for positional ordering (not just active ones)
     _blockedByTaskId = siblingDeps;
     _parentNamesMap = parentNames;
+    _effectiveDeadlines = effectiveDeadlines;
   }
 
   /// Reorders _tasks so that dependent tasks appear immediately after their
@@ -759,6 +802,9 @@ class TaskProvider extends ChangeNotifier {
       if (t.isWorkedOnToday) return 4;
       if (pinnedIds.contains(t.id)) return 0;
       if (t.isHighPriority) return 1;
+      // Near-deadline tasks (≤3 days) sort at virtual high priority (due_by only)
+      final daysUntil = t.daysUntilDeadline;
+      if (daysUntil != null && daysUntil <= 3 && t.isDeadlineDueBy) return 1;
       if (todaysFiveIds.contains(t.id)) return 2;
       return 3;
     }

@@ -123,9 +123,7 @@ class TaskListScreenState extends State<TaskListScreen>
       // Blocked — max pins reached
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'Max 5 pinned tasks — unpin one first');
       }
       return;
     }
@@ -177,7 +175,6 @@ class TaskListScreenState extends State<TaskListScreen>
 
   Future<void> _fileTask(Task task) async {
     final provider = context.read<TaskProvider>();
-    final messenger = ScaffoldMessenger.of(context);
     final result = await showDialog<TriageResult>(
       context: context,
       builder: (_) => TriageDialog(
@@ -198,25 +195,14 @@ class TaskListScreenState extends State<TaskListScreen>
       if (!mounted) return;
       if (success) {
         await _loadInboxTasks();
-        messenger.clearSnackBars();
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('Filed "${task.name}" under "${result.parent!.name}"'),
-            showCloseIcon: true,
-            persist: false,
-            action: SnackBarAction(
-              label: 'Undo',
-              onPressed: () async {
-                await provider.unfileTask(task.id!, parentId);
-                if (mounted) await _loadInboxTasks();
-              },
-            ),
-          ),
-        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).clearSnackBars();
+        showInfoSnackBar(context, 'Filed "${task.name}" under "${result.parent!.name}"', onUndo: () async {
+          await provider.unfileTask(task.id!, parentId);
+          if (mounted) await _loadInboxTasks();
+        });
       } else {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('Cannot file: would create a cycle'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'Cannot file: would create a cycle');
       }
     }
   }
@@ -226,27 +212,16 @@ class TaskListScreenState extends State<TaskListScreen>
     await provider.dismissFromInbox(task.id!);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Kept "${task.name}" at top level'),
-        showCloseIcon: true,
-        persist: false,
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () async {
-            await provider.undoDismissFromInbox(task.id!);
-            if (mounted) await _loadInboxTasks();
-          },
-        ),
-      ),
-    );
+    showInfoSnackBar(context, 'Kept "${task.name}" at top level', onUndo: () async {
+      await provider.undoDismissFromInbox(task.id!);
+      if (mounted) await _loadInboxTasks();
+    });
     await _loadInboxTasks();
   }
 
   Future<void> _fileAll() async {
     if (_inboxTasks == null || _inboxTasks!.isEmpty) return;
     final provider = context.read<TaskProvider>();
-    final messenger = ScaffoldMessenger.of(context);
     // Iterative loop instead of recursion to avoid deep call stacks
     while (_inboxTasks != null && _inboxTasks!.isNotEmpty && mounted) {
       final task = _inboxTasks!.first;
@@ -268,9 +243,7 @@ class TaskListScreenState extends State<TaskListScreen>
         final success = await provider.fileTask(task.id!, result.parent!.id!);
         if (!mounted) break;
         if (!success) {
-          messenger.showSnackBar(
-            const SnackBar(content: Text('Cannot file: would create a cycle'), showCloseIcon: true, persist: false),
-          );
+          showInfoSnackBar(context, 'Cannot file: would create a cycle');
           continue; // retry same task
         }
       }
@@ -279,12 +252,10 @@ class TaskListScreenState extends State<TaskListScreen>
     }
     // Show summary snackbar after batch completes
     if (mounted) {
-      messenger.clearSnackBars();
+      ScaffoldMessenger.of(context).clearSnackBars();
       final remaining = _inboxTasks?.length ?? 0;
       if (remaining == 0) {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('Inbox cleared!'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'Inbox cleared!');
       }
     }
   }
@@ -404,9 +375,7 @@ class TaskListScreenState extends State<TaskListScreen>
     if (result == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Couldn\'t pin — all Today\'s 5 slots are full'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'Couldn\'t pin — all Today\'s 5 slots are full');
       }
       return;
     }
@@ -453,9 +422,7 @@ class TaskListScreenState extends State<TaskListScreen>
       }
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added ${names.length} tasks'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'Added ${names.length} tasks');
       }
       if (provider.isRoot && mounted) await _loadInboxCount();
     }
@@ -522,9 +489,7 @@ class TaskListScreenState extends State<TaskListScreen>
 
     final success = await provider.linkChildToCurrent(selected.id!);
     if (!success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot link: would create a cycle'), showCloseIcon: true, persist: false),
-      );
+      showInfoSnackBar(context, 'Cannot link: would create a cycle');
     }
   }
 
@@ -583,9 +548,7 @@ class TaskListScreenState extends State<TaskListScreen>
 
     final success = await provider.addParentToTask(task.id!, selected.id!);
     if (!success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot link: would create a cycle'), showCloseIcon: true, persist: false),
-      );
+      showInfoSnackBar(context, 'Cannot link: would create a cycle');
     }
   }
 
@@ -647,21 +610,10 @@ class TaskListScreenState extends State<TaskListScreen>
     );
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('"${task.name}" — nice work!'),
-        showCloseIcon: true,
-        persist: false,
-        duration: const Duration(seconds: 4),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () async {
-            await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
-            if (!wasStarted) await provider.unstartTask(task.id!);
-          },
-        ),
-      ),
-    );
+    showInfoSnackBar(context, '"${task.name}" — nice work!', onUndo: () async {
+      await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
+      if (!wasStarted) await provider.unstartTask(task.id!);
+    });
   }
 
   Future<void> _moveTask(Task task) async {
@@ -700,9 +652,7 @@ class TaskListScreenState extends State<TaskListScreen>
 
     final success = await provider.moveTask(task.id!, selected.id!);
     if (!success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot move: would create a cycle'), showCloseIcon: true, persist: false),
-      );
+      showInfoSnackBar(context, 'Cannot move: would create a cycle');
     }
   }
 
@@ -740,15 +690,7 @@ class TaskListScreenState extends State<TaskListScreen>
 
   void _showDeleteUndoSnackbar(String description, VoidCallback onUndo) {
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(description),
-        action: SnackBarAction(label: 'Undo', onPressed: onUndo),
-        showCloseIcon: true,
-        persist: false,
-        duration: const Duration(seconds: 5),
-      ),
-    );
+    showInfoSnackBar(context, description, onUndo: onUndo);
   }
 
   Future<void> _deleteTaskWithUndo(Task task) async {
@@ -830,18 +772,7 @@ class TaskListScreenState extends State<TaskListScreen>
     if (!mounted) return;
 
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Skipped "${task.name}"'),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () => provider.unskipTask(task.id!),
-        ),
-        showCloseIcon: true,
-        persist: false,
-        duration: const Duration(seconds: 5),
-      ),
-    );
+    showInfoSnackBar(context, 'Skipped "${task.name}"', onUndo: () => provider.unskipTask(task.id!));
   }
 
   Future<void> _completeTaskWithUndo(Task task) async {
@@ -855,18 +786,7 @@ class TaskListScreenState extends State<TaskListScreen>
     await provider.completeTask(task.id!);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('"${task.name}" done for good!'),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () => provider.uncompleteTask(task.id!),
-        ),
-        showCloseIcon: true,
-        persist: false,
-        duration: const Duration(seconds: 5),
-      ),
-    );
+    showInfoSnackBar(context, '"${task.name}" done for good!', onUndo: () => provider.uncompleteTask(task.id!));
   }
 
   Widget _buildLeafTaskDetail(TaskProvider provider) {
@@ -939,9 +859,7 @@ class TaskListScreenState extends State<TaskListScreen>
     final picked = provider.pickRandom();
     if (picked == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No tasks to pick from'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'No tasks to pick from');
       }
       return;
     }
@@ -1289,9 +1207,7 @@ class TaskListScreenState extends State<TaskListScreen>
     final selected = result as Task;
     final success = await provider.addDependency(task.id!, selected.id!);
     if (!success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot add: would create a cycle'), showCloseIcon: true, persist: false),
-      );
+      showInfoSnackBar(context, 'Cannot add: would create a cycle');
     }
   }
 
@@ -1301,12 +1217,16 @@ class TaskListScreenState extends State<TaskListScreen>
       provider.getSchedules(task.id!),
       provider.isScheduleOverride(task.id!),
       provider.getScheduleSources(task.id!),
+      if (!task.hasDeadline) provider.getInheritedDeadline(task.id!),
     ]);
     if (!mounted) return;
 
     final current = results[0] as List<TaskSchedule>;
     final isOverrideFlag = results[1] as bool;
     final sources = results[2] as List<({int id, String name, Set<int> days})>;
+    final inheritedDeadline = !task.hasDeadline && results.length > 3
+        ? results[3] as ({String deadline, String deadlineType, String sourceName})?
+        : null;
     final isOverride = current.isNotEmpty || isOverrideFlag;
     final inheritedDays = sources.fold<Set<int>>(
         {}, (acc, s) => acc..addAll(s.days));
@@ -1318,11 +1238,34 @@ class TaskListScreenState extends State<TaskListScreen>
       inheritedDays: inheritedDays,
       isCurrentlyOverriding: isOverride,
       sources: sources,
+      currentDeadline: task.deadline,
+      currentDeadlineType: task.deadlineType,
+      inheritedDeadline: inheritedDeadline,
     );
     if (result == null || !mounted) return;
 
     await provider.updateSchedules(task.id!, result.schedules,
         isOverride: result.isOverride);
+    // Update deadline if changed (null = no change, empty string would clear)
+    final deadlineType = result.deadlineType ?? task.deadlineType;
+    if (result.deadline != null || result.deadlineType != null) {
+      final newDeadline = result.deadline != null
+          ? (result.deadline!.isEmpty ? null : result.deadline)
+          : task.deadline;
+      await provider.updateTaskDeadline(task.id!, newDeadline, deadlineType: deadlineType);
+      // Show feedback when deadline is due today or overdue
+      if (mounted && newDeadline != null) {
+        final parsed = DateTime.tryParse(newDeadline);
+        if (parsed != null) {
+          final now = DateTime.now();
+          final today = DateTime(now.year, now.month, now.day);
+          final deadlineDay = DateTime(parsed.year, parsed.month, parsed.day);
+          if (!deadlineDay.isAfter(today)) {
+            showInfoSnackBar(context, 'Due today — added to Today\'s 5');
+          }
+        }
+      }
+    }
     // Invalidate cached schedule state so leaf detail refreshes
     if (mounted) setState(() {});
   }
@@ -1574,6 +1517,7 @@ class TaskListScreenState extends State<TaskListScreen>
                                 parentNames: (provider.parentNamesMap[task.id] ?? [])
                                     .where((name) => name != provider.currentParent?.name)
                                     .toList(),
+                                effectiveDeadline: provider.effectiveDeadlines[task.id],
                               );
                             },
                           ),

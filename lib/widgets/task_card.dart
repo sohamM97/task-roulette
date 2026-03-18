@@ -20,6 +20,8 @@ class TaskCard extends StatelessWidget {
   final bool isInTodaysFive;
   final bool isPinnedInTodaysFive;
   final List<String> parentNames;
+  /// Effective deadline info (own or inherited from ancestor). Used for icon display.
+  final ({String deadline, String type})? effectiveDeadline;
 
   const TaskCard({
     super.key,
@@ -39,6 +41,7 @@ class TaskCard extends StatelessWidget {
     this.isInTodaysFive = false,
     this.isPinnedInTodaysFive = false,
     this.parentNames = const [],
+    this.effectiveDeadline,
   });
 
   void _showDeleteBottomSheet(BuildContext context) {
@@ -154,6 +157,33 @@ class TaskCard extends StatelessWidget {
 
   bool get _showIndicator => task.isStarted;
 
+  bool get _hasEffectiveDeadline =>
+      task.hasDeadline || effectiveDeadline != null;
+
+  bool get _isEffectiveDeadlineOn {
+    if (task.hasDeadline) return task.deadlineType == 'on';
+    return effectiveDeadline?.type == 'on';
+  }
+
+  int? get _effectiveDaysUntilDeadline {
+    if (task.hasDeadline) return task.daysUntilDeadline;
+    if (effectiveDeadline == null) return null;
+    final d = DateTime.tryParse(effectiveDeadline!.deadline);
+    if (d == null) return null;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return DateTime(d.year, d.month, d.day).difference(today).inDays;
+  }
+
+  Color? _deadlineColor(BuildContext context) {
+    if (_isEffectiveDeadlineOn) {
+      return Theme.of(context).colorScheme.primary;
+    }
+    final days = _effectiveDaysUntilDeadline;
+    if (days == null) return null;
+    return deadlineProximityColor(days, Theme.of(context).colorScheme);
+  }
+
   Color _indicatorColor(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return isDark ? const Color(0xFFFFB74D) : const Color(0xFFE65100);
@@ -268,8 +298,8 @@ class TaskCard extends StatelessWidget {
                   ),
                 ),
               ),
-              // Top-left icons: today's 5, in-progress, priority flag, worked-on-today, someday
-              if (task.isHighPriority || task.isSomeday || showIndicator || task.isWorkedOnToday || isInTodaysFive)
+              // Top-left icons: today's 5, in-progress, priority flag, worked-on-today, someday, deadline
+              if (task.isHighPriority || task.isSomeday || showIndicator || task.isWorkedOnToday || isInTodaysFive || _hasEffectiveDeadline)
                 Positioned(
                   left: 6,
                   top: 6,
@@ -305,6 +335,12 @@ class TaskCard extends StatelessWidget {
                           Icons.bedtime,
                           size: 16,
                           color: Color(0xFF7EB8D8), // soft sky blue
+                        ),
+                      if (_hasEffectiveDeadline)
+                        Icon(
+                          Icons.event_available,
+                          size: 16,
+                          color: _deadlineColor(context),
                         ),
                     ],
                   ),

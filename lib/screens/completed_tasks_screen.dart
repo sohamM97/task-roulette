@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../theme/app_colors.dart';
+import '../utils/display_utils.dart' show showInfoSnackBar;
 
 class CompletedTasksScreen extends StatefulWidget {
   const CompletedTasksScreen({super.key});
@@ -95,30 +96,19 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
     });
 
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Permanently deleted "${task.name}"'),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () async {
-            await provider.restoreTask(
-              deleted.task,
-              deleted.parentIds,
-              deleted.childIds,
-              dependsOnIds: deleted.dependsOnIds,
-              dependedByIds: deleted.dependedByIds,
-              schedules: deleted.schedules,
-            );
-            // task.toMap() already includes the original completedAt/skippedAt.
-            // No need to re-complete or re-skip.
-            // _loadData() called automatically via TaskProvider listener.
-          },
-        ),
-        showCloseIcon: true,
-        persist: false,
-        duration: const Duration(seconds: 5),
-      ),
-    );
+    showInfoSnackBar(context, 'Permanently deleted "${task.name}"', onUndo: () async {
+      await provider.restoreTask(
+        deleted.task,
+        deleted.parentIds,
+        deleted.childIds,
+        dependsOnIds: deleted.dependsOnIds,
+        dependedByIds: deleted.dependedByIds,
+        schedules: deleted.schedules,
+      );
+      // task.toMap() already includes the original completedAt/skippedAt.
+      // No need to re-complete or re-skip.
+      // _loadData() called automatically via TaskProvider listener.
+    });
   }
 
   Future<void> _restoreTask(Task task) async {
@@ -179,29 +169,18 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
     });
 
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Restored "${task.name}"'),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () async {
-            if (task.isSkipped) {
-              await provider.reSkipTask(task.id!);
-            } else {
-              await provider.reCompleteTask(task.id!);
-            }
-            // Re-add archived parent links that were removed
-            for (final parent in archivedParents) {
-              await provider.addRelationship(parent.id!, task.id!);
-            }
-            // _loadData() called automatically via TaskProvider listener.
-          },
-        ),
-        showCloseIcon: true,
-        persist: false,
-        duration: const Duration(seconds: 5),
-      ),
-    );
+    showInfoSnackBar(context, 'Restored "${task.name}"', onUndo: () async {
+      if (task.isSkipped) {
+        await provider.reSkipTask(task.id!);
+      } else {
+        await provider.reCompleteTask(task.id!);
+      }
+      // Re-add archived parent links that were removed
+      for (final parent in archivedParents) {
+        await provider.addRelationship(parent.id!, task.id!);
+      }
+      // _loadData() called automatically via TaskProvider listener.
+    });
   }
 
   @override

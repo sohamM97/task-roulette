@@ -539,6 +539,8 @@ class FirestoreService {
       if (task.isSomeday) 'is_someday': {'booleanValue': true},
       if (task.isScheduleOverride) 'is_schedule_override': {'booleanValue': true},
       if (task.isInbox) 'is_inbox': {'booleanValue': true},
+      if (task.deadline != null) 'deadline': {'stringValue': task.deadline},
+      if (task.deadlineType != 'due_by') 'deadline_type': {'stringValue': task.deadlineType},
     };
   }
 
@@ -576,6 +578,11 @@ class FirestoreService {
       isSomeday: _boolField(fields, 'is_someday'),
       isScheduleOverride: _boolField(fields, 'is_schedule_override'),
       isInbox: _boolField(fields, 'is_inbox'),
+      deadline: () {
+        final raw = _stringField(fields, 'deadline');
+        return raw != null && raw.length <= 10 ? raw : null;
+      }(),
+      deadlineType: _stringField(fields, 'deadline_type') ?? 'due_by',
     );
   }
 

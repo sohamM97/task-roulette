@@ -41,6 +41,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   final Map<int, int?> _preWorkedOnLastWorkedAt = {};
   /// Cached ancestor-path strings keyed by task ID (e.g. "Work > Project X").
   Map<int, String> _taskPaths = {};
+  /// Task ID → effective deadline info for icon display.
+  Map<int, ({String deadline, String type})> _effectiveDeadlines = {};
   /// Other tasks completed/worked-on today, outside the Today's 5 set.
   List<Task> _otherDoneToday = [];
   bool _otherDoneExpanded = false;
@@ -78,9 +80,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       _reloadFromDb();
       return;
     }
-    _loadOtherDoneToday().then((_) {
-      if (mounted) setState(() {});
-    });
+    refreshSnapshots();
   }
 
   void _onSyncStatusChanged() {
@@ -174,6 +174,23 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           }
         }
       }
+      // Auto-pin deadline tasks that are due today but not already in the set
+      final deadlinePinIds = await provider.getDeadlinePinLeafIds();
+      final currentIdsPreDeadline = tasks.map((t) => t.id).toSet();
+      for (final leaf in allLeaves) {
+        if (deadlinePinIds.contains(leaf.id) &&
+            !currentIdsPreDeadline.contains(leaf.id)) {
+          tasks.add(leaf);
+          savedPinnedIds.add(leaf.id!);
+        }
+      }
+      // Also mark existing deadline tasks as pinned
+      for (final t in tasks) {
+        if (deadlinePinIds.contains(t.id)) {
+          savedPinnedIds.add(t.id!);
+        }
+      }
+
       // Backfill if some non-done tasks are no longer leaves
       if (tasks.length < 5) {
         final currentIds = tasks.map((t) => t.id).toSet();
@@ -320,6 +337,23 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       );
       refreshed.addAll(replacements);
     }
+    // Auto-pin deadline tasks not yet in the set
+    final deadlinePinIds = await provider.getDeadlinePinLeafIds();
+    final refreshedIds = refreshed.map((t) => t.id).toSet();
+    for (final leaf in allLeaves) {
+      if (deadlinePinIds.contains(leaf.id) &&
+          !refreshedIds.contains(leaf.id)) {
+        refreshed.add(leaf);
+        _pinnedIds.add(leaf.id!);
+      }
+    }
+    // Also mark existing deadline tasks as pinned
+    for (final t in refreshed) {
+      if (deadlinePinIds.contains(t.id)) {
+        _pinnedIds.add(t.id!);
+      }
+    }
+
     // Clean up completed IDs: remove if task left the list, or was
     // uncompleted externally (e.g. restored from archive)
     _completedIds.removeWhere((id) {
@@ -343,7 +377,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     await _loadTaskPaths();
     if (!mounted) return;
     setState(() {});
-    await _persist();
+    await _persistAndTrim();
   }
 
   Future<void> _generateNewSet() async {
@@ -362,6 +396,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     // Get schedule-boosted leaf IDs for weight multiplier
     final scheduleBoostedIds = await provider.getScheduleBoostedLeafIds();
 
+    // Get deadline data: auto-pin IDs + weight boost map
+    final deadlinePinIds = await provider.getDeadlinePinLeafIds();
+    final deadlineDaysMap = await provider.getDeadlineBoostedLeafData();
+
     // Keep done + pinned tasks, only replace the rest
     final kept = _todaysTasks.where(
       (t) => _completedIds.contains(t.id) || _pinnedIds.contains(t.id),
@@ -370,18 +408,32 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     _pinnedIds.removeWhere((id) => !kept.any((t) => t.id == id));
     final keptIds = kept.map((t) => t.id).toSet();
 
+    // Auto-pin deadline tasks that aren't already in the set
+    final deadlineAutoPins = <Task>[];
+    for (final leaf in allLeaves) {
+      if (deadlinePinIds.contains(leaf.id) &&
+          !keptIds.contains(leaf.id) &&
+          !blockedIds.contains(leaf.id)) {
+        deadlineAutoPins.add(leaf);
+        _pinnedIds.add(leaf.id!);
+      }
+    }
+    final allKept = [...kept, ...deadlineAutoPins];
+    final allKeptIds = allKept.map((t) => t.id).toSet();
+
     final eligible = allLeaves.where(
-      (t) => !blockedIds.contains(t.id) && !keptIds.contains(t.id),
+      (t) => !blockedIds.contains(t.id) && !allKeptIds.contains(t.id),
     ).toList();
 
     // Use all leafIds (not just eligible) so norm factors reflect true root sizes
     final normData = await provider.getNormalizationData(leafIds);
 
-    final slotsToFill = 5 - kept.length;
+    final slotsToFill = (5 - allKept.length).clamp(0, 5);
     final picked = provider.pickWeightedN(eligible, slotsToFill,
-        scheduleBoostedIds: scheduleBoostedIds, normData: normData);
+        scheduleBoostedIds: scheduleBoostedIds, deadlineDaysMap: deadlineDaysMap,
+        normData: normData);
     if (!mounted) return;
-    _todaysTasks = [...kept, ...picked];
+    _todaysTasks = [...allKept, ...picked];
     await _loadOtherDoneToday();
     await _loadTaskPaths();
     if (!mounted) return;
@@ -432,6 +484,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       }
     }
     _taskPaths = paths;
+    final taskIds = allTasks.map((t) => t.id!).toList();
+    _effectiveDeadlines = await db.getEffectiveDeadlines(taskIds);
   }
 
   /// Loads tasks completed/worked-on today that aren't in Today's 5.
@@ -445,6 +499,18 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   /// Truncates a hierarchy path to keep the last 2 segments when there
   /// are more than 3, so the immediate parent is always visible.
   /// e.g. "Coding › App › Enhancements › Random" → "… › Enhancements › Random"
+  Color _deadlineIconColor(({String deadline, String type}) info, ColorScheme colorScheme) {
+    if (info.type == 'on') return colorScheme.primary;
+    final parsed = DateTime.tryParse(info.deadline);
+    if (parsed == null) return colorScheme.onSurfaceVariant;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final days = DateTime(parsed.year, parsed.month, parsed.day)
+        .difference(today)
+        .inDays;
+    return deadlineProximityColor(days, colorScheme);
+  }
+
   String _shortenPath(String path) {
     final segments = path.split(' › ');
     if (segments.length <= 3) return path;
@@ -574,9 +640,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     );
     if (result == null) {
       ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
-      );
+      showInfoSnackBar(context, 'Max 5 pinned tasks — unpin one first');
     } else {
       setState(() {
         _pinnedIds.clear();
@@ -593,14 +657,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     if (!mounted) return;
     setState(() {});
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('"${task.name}" — stopped.'),
-        showCloseIcon: true,
-        persist: false,
-        duration: const Duration(seconds: 3),
-      ),
-    );
+    showInfoSnackBar(context, '"${task.name}" — stopped.');
   }
 
   Future<void> _markInProgress(Task task) async {
@@ -610,14 +667,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     if (!mounted) return;
     setState(() {});
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('"${task.name}" — on it!'),
-        showCloseIcon: true,
-        persist: false,
-        duration: const Duration(seconds: 3),
-      ),
-    );
+    showInfoSnackBar(context, '"${task.name}" — on it!');
   }
 
   Future<void> _workedOnTask(Task task) async {
@@ -632,24 +682,13 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     await _markDone(task.id!, workedOn: true, autoStarted: !wasStarted);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('"${task.name}" — nice work! We\'ll remind you again soon.'),
-        showCloseIcon: true,
-        persist: false,
-        duration: const Duration(seconds: 4),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () async {
-            _preWorkedOnLastWorkedAt.remove(task.id);
-            await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
-            if (!wasStarted) await provider.unstartTask(task.id!);
-            if (!mounted) return;
-            await _unmarkDone(task.id!, workedOn: true, autoStarted: !wasStarted);
-          },
-        ),
-      ),
-    );
+    showInfoSnackBar(context, '"${task.name}" — nice work! We\'ll remind you again soon.', onUndo: () async {
+      _preWorkedOnLastWorkedAt.remove(task.id);
+      await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
+      if (!wasStarted) await provider.unstartTask(task.id!);
+      if (!mounted) return;
+      await _unmarkDone(task.id!, workedOn: true, autoStarted: !wasStarted);
+    });
   }
 
   Future<void> _completeNormalTask(Task task) async {
@@ -660,22 +699,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     await _markDone(task.id!, workedOn: false, autoStarted: false);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('"${task.name}" done!'),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () async {
-            await provider.uncompleteTask(task.id!);
-            if (!mounted) return;
-            await _unmarkDone(task.id!, workedOn: false, autoStarted: false);
-          },
-        ),
-        showCloseIcon: true,
-        persist: false,
-        duration: const Duration(seconds: 5),
-      ),
-    );
+    showInfoSnackBar(context, '"${task.name}" done!', onUndo: () async {
+      await provider.uncompleteTask(task.id!);
+      if (!mounted) return;
+      await _unmarkDone(task.id!, workedOn: false, autoStarted: false);
+    });
   }
 
   /// Handles the check action on a Today's 5 task.
@@ -746,16 +774,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     final wasRemoved = !_todaysTasks.any((t) => t.id == task.id);
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(wasRemoved
-            ? '"${task.name}" restored and removed from Today\'s 5 (all slots are pinned).'
-            : '"${task.name}" restored.'),
-        showCloseIcon: true,
-        persist: false,
-        duration: Duration(seconds: wasRemoved ? 5 : 3),
-      ),
-    );
+    showInfoSnackBar(context, wasRemoved
+        ? '"${task.name}" restored and removed from Today\'s 5 (all slots are pinned).'
+        : '"${task.name}" restored.');
   }
 
   Future<void> _confirmNewSet() async {
@@ -898,9 +919,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     if (eligible.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No other tasks available to pick'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'No other tasks available to pick');
       }
       return;
     }
@@ -929,9 +948,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       if (wasPinned) _pinnedIds.add(oldTask.id!);
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'Max 5 pinned tasks — unpin one first');
       }
       return;
     }
@@ -965,9 +982,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     if (eligible.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No other tasks to swap in'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'No other tasks to swap in');
       }
       return;
     }
@@ -1272,6 +1287,14 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                       child: Icon(Icons.bedtime, size: 14,
                           color: Color(0xFF7EB8D8)),
                     ),
+                  if (_effectiveDeadlines.containsKey(task.id))
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Icon(Icons.event_available, size: 14,
+                          color: _deadlineIconColor(
+                            _effectiveDeadlines[task.id]!, colorScheme),
+                      ),
+                    ),
                   if (task.isStarted && !isDone)
                     Padding(
                       padding: const EdgeInsets.only(right: 4),
@@ -1294,9 +1317,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                     );
                     if (result == null) {
                       ScaffoldMessenger.of(context).clearSnackBars();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Max 5 pinned tasks — unpin one first'), showCloseIcon: true, persist: false),
-                      );
+                      showInfoSnackBar(context, 'Max 5 pinned tasks — unpin one first');
                     } else {
                       setState(() {
                         _pinnedIds.clear();
