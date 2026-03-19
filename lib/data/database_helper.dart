@@ -333,7 +333,11 @@ class DatabaseHelper {
           }
         }
         if (oldVersion < 21) {
-          await db.execute("ALTER TABLE tasks ADD COLUMN deadline_type TEXT NOT NULL DEFAULT 'due_by'");
+          final cols21 = await db.rawQuery('PRAGMA table_info(tasks)');
+          final colNames21 = cols21.map((c) => c['name'] as String).toSet();
+          if (!colNames21.contains('deadline_type')) {
+            await db.execute("ALTER TABLE tasks ADD COLUMN deadline_type TEXT NOT NULL DEFAULT 'due_by'");
+          }
         }
         if (oldVersion < 22) {
           final cols = await db.rawQuery('PRAGMA table_info(tasks)');
