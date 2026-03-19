@@ -7,7 +7,6 @@ import '../models/task.dart';
 import '../providers/auth_provider.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
-import '../theme/app_colors.dart';
 import '../services/sync_service.dart';
 import '../utils/display_utils.dart';
 import '../widgets/completion_animation.dart';
@@ -1043,8 +1042,17 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         toolbarHeight: 72,
         actions: [
           const ProfileIcon(),
+          Consumer<ThemeProvider>(
+            builder: (context, themeProvider, _) {
+              return IconButton(
+                icon: Icon(themeProvider.icon, size: 22),
+                onPressed: themeProvider.toggle,
+                tooltip: 'Toggle theme',
+              );
+            },
+          ),
           IconButton(
-            icon: const Icon(archiveIcon),
+            icon: const Icon(archiveIcon, size: 22),
             onPressed: () async {
               await Navigator.push(
                 context,
@@ -1055,15 +1063,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
               if (mounted) await refreshSnapshots();
             },
             tooltip: 'Archive',
-          ),
-          Consumer<ThemeProvider>(
-            builder: (context, themeProvider, _) {
-              return IconButton(
-                icon: Icon(themeProvider.icon, size: 28),
-                onPressed: themeProvider.toggle,
-                tooltip: 'Toggle theme',
-              );
-            },
           ),
           if (_todaysTasks.any((t) =>
               !_completedIds.contains(t.id) && !_pinnedIds.contains(t.id)))
@@ -1230,7 +1229,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         final isLast = i == total - 1;
         return Expanded(
           child: Container(
-            height: 6,
+            height: 8,
             margin: EdgeInsets.only(
               left: isFirst ? 0 : 1.5,
               right: isLast ? 0 : 1.5,
@@ -1288,8 +1287,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           const SizedBox(width: 8),
           Expanded(
             child: Container(
-              height: 0.5,
-              color: color.withAlpha(50),
+              height: 1,
+              color: color.withAlpha(80),
             ),
           ),
         ],
@@ -1375,19 +1374,27 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     return Card(
       key: ValueKey('task_${task.id}_$isDone'),
-      color: AppColors.cardColor(context, task.id ?? 0),
+      color: colorScheme.surfaceContainerHigh,
+      elevation: 0,
       margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: colorScheme.onSurface.withAlpha(20),
+        ),
+      ),
       child: Opacity(
-        opacity: isDone ? 0.5 : 1.0,
+        opacity: isDone ? 0.38 : 1.0,
         child: ListTile(
           leading: isDone
-              ? Icon(Icons.check_circle, color: colorScheme.primary)
+              ? Icon(Icons.check_circle, color: const Color(0xFF66BB6A))
               : Icon(Icons.radio_button_unchecked,
                   color: colorScheme.onSurfaceVariant),
           title: Text(
             task.name,
             style: textTheme.bodyLarge?.copyWith(
               decoration: isDone ? TextDecoration.lineThrough : null,
+              decorationColor: colorScheme.onSurface.withAlpha(100),
             ),
           ),
           subtitle: _buildCardSubtitle(task, isDone, colorScheme, textTheme),
