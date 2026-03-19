@@ -291,8 +291,8 @@ class StarredScreenState extends State<StarredScreen>
             task: task,
             tree: treeInfo?.children ?? [],
             totalChildren: treeInfo?.totalChildren ?? 0,
-            onTap: () => widget.onNavigateToTask?.call(task),
-            onLongPress: () => _showExpandedView(task),
+            onTap: () => _showExpandedView(task),
+            onLongPress: () => widget.onNavigateToTask?.call(task),
           );
         },
       ),
@@ -679,28 +679,33 @@ class _ExpandedStarredView extends StatefulWidget {
 }
 
 class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
-  /// Each node: task + its loaded children (null = not yet loaded)
+  /// Flat list of visible nodes (expands/collapses lazily).
   List<_TreeNode> _flatTree = [];
+  /// Track which task IDs are expanded.
+  final Set<int> _expanded = {};
+  /// Cache loaded children per task ID.
+  final Map<int, List<_TreeNode>> _childrenCache = {};
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _loadFullTree();
+    _loadDirectChildren();
   }
 
-  Future<void> _loadFullTree() async {
+  Future<void> _loadDirectChildren() async {
     final provider = context.read<TaskProvider>();
-    final nodes = await _loadChildren(provider, widget.task.id!, 0);
+    final nodes = await _fetchChildren(provider, widget.task.id!, 0);
     if (!mounted) return;
     setState(() {
+      _childrenCache[widget.task.id!] = nodes;
       _flatTree = nodes;
       _loading = false;
     });
   }
 
-  /// Recursively loads the full subtree, flattening into a list with depth info.
-  Future<List<_TreeNode>> _loadChildren(
+  /// Fetches direct children with their own child counts (to know leaf vs not).
+  Future<List<_TreeNode>> _fetchChildren(
       TaskProvider provider, int parentId, int depth) async {
     final children = await provider.getChildren(parentId);
     final active = children
@@ -711,13 +716,69 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     for (var i = 0; i < active.length; i++) {
       final child = active[i];
       final isLast = i == active.length - 1;
-      nodes.add(_TreeNode(task: child, depth: depth, isLast: isLast));
-      // Recurse for grandchildren
-      final subtree = await _loadChildren(provider, child.id!, depth + 1);
-      nodes.addAll(subtree);
+      // Check if this child has its own children
+      final grandchildren = await provider.getChildren(child.id!);
+      final activeGcCount = grandchildren
+          .where((g) => g.completedAt == null && g.skippedAt == null)
+          .length;
+      nodes.add(_TreeNode(
+        task: child,
+        depth: depth,
+        isLast: isLast,
+        childCount: activeGcCount,
+      ));
     }
     return nodes;
   }
+
+  /// Toggle expand/collapse for a node. Loads children on first expand.
+  Future<void> _toggleExpand(_TreeNode node) async {
+    final taskId = node.task.id!;
+
+    if (_expanded.contains(taskId)) {
+      // Collapse: remove this node's descendants from flat list
+      _expanded.remove(taskId);
+      _rebuildFlatTree();
+      return;
+    }
+
+    // Expand: load children if not cached
+    if (!_childrenCache.containsKey(taskId)) {
+      final provider = context.read<TaskProvider>();
+      final children =
+          await _fetchChildren(provider, taskId, node.depth + 1);
+      if (!mounted) return;
+      _childrenCache[taskId] = children;
+    }
+
+    _expanded.add(taskId);
+    _rebuildFlatTree();
+  }
+
+  /// Rebuilds the flat tree from root children, inserting expanded subtrees.
+  void _rebuildFlatTree() {
+    final nodes = <_TreeNode>[];
+    _addVisibleNodes(nodes, widget.task.id!, 0);
+    setState(() => _flatTree = nodes);
+  }
+
+  void _addVisibleNodes(List<_TreeNode> nodes, int parentId, int depth) {
+    final children = _childrenCache[parentId];
+    if (children == null) return;
+    for (var i = 0; i < children.length; i++) {
+      final child = children[i];
+      // Recompute isLast based on siblings at this level
+      final isLast = i == children.length - 1;
+      final node = _TreeNode(
+          task: child.task, depth: depth, isLast: isLast,
+          childCount: child.childCount);
+      nodes.add(node);
+      if (_expanded.contains(child.task.id!)) {
+        _addVisibleNodes(nodes, child.task.id!, depth + 1);
+      }
+    }
+  }
+
 
   Future<void> _confirmUnstar(BuildContext context) async {
     final confirmed = await showDialog<bool>(
@@ -785,6 +846,15 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              IconButton(
+                icon: Icon(Icons.open_in_new_rounded, size: 18,
+                    color: onSurface.withAlpha(100)),
+                onPressed: () => widget.onNavigateToTask(widget.task),
+                tooltip: 'Go to task',
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                padding: EdgeInsets.zero,
+              ),
             ],
           ),
         ),
@@ -808,10 +878,11 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                       itemCount: _flatTree.length,
                       itemBuilder: (context, index) {
                         final node = _flatTree[index];
-                        // Determine ancestor isLast flags for vertical lines
+                        final taskId = node.task.id!;
                         final ancestorIsLast = <bool>[];
                         _collectAncestorFlags(
                             index, node.depth, ancestorIsLast);
+                        final isExpanded = _expanded.contains(taskId);
 
                         return _ExpandedTreeRow(
                           node: node,
@@ -819,8 +890,12 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                           textColor: onSurface.withAlpha(
                               191 - (node.depth * 15).clamp(0, 60)),
                           ancestorIsLast: ancestorIsLast,
-                          onTap: () =>
+                          isExpanded: isExpanded,
+                          onNavigate: () =>
                               widget.onNavigateToTask(node.task),
+                          onToggleExpand: node.isLeaf
+                              ? null
+                              : () => _toggleExpand(node),
                         );
                       },
                     ),
@@ -852,12 +927,16 @@ class _TreeNode {
   final Task task;
   final int depth;
   final bool isLast;
+  final int childCount;
 
   const _TreeNode({
     required this.task,
     required this.depth,
     required this.isLast,
+    this.childCount = 0,
   });
+
+  bool get isLeaf => childCount == 0;
 }
 
 class _ExpandedTreeRow extends StatelessWidget {
@@ -865,21 +944,27 @@ class _ExpandedTreeRow extends StatelessWidget {
   final Color lineColor;
   final Color textColor;
   final List<bool> ancestorIsLast;
-  final VoidCallback onTap;
+  final bool isExpanded;
+  final VoidCallback onNavigate;
+  final VoidCallback? onToggleExpand;
 
   static const double _indentWidth = 20.0;
-  static const double _rowHeight = 32.0;
+  static const double _rowHeight = 45.0;
 
   const _ExpandedTreeRow({
     required this.node,
     required this.lineColor,
     required this.textColor,
     required this.ancestorIsLast,
-    required this.onTap,
+    required this.isExpanded,
+    required this.onNavigate,
+    this.onToggleExpand,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isLeaf = node.isLeaf;
+
     return SizedBox(
       height: _rowHeight,
       child: Row(
@@ -902,21 +987,69 @@ class _ExpandedTreeRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 4),
+          // Tappable row: tap to expand/collapse, long-press to navigate
           Expanded(
             child: InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(6),
+              onTap: onToggleExpand ?? onNavigate,
+              onLongPress: isLeaf ? null : onNavigate,
+              borderRadius: BorderRadius.circular(8),
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-                child: Text(
-                  node.task.name,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: textColor,
-                    height: 1.3,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                padding:
+                    const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                child: Row(
+                  children: [
+                    // Chevron for non-leaf nodes
+                    if (!isLeaf) ...[
+                      Icon(
+                        isExpanded
+                            ? Icons.expand_more_rounded
+                            : Icons.chevron_right_rounded,
+                        size: 18,
+                        color: textColor.withAlpha(150),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    Expanded(
+                      child: Text(
+                        node.task.name,
+                        style: TextStyle(
+                          fontSize: 17,
+                          color: textColor,
+                          height: 1.3,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    // Navigate arrow for leaf nodes
+                    if (isLeaf)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: Icon(
+                          Icons.open_in_new_rounded,
+                          size: 13,
+                          color: textColor.withAlpha(100),
+                        ),
+                      ),
+                    // Child count badge for non-leaf nodes
+                    if (!isLeaf)
+                      Container(
+                        margin: const EdgeInsets.only(left: 6),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: textColor.withAlpha(20),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '${node.childCount}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: textColor.withAlpha(140),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ),

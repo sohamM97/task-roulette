@@ -152,12 +152,12 @@ void main() {
       expect(find.text('2'), findsOneWidget);
     });
 
-    testWidgets('tap navigates to task', (tester) async {
+    testWidgets('long-press navigates to task', (tester) async {
       await tester.runAsync(() => createStarredTask('Navigate me'));
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.tap(find.text('Navigate me'));
+      await tester.longPress(find.text('Navigate me'));
       await tester.pump();
 
       expect(navigatedTask, isNotNull);
@@ -179,7 +179,7 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.longPress(find.text('Guitar'));
+      await tester.tap(find.text('Guitar'));
       await pumpAsync(tester);
 
       // Dialog should show the task name in the header
@@ -187,7 +187,8 @@ void main() {
       expect(find.text('Guitar'), findsNWidgets(2));
     });
 
-    testWidgets('expanded view shows full recursive tree', (tester) async {
+    testWidgets('expanded view shows direct children, expands on tap',
+        (tester) async {
       await tester.runAsync(() async {
         final parentId = await createStarredTask('Music');
         final child = await db.insertTask(Task(name: 'Guitar'));
@@ -198,12 +199,45 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.longPress(find.text('Music').first);
+      await tester.tap(find.text('Music').first);
       await pumpAsync(tester);
 
+      // Direct child visible, grandchild hidden (collapsed)
       expect(find.text('Guitar'), findsNWidgets(2)); // card preview + dialog
-      expect(find.text('Fingerpicking'),
-          findsNWidgets(2)); // card preview + dialog
+      expect(find.text('Fingerpicking'), findsOneWidget); // card preview only
+
+      // Tap Guitar row to expand (shows chevron + child count)
+      await tester.tap(find.text('Guitar').last);
+      await pumpAsync(tester);
+
+      // Now grandchild is visible
+      expect(find.text('Fingerpicking'), findsNWidgets(2));
+    });
+
+    testWidgets('collapse hides grandchildren', (tester) async {
+      await tester.runAsync(() async {
+        final root = await createStarredTask('Root');
+        final child = await db.insertTask(Task(name: 'Middle'));
+        await db.addRelationship(root, child);
+        final grandchild = await db.insertTask(Task(name: 'Leaf'));
+        await db.addRelationship(child, grandchild);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Root').first);
+      await pumpAsync(tester);
+
+      // Tap Middle row to expand and reveal Leaf
+      await tester.tap(find.text('Middle').last);
+      await pumpAsync(tester);
+      expect(find.text('Leaf'), findsNWidgets(2)); // preview + dialog
+
+      // Tap Middle again to collapse
+      await tester.tap(find.text('Middle').last);
+      await pumpAsync(tester);
+      // Leaf only in card preview now, not in dialog
+      expect(find.text('Leaf'), findsOneWidget);
     });
 
     testWidgets('expanded view shows "No sub-tasks" for leaf', (tester) async {
@@ -211,7 +245,7 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.longPress(find.text('Leaf task'));
+      await tester.tap(find.text('Leaf task'));
       await pumpAsync(tester);
 
       expect(find.text('No sub-tasks'), findsOneWidget);
@@ -223,7 +257,7 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.longPress(find.text('Confirm me'));
+      await tester.tap(find.text('Confirm me'));
       await pumpAsync(tester);
 
       // Tap the star icon button in the dialog header
@@ -242,7 +276,7 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.longPress(find.text('Keep me'));
+      await tester.tap(find.text('Keep me'));
       await pumpAsync(tester);
 
       // Tap star to trigger confirmation
@@ -263,7 +297,7 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.longPress(find.text('Remove me'));
+      await tester.tap(find.text('Remove me'));
       await pumpAsync(tester);
 
       // Tap star to trigger confirmation
@@ -284,7 +318,7 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.longPress(find.text('Undo me'));
+      await tester.tap(find.text('Undo me'));
       await pumpAsync(tester);
 
       // Unstar flow
@@ -302,25 +336,47 @@ void main() {
       expect(find.text('Undo me'), findsOneWidget);
     });
 
-    testWidgets('tapping tree node navigates to that task', (tester) async {
+    testWidgets('long-press tree node navigates to that task', (tester) async {
       await tester.runAsync(() async {
         final parentId = await createStarredTask('Parent');
         final child = await db.insertTask(Task(name: 'Child node'));
         await db.addRelationship(parentId, child);
+        // Give child a sub-task so it's not a leaf (leaves navigate on tap)
+        final grandchild = await db.insertTask(Task(name: 'Grandchild'));
+        await db.addRelationship(child, grandchild);
       });
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.longPress(find.text('Parent'));
+      await tester.tap(find.text('Parent'));
       await pumpAsync(tester);
 
-      // There should be two 'Child node' texts — one in card preview, one in dialog
-      // Tap the one in the dialog (last)
-      await tester.tap(find.text('Child node').last);
+      // Long-press the non-leaf node to navigate
+      await tester.longPress(find.text('Child node').last);
       await tester.pump();
 
       expect(navigatedTask, isNotNull);
       expect(navigatedTask!.name, 'Child node');
+    });
+
+    testWidgets('tap leaf node navigates directly', (tester) async {
+      await tester.runAsync(() async {
+        final parentId = await createStarredTask('Parent');
+        final leaf = await db.insertTask(Task(name: 'Leaf node'));
+        await db.addRelationship(parentId, leaf);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Parent'));
+      await pumpAsync(tester);
+
+      // Tap the leaf node — should navigate directly (no expand)
+      await tester.tap(find.text('Leaf node').last);
+      await tester.pump();
+
+      expect(navigatedTask, isNotNull);
+      expect(navigatedTask!.name, 'Leaf node');
     });
 
     testWidgets('dismiss dialog by tapping outside', (tester) async {
@@ -328,7 +384,7 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.longPress(find.text('Dismiss me'));
+      await tester.tap(find.text('Dismiss me'));
       await pumpAsync(tester);
 
       // Tap outside the dialog to dismiss
