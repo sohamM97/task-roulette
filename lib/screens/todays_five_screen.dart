@@ -7,6 +7,7 @@ import '../models/task.dart';
 import '../providers/auth_provider.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
+import '../theme/app_colors.dart';
 import '../services/sync_service.dart';
 import '../utils/display_utils.dart';
 import '../widgets/completion_animation.dart';
@@ -513,8 +514,17 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
   String _shortenPath(String path) {
     final segments = path.split(' › ');
-    if (segments.length <= 3) return path;
-    return '… › ${segments.sublist(segments.length - 2).join(' › ')}';
+    if (segments.length <= 1) return path;
+    // Keep last 2 segments, abbreviate earlier ones to "…"
+    if (segments.length > 3) {
+      return '…${segments.sublist(segments.length - 2).join(' › ')}';
+    }
+    // For 2-3 segments, abbreviate all but the last —
+    // truncate from the LEFT so the tail of the ancestor is visible
+    final last = segments.last;
+    final prior = segments.sublist(0, segments.length - 1)
+        .map((s) => s.length > 12 ? '…${s.substring(s.length - 8)}' : s);
+    return '${prior.join(' › ')} › $last';
   }
 
   /// Re-fetches a single task from DB and updates it in [_todaysTasks].
@@ -1108,23 +1118,18 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Progress bar
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: LinearProgressIndicator(
-                value: totalCount > 0 ? completedCount / totalCount : 0,
-                minHeight: 8,
-                backgroundColor: colorScheme.surfaceContainerHighest,
-              ),
-            ),
+            // Segmented progress bar
+            _buildSegmentedProgress(colorScheme, totalCount, completedCount),
             const SizedBox(height: 4),
             Text.rich(
               TextSpan(
                 children: [
                   TextSpan(
                     text: completedCount == 0
-                        ? 'Completing even 1 is a win!'
-                        : '$completedCount of $totalCount done',
+                        ? _motivationalText()
+                        : completedCount == totalCount
+                            ? 'All done! Great work.'
+                            : '$completedCount of $totalCount done',
                   ),
                   if (_otherDoneToday.isNotEmpty)
                     TextSpan(
@@ -1185,42 +1190,34 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     return ListView(
       children: [
         if (mustDo.isNotEmpty) ...[
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Text(
-              'Must do',
-              style: textTheme.labelMedium?.copyWith(
-                color: colorScheme.tertiary,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+          _buildSectionHeader(
+            context,
+            icon: Icons.push_pin,
+            label: 'Must do',
+            color: colorScheme.tertiary,
           ),
           for (final i in mustDo)
             _buildTaskCard(context, _todaysTasks[i], i, false),
         ],
         if (rest.isNotEmpty) ...[
           if (mustDo.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 12, bottom: 4),
-              child: Text(
-                'Also on the table',
-                style: textTheme.labelMedium?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
+            _buildSectionHeader(
+              context,
+              icon: Icons.casino_outlined,
+              label: 'Also on the table',
+              color: colorScheme.onSurfaceVariant,
+              topPadding: 12,
             ),
           for (final i in rest)
             _buildTaskCard(context, _todaysTasks[i], i, false),
         ],
         if (done.isNotEmpty) ...[
-          Padding(
-            padding: const EdgeInsets.only(top: 12, bottom: 4),
-            child: Text(
-              'Done',
-              style: textTheme.labelMedium?.copyWith(
-                color: colorScheme.primary,
-              ),
-            ),
+          _buildSectionHeader(
+            context,
+            icon: Icons.check_circle_outline,
+            label: 'Done',
+            color: colorScheme.primary,
+            topPadding: 12,
           ),
           for (final i in done)
             _buildTaskCard(context, _todaysTasks[i], i, true),
@@ -1228,6 +1225,149 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         if (_otherDoneToday.isNotEmpty)
           _buildOtherDoneBox(context, textTheme, colorScheme),
       ],
+    );
+  }
+
+  Widget _buildSegmentedProgress(ColorScheme colorScheme, int total, int completed) {
+    if (total == 0) return const SizedBox.shrink();
+    return Row(
+      children: List.generate(total, (i) {
+        final isDone = i < completed;
+        final isFirst = i == 0;
+        final isLast = i == total - 1;
+        return Expanded(
+          child: Container(
+            height: 6,
+            margin: EdgeInsets.only(
+              left: isFirst ? 0 : 1.5,
+              right: isLast ? 0 : 1.5,
+            ),
+            decoration: BoxDecoration(
+              color: isDone
+                  ? colorScheme.primary
+                  : colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.horizontal(
+                left: isFirst ? const Radius.circular(4) : Radius.zero,
+                right: isLast ? const Radius.circular(4) : Radius.zero,
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  String _motivationalText() {
+    const texts = [
+      'Completing even 1 is a win!',
+      'Pick one and start small.',
+      'One step at a time.',
+      'Just begin \u2014 momentum follows.',
+      'You\u2019ve got this.',
+    ];
+    // Use today's date as seed for daily rotation
+    final now = DateTime.now();
+    final dayIndex = (now.year * 366 + now.month * 31 + now.day) % texts.length;
+    return texts[dayIndex];
+  }
+
+  Widget _buildSectionHeader(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required Color color,
+    double topPadding = 0,
+  }) {
+    return Padding(
+      padding: EdgeInsets.only(top: topPadding, bottom: 6),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Container(
+              height: 0.5,
+              color: color.withAlpha(50),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget? _buildCardSubtitle(Task task, bool isDone, ColorScheme colorScheme, TextTheme textTheme) {
+    final hasPath = _taskPaths.containsKey(task.id);
+    final hasDeadline = _effectiveDeadlines.containsKey(task.id);
+    final hasIcons = task.isHighPriority || task.isSomeday || hasDeadline || (task.isStarted && !isDone);
+    if (!hasPath && !hasIcons) return null;
+
+    final children = <Widget>[];
+    if (hasPath) {
+      children.add(
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+            color: colorScheme.onSurface.withAlpha(20),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            _shortenPath(_taskPaths[task.id]!),
+            style: textTheme.labelSmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+              letterSpacing: 0.3,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      );
+    }
+    if (hasIcons) {
+      children.add(
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (task.isHighPriority)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Icon(Icons.flag, size: 14, color: colorScheme.error),
+              ),
+            if (task.isSomeday)
+              const Padding(
+                padding: EdgeInsets.only(right: 4),
+                child: Icon(Icons.bedtime, size: 14, color: Color(0xFF7EB8D8)),
+              ),
+            if (hasDeadline)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Icon(Icons.event_available, size: 14,
+                    color: _deadlineIconColor(
+                      _effectiveDeadlines[task.id]!, colorScheme),
+                ),
+              ),
+            if (task.isStarted && !isDone)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Icon(Icons.play_circle_filled, size: 14,
+                    color: colorScheme.tertiary),
+              ),
+          ],
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: children,
     );
   }
 
@@ -1241,6 +1381,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final textTheme = Theme.of(context).textTheme;
 
     return Card(
+      color: AppColors.cardColor(context, task.id ?? 0),
       margin: const EdgeInsets.only(bottom: 8),
       child: Opacity(
         opacity: isDone ? 0.5 : 1.0,
@@ -1255,61 +1396,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
               decoration: isDone ? TextDecoration.lineThrough : null,
             ),
           ),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (_taskPaths.containsKey(task.id))
-                Padding(
-                  padding: const EdgeInsets.only(top: 2, bottom: 2),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      _shortenPath(_taskPaths[task.id]!),
-                      style: textTheme.labelSmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                        letterSpacing: 0.3,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (task.isHighPriority)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 4),
-                      child: Icon(Icons.flag, size: 14, color: colorScheme.error),
-                    ),
-                  if (task.isSomeday)
-                    const Padding(
-                      padding: EdgeInsets.only(right: 4),
-                      child: Icon(Icons.bedtime, size: 14,
-                          color: Color(0xFF7EB8D8)),
-                    ),
-                  if (_effectiveDeadlines.containsKey(task.id))
-                    Padding(
-                      padding: const EdgeInsets.only(right: 4),
-                      child: Icon(Icons.event_available, size: 14,
-                          color: _deadlineIconColor(
-                            _effectiveDeadlines[task.id]!, colorScheme),
-                      ),
-                    ),
-                  if (task.isStarted && !isDone)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 4),
-                      child: Icon(Icons.play_circle_filled, size: 14,
-                          color: colorScheme.tertiary),
-                    ),
-                ],
-              ),
-            ],
-          ),
+          subtitle: _buildCardSubtitle(task, isDone, colorScheme, textTheme),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [

@@ -1345,19 +1345,34 @@ class TaskListScreenState extends State<TaskListScreen>
                   tooltip: 'Archive',
                   visualDensity: VisualDensity.compact,
                 ),
-                IconButton(
-                  icon: const Icon(Icons.account_tree_outlined, size: 22),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const DagViewScreen(),
-                      ),
-                    );
-                  },
-                  tooltip: 'Task graph',
-                  visualDensity: VisualDensity.compact,
-                ),
+                if (provider.isRoot)
+                  IconButton(
+                    icon: const Icon(Icons.account_tree_outlined, size: 22),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const DagViewScreen(),
+                        ),
+                      );
+                    },
+                    tooltip: 'Task graph',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                if (!provider.isRoot && provider.currentParent != null)
+                  IconButton(
+                    icon: Icon(
+                      provider.currentParent!.isStarred ? Icons.star : Icons.star_outline,
+                      size: 22,
+                      color: provider.currentParent!.isStarred ? const Color(0xFFFFD700) : null,
+                    ),
+                    onPressed: () => _updateStarred(
+                      provider.currentParent!,
+                      !provider.currentParent!.isStarred,
+                    ),
+                    tooltip: provider.currentParent!.isStarred ? 'Unstar' : 'Star',
+                    visualDensity: VisualDensity.compact,
+                  ),
                 Consumer<ThemeProvider>(
                   builder: (context, themeProvider, _) {
                     return IconButton(
