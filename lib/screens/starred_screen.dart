@@ -365,7 +365,7 @@ class _StarredTaskCard extends StatelessWidget {
                             child: Text(
                               task.name,
                               style: TextStyle(
-                                fontSize: 18,
+                                fontSize: 20,
                                 fontWeight: FontWeight.w600,
                                 color: onSurface.withAlpha(230), // 90%
                                 height: 1.2,
