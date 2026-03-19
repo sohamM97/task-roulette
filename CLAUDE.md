@@ -68,6 +68,7 @@ Hooks in `.claude/hooks/` enforce guardrails automatically:
 
 ## Development Preferences
 
+- **When asked what's pending in a branch**, always check memory (TODO.md and other memory files) for previously discussed next steps — not just the git diff.
 - **Before exiting plan mode**, ask the user if they want to create a feature branch first (via `/feature`).
 - Ask user about committing and pushing occasionally — don't wait until asked. Remind them to review changes and test on Linux (via `./dev.sh`) first.
 - After completing a new feature, ask the user if they want to add test cases for it.

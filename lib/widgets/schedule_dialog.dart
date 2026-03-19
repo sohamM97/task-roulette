@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:table_calendar/table_calendar.dart';
 import '../models/task_schedule.dart';
 import '../utils/display_utils.dart';
 
@@ -336,24 +337,7 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
-      onTap: () async {
-        final now = DateTime.now();
-        final initial = hasOwnDeadline
-            ? (DateTime.tryParse(_deadline!) ?? now)
-            : now;
-        final picked = await showDatePicker(
-          context: context,
-          initialDate: initial.isBefore(now) ? now : initial,
-          firstDate: now,
-          lastDate: now.add(const Duration(days: 730)),
-          initialEntryMode: DatePickerEntryMode.calendarOnly,
-        );
-        if (picked != null) {
-          setState(() {
-            _deadline = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
-          });
-        }
-      },
+      onTap: () => _showCalendarDialog(hasOwnDeadline),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
@@ -379,18 +363,17 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(12),
-                    color: colorScheme.primaryContainer,
+                    color: color.withAlpha(38),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.swap_horiz, size: 14,
-                        color: colorScheme.onPrimaryContainer),
+                      Icon(Icons.swap_horiz, size: 14, color: color),
                       const SizedBox(width: 4),
                       Text(
                         _deadlineType == 'on' ? 'On' : 'Due by',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: colorScheme.onPrimaryContainer,
+                          color: color,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -412,6 +395,30 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
         ),
       ),
     );
+  }
+
+  Future<void> _showCalendarDialog(bool hasExisting) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final initial = hasExisting
+        ? (DateTime.tryParse(_deadline!) ?? today)
+        : today;
+
+    final picked = await showDialog<DateTime>(
+      context: context,
+      builder: (context) => _CalendarPickerDialog(
+        initialDate: initial.isBefore(today) ? today : initial,
+        firstDate: today,
+        lastDate: today.add(const Duration(days: 730)),
+      ),
+    );
+    if (picked != null) {
+      setState(() {
+        // Reset to "due by" when picking a date for the first time
+        if (!hasExisting) _deadlineType = 'due_by';
+        _deadline = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+      });
+    }
   }
 
   Color _deadlineColorFor(String deadlineStr, ColorScheme colorScheme) {
@@ -457,6 +464,148 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
         color: selected
             ? colorScheme.onPrimaryContainer
             : colorScheme.onSurfaceVariant,
+      ),
+    );
+  }
+}
+
+/// Full-screen-style dialog with TableCalendar showing adjacent-month days.
+class _CalendarPickerDialog extends StatefulWidget {
+  final DateTime initialDate;
+  final DateTime firstDate;
+  final DateTime lastDate;
+
+  const _CalendarPickerDialog({
+    required this.initialDate,
+    required this.firstDate,
+    required this.lastDate,
+  });
+
+  @override
+  State<_CalendarPickerDialog> createState() => _CalendarPickerDialogState();
+}
+
+class _CalendarPickerDialogState extends State<_CalendarPickerDialog> {
+  late DateTime _focusedDay;
+  DateTime? _selectedDay;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusedDay = widget.initialDate;
+    _selectedDay = widget.initialDate;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 360),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Title bar
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 8, 0),
+              child: Row(
+                children: [
+                  Text('Select date',
+                    style: Theme.of(context).textTheme.titleMedium),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+
+            // Calendar
+            TableCalendar(
+              firstDay: widget.firstDate,
+              lastDay: widget.lastDate,
+              focusedDay: _focusedDay,
+              selectedDayPredicate: (day) =>
+                  _selectedDay != null && isSameDay(day, _selectedDay),
+              onDaySelected: (selected, focused) {
+                setState(() {
+                  _selectedDay = selected;
+                  _focusedDay = focused;
+                });
+              },
+              onPageChanged: (focused) => _focusedDay = focused,
+              calendarFormat: CalendarFormat.month,
+              availableCalendarFormats: const {CalendarFormat.month: 'Month'},
+              startingDayOfWeek: StartingDayOfWeek.monday,
+              headerStyle: HeaderStyle(
+                formatButtonVisible: false,
+                titleCentered: true,
+                titleTextStyle: Theme.of(context).textTheme.titleSmall!,
+                leftChevronIcon: Icon(Icons.chevron_left,
+                  color: colorScheme.onSurface, size: 20),
+                rightChevronIcon: Icon(Icons.chevron_right,
+                  color: colorScheme.onSurface, size: 20),
+                headerPadding: const EdgeInsets.symmetric(vertical: 4),
+              ),
+              daysOfWeekStyle: DaysOfWeekStyle(
+                weekdayStyle: Theme.of(context).textTheme.labelSmall!.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+                weekendStyle: Theme.of(context).textTheme.labelSmall!.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+              calendarStyle: CalendarStyle(
+                outsideDaysVisible: true,
+                outsideTextStyle: TextStyle(
+                  color: colorScheme.onSurface.withAlpha(77)),
+                disabledTextStyle: TextStyle(
+                  color: colorScheme.onSurface.withAlpha(77)),
+                todayDecoration: BoxDecoration(
+                  color: colorScheme.primaryContainer,
+                  shape: BoxShape.circle,
+                ),
+                todayTextStyle: TextStyle(
+                  color: colorScheme.onPrimaryContainer),
+                selectedDecoration: BoxDecoration(
+                  color: colorScheme.primary,
+                  shape: BoxShape.circle,
+                ),
+                selectedTextStyle: TextStyle(
+                  color: colorScheme.onPrimary),
+                defaultTextStyle: TextStyle(
+                  color: colorScheme.onSurface),
+                weekendTextStyle: TextStyle(
+                  color: colorScheme.onSurface),
+                cellMargin: const EdgeInsets.all(2),
+              ),
+              rowHeight: 40,
+            ),
+
+            // Action buttons
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: _selectedDay != null
+                        ? () => Navigator.pop(context, _selectedDay)
+                        : null,
+                    child: const Text('OK'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
