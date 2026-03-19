@@ -1231,7 +1231,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
             ),
             decoration: BoxDecoration(
               color: isDone
-                  ? colorScheme.primary
+                  ? const Color(0xFF66BB6A)
                   : colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.horizontal(
                 left: isFirst ? const Radius.circular(4) : Radius.zero,
