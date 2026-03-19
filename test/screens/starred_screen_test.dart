@@ -394,5 +394,127 @@ void main() {
       // Dialog dismissed — only card text remains
       expect(find.text('Dismiss me'), findsOneWidget);
     });
+
+    testWidgets('shows child count badge on expandable nodes', (tester) async {
+      await tester.runAsync(() async {
+        final parentId = await createStarredTask('Parent');
+        final child = await db.insertTask(Task(name: 'Expandable'));
+        await db.addRelationship(parentId, child);
+        // Give the child 3 sub-tasks so badge shows "3"
+        for (var i = 0; i < 3; i++) {
+          final gc = await db.insertTask(Task(name: 'GC $i'));
+          await db.addRelationship(child, gc);
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Parent'));
+      await pumpAsync(tester);
+
+      // Badge on "Expandable" should show "3"
+      expect(find.text('3'), findsOneWidget);
+    });
+
+    testWidgets('leaf nodes do not show chevron', (tester) async {
+      await tester.runAsync(() async {
+        final parentId = await createStarredTask('Parent');
+        // Create a leaf child (no sub-tasks)
+        final leaf = await db.insertTask(Task(name: 'Leaf'));
+        await db.addRelationship(parentId, leaf);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Parent'));
+      await pumpAsync(tester);
+
+      // No chevron icons — the only child is a leaf
+      expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
+      expect(find.byIcon(Icons.expand_more_rounded), findsNothing);
+    });
+
+    testWidgets('navigate icon shown in dialog header', (tester) async {
+      await tester.runAsync(() => createStarredTask('Header task'));
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Header task'));
+      await pumpAsync(tester);
+
+      expect(find.byIcon(Icons.open_in_new_rounded), findsOneWidget);
+    });
+
+    testWidgets('header navigate icon goes to task', (tester) async {
+      await tester.runAsync(() => createStarredTask('Go here'));
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Go here'));
+      await pumpAsync(tester);
+
+      // Tap the navigate icon in the header
+      await tester.tap(find.byIcon(Icons.open_in_new_rounded));
+      await tester.pump();
+
+      expect(navigatedTask, isNotNull);
+      expect(navigatedTask!.name, 'Go here');
+    });
+
+    testWidgets('leaf node shows navigate icon', (tester) async {
+      await tester.runAsync(() async {
+        final parentId = await createStarredTask('Parent');
+        final leaf = await db.insertTask(Task(name: 'My leaf'));
+        await db.addRelationship(parentId, leaf);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Parent'));
+      await pumpAsync(tester);
+
+      // Header has one ↗, leaf row has another
+      expect(find.byIcon(Icons.open_in_new_rounded), findsNWidgets(2));
+    });
+  });
+
+  group('TaskProvider - starOrder preservation', () {
+    test('updateTaskStarred with explicit starOrder preserves position',
+        () async {
+      await db.insertTask(Task(name: 'Task A'));
+      await db.insertTask(Task(name: 'Task B'));
+      await db.insertTask(Task(name: 'Task C'));
+
+      // Star all three
+      await provider.updateTaskStarred(1, true);
+      await provider.updateTaskStarred(2, true);
+      await provider.updateTaskStarred(3, true);
+
+      // Unstar Task B
+      await provider.updateTaskStarred(2, false);
+
+      // Re-star with original order (1) — should slot back in
+      await provider.updateTaskStarred(2, true, starOrder: 1);
+
+      final starred = await provider.getStarredTasks();
+      final names = starred.map((t) => t.name).toList();
+      expect(names, ['Task A', 'Task B', 'Task C']);
+    });
+
+    test('updateTaskStarred without starOrder appends to end', () async {
+      await db.insertTask(Task(name: 'First'));
+      await db.insertTask(Task(name: 'Second'));
+
+      await provider.updateTaskStarred(1, true);
+      await provider.updateTaskStarred(2, true);
+
+      // Unstar and re-star without order — goes to end
+      await provider.updateTaskStarred(1, false);
+      await provider.updateTaskStarred(1, true);
+
+      final starred = await provider.getStarredTasks();
+      final names = starred.map((t) => t.name).toList();
+      expect(names, ['Second', 'First']);
+    });
   });
 }
