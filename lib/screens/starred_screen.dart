@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
-import '../theme/app_colors.dart';
 import '../utils/display_utils.dart';
 import '../widgets/profile_icon.dart';
 import '../providers/theme_provider.dart';
@@ -316,130 +315,135 @@ class _StarredTaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
     final accent = _accentColor(context, task.id ?? 0);
     final subtitle = _subtitle();
+    // White opacity text system — all derived from onSurface
+    final onSurface = colorScheme.onSurface;
 
     return Card(
       key: ValueKey(task.id),
-        color: AppColors.cardColor(context, task.id ?? 0),
-        elevation: 1,
-        margin: const EdgeInsets.only(bottom: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: IntrinsicHeight(
-            child: Row(
-              children: [
-                // Colored left accent bar
-                Container(
-                  width: 4,
-                  decoration: BoxDecoration(
-                    color: accent,
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(14),
-                      bottomLeft: Radius.circular(14),
-                    ),
+      color: colorScheme.surfaceContainerHigh,
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: onSurface.withAlpha(20), // subtle border for separation
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: IntrinsicHeight(
+          child: Row(
+            children: [
+              // Accent bar — thicker, the card's identity
+              Container(
+                width: 5,
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(12),
+                    bottomLeft: Radius.circular(12),
                   ),
                 ),
-                // Card content
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 14, 4, 14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Title row
-                        Row(
-                          children: [
-                            Icon(Icons.star_rounded, size: 18, color: accent),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                task.name,
-                                style: textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                        // Subtitle
-                        if (subtitle != null) ...[
-                          const SizedBox(height: 4),
-                          Padding(
-                            padding: const EdgeInsets.only(left: 26),
+              ),
+              // Content
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Title — highest emphasis
+                      Row(
+                        children: [
+                          Icon(Icons.star_rounded, size: 20, color: accent),
+                          const SizedBox(width: 8),
+                          Expanded(
                             child: Text(
-                              subtitle,
-                              style: textTheme.bodySmall?.copyWith(
-                                color: colorScheme.onSurfaceVariant.withAlpha(160),
-                                fontSize: 11,
+                              task.name,
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                                color: onSurface.withAlpha(230), // 90%
+                                height: 1.2,
                               ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ],
-                        // Tree preview
-                        if (tree.isNotEmpty) ...[
-                          const SizedBox(height: 10),
-                          Padding(
-                            padding: const EdgeInsets.only(left: 26),
-                            child: _buildTreePreview(context),
+                      ),
+                      // Subtitle — low emphasis
+                      if (subtitle != null) ...[
+                        const SizedBox(height: 2),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 28),
+                          child: Text(
+                            subtitle,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: onSurface.withAlpha(153), // 60%
+                            ),
                           ),
-                        ],
+                        ),
                       ],
-                    ),
+                      // Tree
+                      if (tree.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 28),
+                          child: _buildTreePreview(context, onSurface, accent),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
-                // Drag handle — only this initiates reorder
-                ReorderableDragStartListener(
-                  index: index,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: Icon(
-                      Icons.drag_indicator_rounded,
-                      size: 18,
-                      color: colorScheme.onSurfaceVariant.withAlpha(50),
-                    ),
+              ),
+              // Drag handle
+              ReorderableDragStartListener(
+                index: index,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                  child: Icon(
+                    Icons.drag_indicator_rounded,
+                    size: 18,
+                    color: onSurface.withAlpha(51), // 20%
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
-      );
+      ),
+    );
   }
 
-
-  Widget _buildTreePreview(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
-    final accent = _accentColor(context, task.id ?? 0);
-    final mutedColor = colorScheme.onSurfaceVariant.withAlpha(160);
-    final faintColor = colorScheme.onSurfaceVariant.withAlpha(100);
-    final lineColor = accent.withAlpha(100);
+  Widget _buildTreePreview(BuildContext context, Color onSurface, Color accent) {
+    final childColor = onSurface.withAlpha(191); // 75%
+    final grandchildColor = onSurface.withAlpha(166); // 65%
+    final metaColor = onSurface.withAlpha(128); // 50%
+    final lineColor = accent.withAlpha(180);
     final moreChildren = totalChildren - tree.length;
 
     final rows = <Widget>[];
     for (var i = 0; i < tree.length; i++) {
       final item = tree[i];
       final isLastChild = i == tree.length - 1 && moreChildren == 0;
-      // Child row
       rows.add(_TreeRow(
         indent: 0,
         lineColor: lineColor,
         isLast: isLastChild,
         child: Text(
           item.child.name,
-          style: textTheme.bodySmall?.copyWith(color: mutedColor),
+          style: TextStyle(fontSize: 14, color: childColor, height: 1.3),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
       ));
-      // Grandchildren
       final moreGc = item.totalGrandchildren - item.grandchildren.length;
       for (var gi = 0; gi < item.grandchildren.length; gi++) {
         final gc = item.grandchildren[gi];
@@ -451,10 +455,7 @@ class _StarredTaskCard extends StatelessWidget {
           parentIsLast: isLastChild,
           child: Text(
             gc.name,
-            style: textTheme.bodySmall?.copyWith(
-              color: mutedColor,
-              fontSize: 11,
-            ),
+            style: TextStyle(fontSize: 13, color: grandchildColor, height: 1.3),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -468,10 +469,11 @@ class _StarredTaskCard extends StatelessWidget {
           parentIsLast: isLastChild,
           child: Text(
             '+$moreGc more',
-            style: textTheme.bodySmall?.copyWith(
-              color: faintColor,
-              fontSize: 11,
+            style: TextStyle(
+              fontSize: 12,
+              color: metaColor,
               fontStyle: FontStyle.italic,
+              height: 1.3,
             ),
           ),
         ));
@@ -484,10 +486,11 @@ class _StarredTaskCard extends StatelessWidget {
         isLast: true,
         child: Text(
           '+$moreChildren more',
-          style: textTheme.bodySmall?.copyWith(
-            color: faintColor,
-            fontSize: 11,
+          style: TextStyle(
+            fontSize: 12,
+            color: metaColor,
             fontStyle: FontStyle.italic,
+            height: 1.3,
           ),
         ),
       ));
@@ -508,8 +511,8 @@ class _TreeRow extends StatelessWidget {
   final bool parentIsLast;
   final Widget child;
 
-  static const double _indentWidth = 16.0;
-  static const double _rowHeight = 20.0;
+  static const double _indentWidth = 14.0;
+  static const double _rowHeight = 22.0;
 
   const _TreeRow({
     required this.indent,
@@ -525,7 +528,6 @@ class _TreeRow extends StatelessWidget {
       height: _rowHeight,
       child: Row(
         children: [
-          // Paint connector lines for each indent level
           if (indent > 0)
             CustomPaint(
               size: const Size(_indentWidth, _rowHeight),
@@ -560,20 +562,18 @@ class _ConnectorPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..color = color
-      ..strokeWidth = 1.2
+      ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
     final midX = 4.0;
     final midY = size.height / 2;
 
-    // Vertical line: top to middle (or top to bottom if not last)
     canvas.drawLine(
       Offset(midX, 0),
       Offset(midX, isLast ? midY : size.height),
       paint,
     );
-    // Horizontal line: middle to right
     canvas.drawLine(
       Offset(midX, midY),
       Offset(size.width, midY),
@@ -598,7 +598,7 @@ class _VerticalLinePainter extends CustomPainter {
     if (!drawLine) return;
     final paint = Paint()
       ..color = color
-      ..strokeWidth = 1.2
+      ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
