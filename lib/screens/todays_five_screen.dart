@@ -1115,8 +1115,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                     text: completedCount == 0
                         ? _motivationalText()
                         : completedCount == totalCount
-                            ? 'All done! Great work.'
+                            ? 'Done for the day.'
                             : '$completedCount of $totalCount done',
+                    style: completedCount == totalCount && totalCount > 0
+                        ? const TextStyle(color: Color(0xFF66BB6A), fontWeight: FontWeight.w500)
+                        : null,
                   ),
                   if (_otherDoneToday.isNotEmpty)
                     TextSpan(
@@ -1215,6 +1218,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     );
   }
 
+
   Widget _buildSegmentedProgress(ColorScheme colorScheme, int total, int completed) {
     if (total == 0) return const SizedBox.shrink();
     return Row(
@@ -1295,7 +1299,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final hasPath = _taskPaths.containsKey(task.id);
     final hasDeadline = _effectiveDeadlines.containsKey(task.id);
     final hasIcons = task.isHighPriority || task.isSomeday || hasDeadline || (task.isStarted && !isDone);
-    if (!hasPath && !hasIcons) return null;
+    if (!hasPath && !hasIcons) return const SizedBox.shrink();
 
     final children = <Widget>[];
     if (hasPath) {
@@ -1368,6 +1372,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final textTheme = Theme.of(context).textTheme;
 
     return Card(
+      key: ValueKey('task_${task.id}_$isDone'),
       color: AppColors.cardColor(context, task.id ?? 0),
       margin: const EdgeInsets.only(bottom: 8),
       child: Opacity(

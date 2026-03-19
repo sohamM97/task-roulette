@@ -17,7 +17,7 @@ Color deadlineProximityColor(int daysUntil, ColorScheme colorScheme) {
 void showInfoSnackBar(BuildContext context, String message, {VoidCallback? onUndo}) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
     content: Text(message),
-    showCloseIcon: onUndo == null,
+    showCloseIcon: true,
     action: onUndo != null ? SnackBarAction(label: 'Undo', onPressed: onUndo) : null,
     duration: Duration(seconds: onUndo != null ? 5 : 3),
   ));
