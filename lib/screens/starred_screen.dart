@@ -659,8 +659,8 @@ class _VerticalLinePainter extends CustomPainter {
       color != old.color || drawLine != old.drawLine;
 }
 
-/// Expanded view shown on long-press of a starred card.
-/// Displays the full recursive task tree in a scrollable bottom sheet.
+/// Expanded view shown on tap of a starred card.
+/// Displays the task tree in a centered dialog with lazy-expanding nodes.
 class _ExpandedStarredView extends StatefulWidget {
   final Task task;
   final Color accent;

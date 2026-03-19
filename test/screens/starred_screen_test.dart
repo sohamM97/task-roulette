@@ -173,7 +173,7 @@ void main() {
     });
   });
 
-  group('StarredScreen - Long press expanded view', () {
+  group('StarredScreen - Tap expanded view', () {
     testWidgets('long press opens expanded dialog', (tester) async {
       await tester.runAsync(() => createStarredTask('Guitar'));
 
