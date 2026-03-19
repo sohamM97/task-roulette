@@ -4,7 +4,7 @@ Last updated: 2026-03-18
 
 ## Summary
 
-~980 tests across 25 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
+~998 tests across 26 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
 
 ## Covered
 
@@ -25,6 +25,7 @@ Last updated: 2026-03-18
 ### Screens (partial)
 - **test/screens/todays_five_screen_test.dart** (~20 tests) — Empty state, task rendering (max 5, leaf-only, blocked excluded), bottom sheet options, swap/navigate buttons, progress bar, priority icon, refresh dialog, DB state restore, SharedPrefs→DB migration, sync reload (task list replacement, completed status from remote).
 - **test/screens/completed_tasks_screen_test.dart** (~15 tests) — Empty state, completed/skipped display, today/older labels, restore/delete buttons, parent context, AppBar title.
+- **test/screens/starred_screen_test.dart** (18 tests) — Empty state, card display (single/multiple/subtitle/in-progress/tree preview/badge count), tap navigation, drag handle, **long-press expanded view** (dialog open, full recursive tree, "No sub-tasks" leaf, star icon confirmation dialog, cancel keeps starred, confirm unstar + undo snackbar, undo re-stars, tree node navigation, dismiss by tapping outside).
 
 ### Services (minimal)
 - **test/services/notification_service_test.dart** (13 tests) — `nextEightAM` (before/after/at 8 AM, midnight, month/year rollover, DST spring-forward, timezone preservation), `onNotificationTap` callback (null default, set and invoke, pendingTap drain on register, no spurious invoke without pending).
