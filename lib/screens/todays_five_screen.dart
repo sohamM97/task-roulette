@@ -1125,7 +1125,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                     TextSpan(
                       text: '  +${_otherDoneToday.length} ${_otherDoneToday.length == 1 ? 'other' : 'others'}',
                       style: TextStyle(
-                        color: colorScheme.primary.withAlpha(180),
+                        color: completedCount == totalCount && totalCount > 0
+                            ? const Color(0xFF66BB6A).withAlpha(140)
+                            : colorScheme.primary.withAlpha(180),
                         fontWeight: FontWeight.w500,
                       ),
                     ),
