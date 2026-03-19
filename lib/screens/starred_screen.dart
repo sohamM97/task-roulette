@@ -89,6 +89,44 @@ class StarredScreenState extends State<StarredScreen>
     });
   }
 
+  void _showExpandedView(Task task) {
+    final accent = _accentColor(context, task.id ?? 0);
+    showDialog(
+      context: context,
+      builder: (dialogContext) => Center(
+        child: Material(
+          color: Theme.of(context).colorScheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(20),
+          clipBehavior: Clip.antiAlias,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
+            margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
+          child: _ExpandedStarredView(
+            task: task,
+            accent: accent,
+            onUnstar: () {
+              Navigator.pop(dialogContext);
+              final provider = context.read<TaskProvider>();
+              provider.updateTaskStarred(task.id!, false);
+              if (context.mounted) {
+                showInfoSnackBar(
+                  context,
+                  'Unstarred "${task.name}"',
+                  onUndo: () => provider.updateTaskStarred(task.id!, true),
+                );
+              }
+            },
+            onNavigateToTask: (t) {
+              Navigator.pop(dialogContext);
+              widget.onNavigateToTask?.call(t);
+            },
+          ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _onReorder(int oldIndex, int newIndex) {
     if (oldIndex < newIndex) newIndex--;
     setState(() {
@@ -250,6 +288,7 @@ class StarredScreenState extends State<StarredScreen>
             tree: treeInfo?.children ?? [],
             totalChildren: treeInfo?.totalChildren ?? 0,
             onTap: () => widget.onNavigateToTask?.call(task),
+            onLongPress: () => _showExpandedView(task),
           );
         },
       ),
@@ -289,6 +328,7 @@ class _StarredTaskCard extends StatelessWidget {
   final List<({Task child, List<Task> grandchildren, int totalGrandchildren})> tree;
   final int totalChildren;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
   final int index;
 
   const _StarredTaskCard({
@@ -297,6 +337,7 @@ class _StarredTaskCard extends StatelessWidget {
     required this.tree,
     required this.totalChildren,
     required this.onTap,
+    required this.onLongPress,
     required this.index,
   });
 
@@ -333,6 +374,7 @@ class _StarredTaskCard extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
+        onLongPress: onLongPress,
         child: IntrinsicHeight(
           child: Row(
             children: [
@@ -611,4 +653,272 @@ class _VerticalLinePainter extends CustomPainter {
   @override
   bool shouldRepaint(_VerticalLinePainter old) =>
       color != old.color || drawLine != old.drawLine;
+}
+
+/// Expanded view shown on long-press of a starred card.
+/// Displays the full recursive task tree in a scrollable bottom sheet.
+class _ExpandedStarredView extends StatefulWidget {
+  final Task task;
+  final Color accent;
+  final VoidCallback onUnstar;
+  final void Function(Task task) onNavigateToTask;
+
+  const _ExpandedStarredView({
+    required this.task,
+    required this.accent,
+    required this.onUnstar,
+    required this.onNavigateToTask,
+  });
+
+  @override
+  State<_ExpandedStarredView> createState() => _ExpandedStarredViewState();
+}
+
+class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
+  /// Each node: task + its loaded children (null = not yet loaded)
+  List<_TreeNode> _flatTree = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFullTree();
+  }
+
+  Future<void> _loadFullTree() async {
+    final provider = context.read<TaskProvider>();
+    final nodes = await _loadChildren(provider, widget.task.id!, 0);
+    if (!mounted) return;
+    setState(() {
+      _flatTree = nodes;
+      _loading = false;
+    });
+  }
+
+  /// Recursively loads the full subtree, flattening into a list with depth info.
+  Future<List<_TreeNode>> _loadChildren(
+      TaskProvider provider, int parentId, int depth) async {
+    final children = await provider.getChildren(parentId);
+    final active = children
+        .where((c) => c.completedAt == null && c.skippedAt == null)
+        .toList();
+
+    final nodes = <_TreeNode>[];
+    for (var i = 0; i < active.length; i++) {
+      final child = active[i];
+      final isLast = i == active.length - 1;
+      nodes.add(_TreeNode(task: child, depth: depth, isLast: isLast));
+      // Recurse for grandchildren
+      final subtree = await _loadChildren(provider, child.id!, depth + 1);
+      nodes.addAll(subtree);
+    }
+    return nodes;
+  }
+
+  Future<void> _confirmUnstar(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove from starred?'),
+        content: Text('Are you sure you want to unstar "${widget.task.name}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      widget.onUnstar();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final onSurface = colorScheme.onSurface;
+    final lineColor = widget.accent.withAlpha(180);
+
+    return Column(
+      children: [
+        // Header
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Row(
+            children: [
+              Container(
+                width: 4,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: widget.accent,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 12),
+              IconButton(
+                icon: Icon(Icons.star_rounded, size: 22, color: widget.accent),
+                onPressed: () => _confirmUnstar(context),
+                tooltip: 'Remove from starred',
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                padding: EdgeInsets.zero,
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  widget.task.name,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: onSurface.withAlpha(230),
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        // Tree content
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _flatTree.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No sub-tasks',
+                        style: TextStyle(
+                          color: onSurface.withAlpha(128),
+                          fontSize: 14,
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                      itemCount: _flatTree.length,
+                      itemBuilder: (context, index) {
+                        final node = _flatTree[index];
+                        // Determine ancestor isLast flags for vertical lines
+                        final ancestorIsLast = <bool>[];
+                        _collectAncestorFlags(
+                            index, node.depth, ancestorIsLast);
+
+                        return _ExpandedTreeRow(
+                          node: node,
+                          lineColor: lineColor,
+                          textColor: onSurface.withAlpha(
+                              191 - (node.depth * 15).clamp(0, 60)),
+                          ancestorIsLast: ancestorIsLast,
+                          onTap: () =>
+                              widget.onNavigateToTask(node.task),
+                        );
+                      },
+                    ),
+        ),
+      ],
+    );
+  }
+
+  /// Walk backwards through the flat tree to find whether each ancestor level
+  /// is the last child at that depth (to decide whether to draw vertical lines).
+  void _collectAncestorFlags(
+      int currentIndex, int currentDepth, List<bool> flags) {
+    for (var d = 0; d < currentDepth; d++) {
+      // Find the node at depth d that is an ancestor of currentIndex
+      bool isLast = true;
+      for (var i = currentIndex - 1; i >= 0; i--) {
+        if (_flatTree[i].depth == d) {
+          isLast = _flatTree[i].isLast;
+          break;
+        }
+        if (_flatTree[i].depth < d) break;
+      }
+      flags.add(isLast);
+    }
+  }
+}
+
+class _TreeNode {
+  final Task task;
+  final int depth;
+  final bool isLast;
+
+  const _TreeNode({
+    required this.task,
+    required this.depth,
+    required this.isLast,
+  });
+}
+
+class _ExpandedTreeRow extends StatelessWidget {
+  final _TreeNode node;
+  final Color lineColor;
+  final Color textColor;
+  final List<bool> ancestorIsLast;
+  final VoidCallback onTap;
+
+  static const double _indentWidth = 20.0;
+  static const double _rowHeight = 32.0;
+
+  const _ExpandedTreeRow({
+    required this.node,
+    required this.lineColor,
+    required this.textColor,
+    required this.ancestorIsLast,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: _rowHeight,
+      child: Row(
+        children: [
+          // Vertical pass-through lines for each ancestor level
+          for (var d = 0; d < node.depth; d++)
+            CustomPaint(
+              size: const Size(_indentWidth, _rowHeight),
+              painter: _VerticalLinePainter(
+                color: lineColor,
+                drawLine: !ancestorIsLast[d],
+              ),
+            ),
+          // Connector for this node
+          CustomPaint(
+            size: const Size(_indentWidth, _rowHeight),
+            painter: _ConnectorPainter(
+              color: lineColor,
+              isLast: node.isLast,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                child: Text(
+                  node.task.name,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: textColor,
+                    height: 1.3,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

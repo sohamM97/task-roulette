@@ -25,21 +25,17 @@ flutter test                                      # test
 flutter test --coverage                           # with coverage
 ```
 
-**Test output handling:** `flutter test` uses `\r` for progress, making raw output huge. Save to a file and grep the summary:
-```bash
-flutter test 2>&1 | tr '\r' '\n' > /tmp/flutter_test_output.txt
-grep -E "passed|failed|All tests" /tmp/flutter_test_output.txt | tail -3
-```
-On failure, read the output file for details.
+**Test output:** Run `flutter test` directly — do NOT redirect output to files (triggers unresolvable permission prompts in Claude Code). For targeted runs: `flutter test --plain-name 'test name'` or `flutter test path/to/test.dart`.
 
 ## Architecture
 
-- **App shell:** `AppShell` in `main.dart` hosts a 4-tab `PageView` (Today's 5, All Tasks, DAG, Completed) with `NavigationBar`. Tabs use `AutomaticKeepAliveClientMixin` to preserve state across switches. `TaskProvider` manages a navigation stack (`_parentStack`) for drill-down within All Tasks.
+- **App shell:** `AppShell` in `main.dart` hosts a 3-tab `PageView` (Today, Starred, All Tasks) with `NavigationBar`. Completed tasks are accessed via archive icon in each tab's AppBar. Tabs use `AutomaticKeepAliveClientMixin` to preserve state across switches. `TaskProvider` manages a navigation stack (`_parentStack`) for drill-down within All Tasks.
 - **DB schema:** Core tables: `tasks`, `task_relationships` (parent_id, child_id), `task_dependencies` (blocker relationships), `todays_five_state` (daily pin state), `task_schedules` (recurring), `sync_queue` (pending mutations). Multi-parent DAG with cycle prevention via recursive CTE (`DatabaseHelper.hasPath()`).
-- **DB migrations:** Sequential `onUpgrade` in `DatabaseHelper` (currently at v18, constant `_dbVersion`). Foreign keys via `PRAGMA foreign_keys = ON`. **NEVER modify a released migration** — if a previous version shipped with migration N, new DDL must go in migration N+1 or later. Retroactive changes to released migrations are silently skipped on devices already past that version. Also update `_validateBackup` version check (uses `_dbVersion` automatically) and the backup version test.
+- **DB migrations:** Sequential `onUpgrade` in `DatabaseHelper` (currently at v22, constant `_dbVersion`). Foreign keys via `PRAGMA foreign_keys = ON`. **NEVER modify a released migration** — if a previous version shipped with migration N, new DDL must go in migration N+1 or later. Retroactive changes to released migrations are silently skipped on devices already past that version. Also update `_validateBackup` version check (uses `_dbVersion` automatically) and the backup version test.
 - **Cloud sync:** Optional Google Sign-In + Firestore via REST APIs (no Firebase SDK). `SyncService` orchestrates push/pull; mutations queued in `sync_queue` table and debounced. **Mutation flow:** `TaskProvider.onMutation` callback → `SyncService.schedulePush()` (5s debounce) → batch REST calls to Firestore. Pull runs on startup + every 5 min.
 - **When adding a column to `tasks`:** Also add to `Task` model (`toMap`/`fromMap`/`copyWith`), `taskToFirestoreFields`, and `taskFromFirestoreDoc` in `firestore_service.dart`.
 - **Provider pattern:** 3 providers (`TaskProvider`, `AuthProvider`, `ThemeProvider`) + `SyncService` via `ProxyProvider<AuthProvider, SyncService>`. `TaskProvider._refreshCurrentList()` reloads children only, NOT `_currentParent` — see gotcha below.
+- **Shared utilities:** `display_utils.dart` has `showInfoSnackBar(context, message, {onUndo})` — use this for all snackbars (includes close icon, undo support, proper duration). Don't create raw `SnackBar` objects.
 - Tests use `sqflite_common_ffi` with `inMemoryDatabasePath` and reset DB in `setUp()`. No mocking — real SQL against in-memory SQLite.
 
 ### Known Gotcha: Stale `_currentParent`
