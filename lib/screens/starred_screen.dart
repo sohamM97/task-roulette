@@ -321,9 +321,8 @@ class _StarredTaskCard extends StatelessWidget {
     final accent = _accentColor(context, task.id ?? 0);
     final subtitle = _subtitle();
 
-    return ReorderableDragStartListener(
-      index: index,
-      child: Card(
+    return Card(
+      key: ValueKey(task.id),
         color: AppColors.cardColor(context, task.id ?? 0),
         elevation: 1,
         margin: const EdgeInsets.only(bottom: 10),
@@ -395,22 +394,25 @@ class _StarredTaskCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                // Drag handle
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Icon(
-                    Icons.drag_indicator_rounded,
-                    size: 18,
-                    color: colorScheme.onSurfaceVariant.withAlpha(50),
+                // Drag handle — only this initiates reorder
+                ReorderableDragStartListener(
+                  index: index,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Icon(
+                      Icons.drag_indicator_rounded,
+                      size: 18,
+                      color: colorScheme.onSurfaceVariant.withAlpha(50),
+                    ),
                   ),
                 ),
               ],
             ),
           ),
         ),
-      ),
-    );
+      );
   }
+
 
   Widget _buildTreePreview(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
