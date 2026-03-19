@@ -19,7 +19,7 @@ void showInfoSnackBar(BuildContext context, String message, {VoidCallback? onUnd
     content: Text(message),
     showCloseIcon: onUndo == null,
     action: onUndo != null ? SnackBarAction(label: 'Undo', onPressed: onUndo) : null,
-    duration: const Duration(seconds: 3),
+    duration: Duration(seconds: onUndo != null ? 5 : 3),
   ));
 }
 
