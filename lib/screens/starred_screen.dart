@@ -94,33 +94,37 @@ class StarredScreenState extends State<StarredScreen>
     showDialog(
       context: context,
       builder: (dialogContext) => Center(
-        child: Material(
-          color: Theme.of(context).colorScheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(20),
-          clipBehavior: Clip.antiAlias,
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
-            margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
-          child: _ExpandedStarredView(
-            task: task,
-            accent: accent,
-            onUnstar: () {
-              Navigator.pop(dialogContext);
-              final provider = context.read<TaskProvider>();
-              provider.updateTaskStarred(task.id!, false);
-              if (context.mounted) {
-                showInfoSnackBar(
-                  context,
-                  'Unstarred "${task.name}"',
-                  onUndo: () => provider.updateTaskStarred(task.id!, true),
-                );
-              }
-            },
-            onNavigateToTask: (t) {
-              Navigator.pop(dialogContext);
-              widget.onNavigateToTask?.call(t);
-            },
-          ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
+          child: Material(
+            color: Theme.of(context).colorScheme.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(20),
+            clipBehavior: Clip.antiAlias,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
+              child: _ExpandedStarredView(
+                task: task,
+                accent: accent,
+                onUnstar: () {
+                  Navigator.pop(dialogContext);
+                  final provider = context.read<TaskProvider>();
+                  final originalOrder = task.starOrder;
+                  provider.updateTaskStarred(task.id!, false);
+                  if (context.mounted) {
+                    showInfoSnackBar(
+                      context,
+                      'Unstarred "${task.name}"',
+                      onUndo: () => provider.updateTaskStarred(
+                          task.id!, true, starOrder: originalOrder),
+                    );
+                  }
+                },
+                onNavigateToTask: (t) {
+                  Navigator.pop(dialogContext);
+                  widget.onNavigateToTask?.call(t);
+                },
+              ),
+            ),
           ),
         ),
       ),

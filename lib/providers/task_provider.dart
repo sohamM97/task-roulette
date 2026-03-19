@@ -596,9 +596,10 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Toggles starred flag. Assigns next star_order when starring.
-  Future<void> updateTaskStarred(int taskId, bool isStarred) async {
-    int? starOrder;
-    if (isStarred) {
+  /// Pass [starOrder] to restore a specific position (e.g. undo).
+  Future<void> updateTaskStarred(int taskId, bool isStarred,
+      {int? starOrder}) async {
+    if (isStarred && starOrder == null) {
       final maxOrder = await _db.getMaxStarOrder();
       starOrder = maxOrder + 1;
     }
