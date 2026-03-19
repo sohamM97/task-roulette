@@ -1030,10 +1030,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                 letterSpacing: -0.3,
               ),
             ),
+            const SizedBox(height: 2),
             Text(
-              "Today's 5",
-              style: textTheme.titleSmall?.copyWith(
+              "Today\u2019s 5",
+              style: TextStyle(
+                fontFamily: 'Outfit',
+                fontSize: 16,
+                fontWeight: FontWeight.w300,
                 color: colorScheme.onSurfaceVariant,
+                letterSpacing: 1.0,
               ),
             ),
           ],
