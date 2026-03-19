@@ -30,6 +30,21 @@ String todayDateKey() {
   return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
 }
 
+/// Shortens an ancestor path for display in compact badges.
+/// Truncates ancestor names from the left so the immediate parent
+/// (last segment) stays fully visible.
+String shortenAncestorPath(String path) {
+  final segments = path.split(' › ');
+  if (segments.length <= 1) return path;
+  if (segments.length > 3) {
+    return '…${segments.sublist(segments.length - 2).join(' › ')}';
+  }
+  final last = segments.last;
+  final prior = segments.sublist(0, segments.length - 1)
+      .map((s) => s.length > 12 ? '…${s.substring(s.length - 8)}' : s);
+  return '${prior.join(' › ')} › $last';
+}
+
 String displayUrl(String url, {int maxLength = 40}) {
   var display = url.replaceFirst(RegExp(r'^https?://'), '');
   if (display.endsWith('/')) display = display.substring(0, display.length - 1);

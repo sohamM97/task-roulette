@@ -512,20 +512,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     return deadlineProximityColor(days, colorScheme);
   }
 
-  String _shortenPath(String path) {
-    final segments = path.split(' › ');
-    if (segments.length <= 1) return path;
-    // Keep last 2 segments, abbreviate earlier ones to "…"
-    if (segments.length > 3) {
-      return '…${segments.sublist(segments.length - 2).join(' › ')}';
-    }
-    // For 2-3 segments, abbreviate all but the last —
-    // truncate from the LEFT so the tail of the ancestor is visible
-    final last = segments.last;
-    final prior = segments.sublist(0, segments.length - 1)
-        .map((s) => s.length > 12 ? '…${s.substring(s.length - 8)}' : s);
-    return '${prior.join(' › ')} › $last';
-  }
+  String _shortenPath(String path) => shortenAncestorPath(path);
 
   /// Re-fetches a single task from DB and updates it in [_todaysTasks].
   /// Does NOT call setState — callers handle that.
