@@ -17,7 +17,7 @@ Color deadlineProximityColor(int daysUntil, ColorScheme colorScheme) {
 void showInfoSnackBar(BuildContext context, String message, {VoidCallback? onUndo}) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
     content: Text(message),
-    showCloseIcon: onUndo == null,
+    showCloseIcon: true,
     action: onUndo != null ? SnackBarAction(label: 'Undo', onPressed: onUndo) : null,
     duration: Duration(seconds: onUndo != null ? 5 : 3),
   ));
@@ -28,6 +28,21 @@ void showInfoSnackBar(BuildContext context, String message, {VoidCallback? onUnd
 String todayDateKey() {
   final now = DateTime.now();
   return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+}
+
+/// Shortens an ancestor path for display in compact badges.
+/// Truncates ancestor names from the left so the immediate parent
+/// (last segment) stays fully visible.
+String shortenAncestorPath(String path) {
+  final segments = path.split(' › ');
+  if (segments.length <= 1) return path;
+  if (segments.length > 3) {
+    return '…${segments.sublist(segments.length - 2).join(' › ')}';
+  }
+  final last = segments.last;
+  final prior = segments.sublist(0, segments.length - 1)
+      .map((s) => s.length > 12 ? '…${s.substring(s.length - 8)}' : s);
+  return '${prior.join(' › ')} › $last';
 }
 
 String displayUrl(String url, {int maxLength = 40}) {

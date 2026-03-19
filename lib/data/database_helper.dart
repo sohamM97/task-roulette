@@ -106,7 +106,9 @@ class DatabaseHelper {
             is_schedule_override INTEGER NOT NULL DEFAULT 0,
             is_inbox INTEGER NOT NULL DEFAULT 0,
             deadline TEXT,
-            deadline_type TEXT NOT NULL DEFAULT 'due_by'
+            deadline_type TEXT NOT NULL DEFAULT 'due_by',
+            is_starred INTEGER NOT NULL DEFAULT 0,
+            star_order INTEGER
           )
         ''');
         await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_sync_id ON tasks(sync_id)');
@@ -331,7 +333,21 @@ class DatabaseHelper {
           }
         }
         if (oldVersion < 21) {
-          await db.execute("ALTER TABLE tasks ADD COLUMN deadline_type TEXT NOT NULL DEFAULT 'due_by'");
+          final cols21 = await db.rawQuery('PRAGMA table_info(tasks)');
+          final colNames21 = cols21.map((c) => c['name'] as String).toSet();
+          if (!colNames21.contains('deadline_type')) {
+            await db.execute("ALTER TABLE tasks ADD COLUMN deadline_type TEXT NOT NULL DEFAULT 'due_by'");
+          }
+        }
+        if (oldVersion < 22) {
+          final cols = await db.rawQuery('PRAGMA table_info(tasks)');
+          final colNames = cols.map((c) => c['name'] as String).toSet();
+          if (!colNames.contains('is_starred')) {
+            await db.execute('ALTER TABLE tasks ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0');
+          }
+          if (!colNames.contains('star_order')) {
+            await db.execute('ALTER TABLE tasks ADD COLUMN star_order INTEGER');
+          }
         }
       },
     );
@@ -345,7 +361,7 @@ class DatabaseHelper {
   }
 
   static const _maxBackupSizeBytes = 100 * 1024 * 1024; // 100 MB
-  static const _dbVersion = 21;
+  static const _dbVersion = 22;
   static const _expectedTables = ['tasks', 'task_relationships', 'task_dependencies'];
 
   /// Validates that [sourcePath] is a valid TaskRoulette backup.
@@ -1055,7 +1071,7 @@ class DatabaseHelper {
 
   /// Returns effective deadline info for a batch of task IDs.
   /// For each task, returns the nearest deadline (own or inherited from ancestor).
-  /// Result maps task ID → deadline string.
+  /// Result maps task ID -> deadline string.
   Future<Map<int, ({String deadline, String type})>> getEffectiveDeadlines(List<int> taskIds) async {
     if (taskIds.isEmpty) return {};
     final db = await database;
@@ -1107,7 +1123,7 @@ class DatabaseHelper {
     return result;
   }
 
-  /// Returns a map of leaf task ID → days until the nearest deadline
+  /// Returns a map of leaf task ID -> days until the nearest deadline
   /// (from self or any ancestor). Used for weight boosting.
   /// Only includes leaves within the 14-day window (or overdue up to 14 days).
   Future<Map<int, int>> getDeadlineBoostedLeafData({DateTime? now}) async {
@@ -1167,6 +1183,48 @@ class DatabaseHelper {
       }
     }
     return leafDaysMap;
+  }
+
+  Future<void> updateTaskStarred(int taskId, bool isStarred, {int? starOrder}) async {
+    final db = await database;
+    final fields = <String, dynamic>{
+      'is_starred': isStarred ? 1 : 0,
+      'star_order': starOrder,
+      ..._dirtyFields(),
+    };
+    await db.update('tasks', fields, where: 'id = ?', whereArgs: [taskId]);
+  }
+
+  Future<List<Task>> getStarredTasks() async {
+    final db = await database;
+    final maps = await db.query(
+      'tasks',
+      where: 'is_starred = 1 AND completed_at IS NULL AND skipped_at IS NULL',
+      orderBy: 'star_order ASC',
+    );
+    return maps.map((m) => Task.fromMap(m)).toList();
+  }
+
+  Future<int> getMaxStarOrder() async {
+    final db = await database;
+    final result = await db.rawQuery('SELECT MAX(star_order) as max_order FROM tasks WHERE is_starred = 1');
+    return (result.first['max_order'] as int?) ?? -1;
+  }
+
+  Future<void> updateStarOrder(int taskId, int starOrder) async {
+    final db = await database;
+    await db.update('tasks', {'star_order': starOrder, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
+  }
+
+  /// Batch-updates star_order for all given task IDs in a single transaction.
+  Future<void> reorderStarredTasks(List<int> taskIds) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      for (int i = 0; i < taskIds.length; i++) {
+        await txn.update('tasks', {'star_order': i, ..._dirtyFields()},
+            where: 'id = ?', whereArgs: [taskIds[i]]);
+      }
+    });
   }
 
   Future<void> markWorkedOn(int taskId) async {

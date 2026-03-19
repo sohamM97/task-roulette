@@ -595,6 +595,33 @@ class TaskProvider extends ChangeNotifier {
     await _refreshAfterMutation();
   }
 
+  /// Toggles starred flag. Assigns next star_order when starring.
+  Future<void> updateTaskStarred(int taskId, bool isStarred) async {
+    int? starOrder;
+    if (isStarred) {
+      final maxOrder = await _db.getMaxStarOrder();
+      starOrder = maxOrder + 1;
+    }
+    await _db.updateTaskStarred(taskId, isStarred, starOrder: starOrder);
+    if (_currentParent?.id == taskId) {
+      _currentParent = _currentParent!.copyWith(
+        isStarred: isStarred,
+        starOrder: () => starOrder,
+      );
+    }
+    await _refreshAfterMutation();
+  }
+
+  Future<List<Task>> getStarredTasks() async {
+    return _db.getStarredTasks();
+  }
+
+  /// Reassigns sequential star_order 0..N-1 for the given task IDs.
+  Future<void> reorderStarredTasks(List<int> taskIds) async {
+    await _db.reorderStarredTasks(taskIds);
+    onMutation?.call();
+  }
+
   /// Toggles someday flag. Mutually exclusive with high priority.
   Future<void> updateTaskSomeday(int taskId, bool isSomeday) async {
     if (isSomeday) {

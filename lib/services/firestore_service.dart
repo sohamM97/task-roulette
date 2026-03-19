@@ -541,6 +541,8 @@ class FirestoreService {
       if (task.isInbox) 'is_inbox': {'booleanValue': true},
       if (task.deadline != null) 'deadline': {'stringValue': task.deadline},
       if (task.deadlineType != 'due_by') 'deadline_type': {'stringValue': task.deadlineType},
+      if (task.isStarred) 'is_starred': {'booleanValue': true},
+      if (task.starOrder != null) 'star_order': {'integerValue': task.starOrder.toString()},
     };
   }
 
@@ -583,6 +585,8 @@ class FirestoreService {
         return raw != null && raw.length <= 10 ? raw : null;
       }(),
       deadlineType: _stringField(fields, 'deadline_type') ?? 'due_by',
+      isStarred: _boolField(fields, 'is_starred'),
+      starOrder: _intFieldNullable(fields, 'star_order'),
     );
   }
 

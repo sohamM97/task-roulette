@@ -23,6 +23,8 @@ class AppColors {
     Color(0xFF302E45), // slate
   ];
 
+  static const starGold = Color(0xFFFFD700);
+
   static Color cardColor(BuildContext context, int taskId) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final colors = isDark ? cardColorsDark : cardColors;

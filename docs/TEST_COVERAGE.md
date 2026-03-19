@@ -28,7 +28,7 @@ Last updated: 2026-03-18
 
 ### Services (minimal)
 - **test/services/notification_service_test.dart** (13 tests) — `nextEightAM` (before/after/at 8 AM, midnight, month/year rollover, DST spring-forward, timezone preservation), `onNotificationTap` callback (null default, set and invoke, pendingTap drain on register, no spurious invoke without pending).
-- **test/services/firestore_service_test.dart** (~28 tests) — `taskToFirestoreFields` (all fields), `taskFromFirestoreDoc` (parsing, sync_id extraction), relationship doc parsing, **deadline** (include/omit in Firestore fields, parse from doc, reject >10 chars, round-trip).
+- **test/services/firestore_service_test.dart** (~28 tests) — `taskToFirestoreFields` (all fields), `taskFromFirestoreDoc` (parsing, sync_id extraction), relationship doc parsing, **deadline** (include/omit in Firestore fields, parse from doc, reject >10 chars, round-trip), **starred fields** (is_starred/star_order serialization, omission when false/null, parsing, defaults).
 
 ### Widgets (good)
 - **test/widgets/task_picker_dialog_test.dart** (~18 tests) — Priority sorting (tiers), preserved relative order, search filtering, parent context, search ranking (name matches before context-only matches, stable order within tiers, interaction with priority tiers), **headerAction** (shown when provided, hidden during search, absent when not provided).
@@ -43,7 +43,7 @@ Last updated: 2026-03-18
 - **test/widgets/random_result_dialog_test.dart** (~15 tests) — Layout, Go Deeper button, result enum.
 
 ### Other
-- **test/utils/display_utils_test.dart** (~50 tests) — `normalizeUrl`, `isAllowedUrl`, `displayUrl`.
+- **test/utils/display_utils_test.dart** (~64 tests) — `normalizeUrl`, `isAllowedUrl`, `displayUrl`, `shortenAncestorPath` (single/multi-segment, left-truncation of long ancestors, 4+ segment collapse, immediate parent always preserved, boundary at 12 chars).
 - **test/utils/force_directed_layout_test.dart** (~8 tests) — `LayoutNode` serialization round-trip, `ForceDirectedLayout.run` (single node, empty graph, early convergence, adaptive iterations), `runAsync` produces valid result.
 - **test/platform/platform_utils_native_test.dart** (7 tests) — Platform detection, home dir, file ops.
 - **test/app/app_test.dart** (1 test) — App renders with tabs.

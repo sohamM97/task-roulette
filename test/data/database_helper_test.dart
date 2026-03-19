@@ -2693,23 +2693,23 @@ void main() {
       await db.importDatabase(v14DbPath);
     });
 
-    test('rejects version 22 as too high', () async {
+    test('rejects version 23 as too high', () async {
       DatabaseHelper.testDatabasePath = mainDbPath;
       await db.reset();
       await db.database;
 
-      final v21DbPath = '${tempDir.path}/v22.db';
-      final v21Db = await openDatabase(v21DbPath, version: 22,
+      final v23DbPath = '${tempDir.path}/v23.db';
+      final v23Db = await openDatabase(v23DbPath, version: 23,
         onCreate: (db, version) async {
           await db.execute('CREATE TABLE tasks (id INTEGER PRIMARY KEY, name TEXT)');
           await db.execute('CREATE TABLE task_relationships (parent_id INTEGER, child_id INTEGER)');
           await db.execute('CREATE TABLE task_dependencies (task_id INTEGER, depends_on_task_id INTEGER)');
         },
       );
-      await v21Db.close();
+      await v23Db.close();
 
       expect(
-        () => db.importDatabase(v21DbPath),
+        () => db.importDatabase(v23DbPath),
         throwsA(isA<FormatException>().having(
           (e) => e.message, 'message', contains('Incompatible backup version'),
         )),
@@ -4940,6 +4940,146 @@ void main() {
         final result = await db.getDeadlineBoostedLeafData(now: today);
         expect(result[id], -3); // 3 days overdue
       });
+    });
+  });
+
+  group('Starred tasks', () {
+    test('updateTaskStarred sets is_starred and star_order', () async {
+      final id = await db.insertTask(Task(name: 'Star me'));
+      await db.updateTaskStarred(id, true, starOrder: 0);
+
+      final task = await db.getTaskById(id);
+      expect(task!.isStarred, isTrue);
+      expect(task.starOrder, 0);
+    });
+
+    test('updateTaskStarred can unstar a task', () async {
+      final id = await db.insertTask(Task(name: 'Unstar me'));
+      await db.updateTaskStarred(id, true, starOrder: 0);
+      await db.updateTaskStarred(id, false);
+
+      final task = await db.getTaskById(id);
+      expect(task!.isStarred, isFalse);
+      expect(task.starOrder, isNull);
+    });
+
+    test('getStarredTasks returns only starred incomplete tasks', () async {
+      final id1 = await db.insertTask(Task(name: 'Starred 1'));
+      await db.insertTask(Task(name: 'Not starred'));
+      final id3 = await db.insertTask(Task(name: 'Starred 2'));
+
+      await db.updateTaskStarred(id1, true, starOrder: 0);
+      await db.updateTaskStarred(id3, true, starOrder: 1);
+
+      final starred = await db.getStarredTasks();
+      expect(starred.length, 2);
+      expect(starred[0].id, id1);
+      expect(starred[1].id, id3);
+    });
+
+    test('getStarredTasks returns tasks ordered by star_order', () async {
+      final id1 = await db.insertTask(Task(name: 'Second'));
+      final id2 = await db.insertTask(Task(name: 'First'));
+
+      await db.updateTaskStarred(id1, true, starOrder: 5);
+      await db.updateTaskStarred(id2, true, starOrder: 2);
+
+      final starred = await db.getStarredTasks();
+      expect(starred[0].id, id2); // star_order 2
+      expect(starred[1].id, id1); // star_order 5
+    });
+
+    test('getStarredTasks excludes completed tasks', () async {
+      final id = await db.insertTask(Task(name: 'Starred and done'));
+      await db.updateTaskStarred(id, true, starOrder: 0);
+      await db.completeTask(id);
+
+      final starred = await db.getStarredTasks();
+      expect(starred.where((t) => t.id == id), isEmpty);
+    });
+
+    test('getStarredTasks excludes skipped tasks', () async {
+      final id = await db.insertTask(Task(name: 'Starred and skipped'));
+      await db.updateTaskStarred(id, true, starOrder: 0);
+      await db.skipTask(id);
+
+      final starred = await db.getStarredTasks();
+      expect(starred.where((t) => t.id == id), isEmpty);
+    });
+
+    test('starred task reappears in getStarredTasks after uncomplete', () async {
+      final id = await db.insertTask(Task(name: 'Reappear'));
+      await db.updateTaskStarred(id, true, starOrder: 0);
+      await db.completeTask(id);
+
+      // Not in starred while completed
+      var starred = await db.getStarredTasks();
+      expect(starred.where((t) => t.id == id), isEmpty);
+
+      await db.uncompleteTask(id);
+
+      // Back in starred after uncomplete
+      starred = await db.getStarredTasks();
+      expect(starred.where((t) => t.id == id), hasLength(1));
+    });
+
+    test('starred task reappears in getStarredTasks after unskip', () async {
+      final id = await db.insertTask(Task(name: 'Unskip'));
+      await db.updateTaskStarred(id, true, starOrder: 0);
+      await db.skipTask(id);
+
+      var starred = await db.getStarredTasks();
+      expect(starred.where((t) => t.id == id), isEmpty);
+
+      await db.unskipTask(id);
+
+      starred = await db.getStarredTasks();
+      expect(starred.where((t) => t.id == id), hasLength(1));
+    });
+
+    test('getMaxStarOrder returns -1 when no starred tasks', () async {
+      final maxOrder = await db.getMaxStarOrder();
+      expect(maxOrder, -1);
+    });
+
+    test('getMaxStarOrder returns highest star_order', () async {
+      final id1 = await db.insertTask(Task(name: 'A'));
+      final id2 = await db.insertTask(Task(name: 'B'));
+
+      await db.updateTaskStarred(id1, true, starOrder: 3);
+      await db.updateTaskStarred(id2, true, starOrder: 7);
+
+      final maxOrder = await db.getMaxStarOrder();
+      expect(maxOrder, 7);
+    });
+
+    test('updateStarOrder changes star_order for a task', () async {
+      final id = await db.insertTask(Task(name: 'Reorder'));
+      await db.updateTaskStarred(id, true, starOrder: 0);
+      await db.updateStarOrder(id, 42);
+
+      final task = await db.getTaskById(id);
+      expect(task!.starOrder, 42);
+    });
+
+    test('reorder persistence: sequential updateStarOrder calls', () async {
+      final id1 = await db.insertTask(Task(name: 'A'));
+      final id2 = await db.insertTask(Task(name: 'B'));
+      final id3 = await db.insertTask(Task(name: 'C'));
+
+      await db.updateTaskStarred(id1, true, starOrder: 0);
+      await db.updateTaskStarred(id2, true, starOrder: 1);
+      await db.updateTaskStarred(id3, true, starOrder: 2);
+
+      // Reorder: C, A, B
+      await db.updateStarOrder(id3, 0);
+      await db.updateStarOrder(id1, 1);
+      await db.updateStarOrder(id2, 2);
+
+      final starred = await db.getStarredTasks();
+      expect(starred[0].id, id3);
+      expect(starred[1].id, id1);
+      expect(starred[2].id, id2);
     });
   });
 }

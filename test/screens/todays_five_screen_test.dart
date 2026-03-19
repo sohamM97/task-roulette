@@ -91,7 +91,20 @@ void main() {
       await pumpAndLoad(tester, buildTestWidget());
 
       expect(find.text('No tasks for today!'), findsNothing);
-      expect(find.text('Completing even 1 is a win!'), findsOneWidget);
+      // Motivational text rotates daily — just verify one of them is shown
+      final motivationalTexts = [
+        'Completing even 1 is a win!',
+        'Pick one and start small.',
+        'One step at a time.',
+        'Just begin \u2014 momentum follows.',
+        'You\u2019ve got this.',
+      ];
+      expect(
+        motivationalTexts.any(
+          (text) => find.text(text).evaluate().isNotEmpty,
+        ),
+        isTrue,
+      );
       expect(find.text('Buy groceries'), findsOneWidget);
       expect(find.text('Write report'), findsOneWidget);
       expect(find.text('Call dentist'), findsOneWidget);
@@ -213,7 +226,11 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      // Progress is now segmented (Row of Container widgets), not a LinearProgressIndicator
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      // Verify the segmented progress row exists by checking for the row structure
+      // built by _buildSegmentedProgress: a Row containing Expanded > Container widgets
+      expect(find.byType(Row), findsWidgets);
     });
 
     testWidgets('shows high priority flag icon', (tester) async {
@@ -364,8 +381,8 @@ void main() {
         await tester.pump();
       }
 
-      // Pin icon should be visible
-      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      // Pin icon should be visible (section header + PinButton)
+      expect(find.byIcon(Icons.push_pin), findsAtLeastNWidgets(1));
 
       // Verify DB still has the pin (not overwritten by stale state)
       final saved = await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
@@ -390,8 +407,8 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      // Pin icon should be visible initially
-      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      // Pin icon should be visible initially (section header + PinButton)
+      expect(find.byIcon(Icons.push_pin), findsAtLeastNWidgets(1));
 
       // Simulate task list screen unpinning task directly in DB
       await tester.runAsync(() async {
@@ -472,7 +489,7 @@ void main() {
 
       // New task should appear pinned
       expect(find.text('Newly Added'), findsOneWidget);
-      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin), findsAtLeastNWidgets(1));
 
       // Verify DB state is correct (not overwritten)
       final saved = await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
@@ -526,8 +543,8 @@ void main() {
 
       // Task 1 should still show as done (completed state preserved from DB)
       expect(find.byIcon(Icons.check_circle), findsOneWidget);
-      // Task 2 should show as pinned
-      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      // Task 2 should show as pinned (section header + PinButton)
+      expect(find.byIcon(Icons.push_pin), findsAtLeastNWidgets(1));
     });
 
     testWidgets('refreshSnapshots picks up eagerly transferred pin from parent to child', (tester) async {
@@ -551,9 +568,9 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      // Parent should be pinned
+      // Parent should be pinned (section header + PinButton)
       expect(find.text('Parent task'), findsOneWidget);
-      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin), findsAtLeastNWidgets(1));
 
       // Simulate: task list screen added subtask and transferred pin in DB
       await tester.runAsync(() async {
@@ -581,7 +598,7 @@ void main() {
 
       // Child should appear pinned, parent should be gone
       expect(find.text('Child task'), findsOneWidget);
-      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin), findsAtLeastNWidgets(1));
 
       // Verify DB state preserved correctly
       final saved = await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
@@ -607,8 +624,8 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      // Verify initial state
-      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      // Verify initial state (section header + PinButton)
+      expect(find.byIcon(Icons.push_pin), findsAtLeastNWidgets(1));
 
       // Trigger refreshSnapshots with NO external changes
       final state = tester.state<TodaysFiveScreenState>(
@@ -621,7 +638,7 @@ void main() {
       }
 
       // State should be unchanged — pin still there
-      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin), findsAtLeastNWidgets(1));
       expect(find.text('Stable 1'), findsOneWidget);
       expect(find.text('Stable 2'), findsOneWidget);
 

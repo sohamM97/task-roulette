@@ -665,4 +665,55 @@ void main() {
       expect(restored!.deadline, isNull);
     });
   });
+
+  group('Starred fields serialization', () {
+    test('taskToFirestoreFields includes is_starred when true', () {
+      final task = Task(name: 'Starred', isStarred: true, starOrder: 3);
+      final fields = service.taskToFirestoreFields(task);
+      expect(fields['is_starred'], {'booleanValue': true});
+      expect(fields['star_order'], {'integerValue': '3'});
+    });
+
+    test('taskToFirestoreFields omits is_starred when false', () {
+      final task = Task(name: 'Not starred');
+      final fields = service.taskToFirestoreFields(task);
+      expect(fields.containsKey('is_starred'), isFalse);
+      expect(fields.containsKey('star_order'), isFalse);
+    });
+
+    test('taskToFirestoreFields omits star_order when null', () {
+      final task = Task(name: 'Starred no order', isStarred: true);
+      final fields = service.taskToFirestoreFields(task);
+      expect(fields['is_starred'], {'booleanValue': true});
+      expect(fields.containsKey('star_order'), isFalse);
+    });
+
+    test('taskFromFirestoreDoc parses is_starred and star_order', () {
+      final doc = {
+        'name': 'documents/tasks/abc123',
+        'fields': {
+          'name': {'stringValue': 'Test'},
+          'created_at': {'integerValue': '1000'},
+          'is_starred': {'booleanValue': true},
+          'star_order': {'integerValue': '5'},
+        },
+      };
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.isStarred, isTrue);
+      expect(task.starOrder, 5);
+    });
+
+    test('taskFromFirestoreDoc defaults is_starred to false when missing', () {
+      final doc = {
+        'name': 'documents/tasks/abc123',
+        'fields': {
+          'name': {'stringValue': 'Test'},
+          'created_at': {'integerValue': '1000'},
+        },
+      };
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.isStarred, isFalse);
+      expect(task.starOrder, isNull);
+    });
+  });
 }

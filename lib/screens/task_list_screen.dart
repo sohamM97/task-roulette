@@ -597,6 +597,10 @@ class TaskListScreenState extends State<TaskListScreen>
     await context.read<TaskProvider>().updateTaskSomeday(task.id!, isSomeday);
   }
 
+  Future<void> _updateStarred(Task task, bool isStarred) async {
+    await context.read<TaskProvider>().updateTaskStarred(task.id!, isStarred);
+  }
+
   Future<void> _workedOn(Task task) async {
     final provider = context.read<TaskProvider>();
     final previousLastWorkedAt = task.lastWorkedAt;
@@ -1341,19 +1345,34 @@ class TaskListScreenState extends State<TaskListScreen>
                   tooltip: 'Archive',
                   visualDensity: VisualDensity.compact,
                 ),
-                IconButton(
-                  icon: const Icon(Icons.account_tree_outlined, size: 22),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const DagViewScreen(),
-                      ),
-                    );
-                  },
-                  tooltip: 'Task graph',
-                  visualDensity: VisualDensity.compact,
-                ),
+                if (provider.isRoot)
+                  IconButton(
+                    icon: const Icon(Icons.account_tree_outlined, size: 22),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const DagViewScreen(),
+                        ),
+                      );
+                    },
+                    tooltip: 'Task graph',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                if (!provider.isRoot && provider.currentParent != null)
+                  IconButton(
+                    icon: Icon(
+                      provider.currentParent!.isStarred ? Icons.star : Icons.star_outline,
+                      size: 22,
+                      color: provider.currentParent!.isStarred ? AppColors.starGold : null,
+                    ),
+                    onPressed: () => _updateStarred(
+                      provider.currentParent!,
+                      !provider.currentParent!.isStarred,
+                    ),
+                    tooltip: provider.currentParent!.isStarred ? 'Unstar' : 'Star',
+                    visualDensity: VisualDensity.compact,
+                  ),
                 Consumer<ThemeProvider>(
                   builder: (context, themeProvider, _) {
                     return IconButton(
@@ -1518,6 +1537,8 @@ class TaskListScreenState extends State<TaskListScreen>
                                     .where((name) => name != provider.currentParent?.name)
                                     .toList(),
                                 effectiveDeadline: provider.effectiveDeadlines[task.id],
+                                isStarred: task.isStarred,
+                                onToggleStar: () => _updateStarred(task, !task.isStarred),
                               );
                             },
                           ),

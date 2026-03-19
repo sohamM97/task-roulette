@@ -209,4 +209,83 @@ void main() {
       expect((icon.color!.a * 255.0).round(), 170);
     });
   });
+
+  group('shortenAncestorPath', () {
+    test('returns single segment unchanged', () {
+      expect(shortenAncestorPath('Root'), 'Root');
+    });
+
+    test('returns short 2-segment path unchanged', () {
+      expect(shortenAncestorPath('Parent › Child'), 'Parent › Child');
+    });
+
+    test('truncates long ancestor from left in 2-segment path', () {
+      final result = shortenAncestorPath('Root inboxed tasks › Inbox 2');
+      expect(result, contains('Inbox 2'));
+      expect(result, startsWith('…'));
+      // Ancestor truncated from left — last 8 chars visible
+      expect(result, contains('ed tasks'));
+    });
+
+    test('3-segment path with short names unchanged', () {
+      expect(shortenAncestorPath('A › B › C'), 'A › B › C');
+    });
+
+    test('3-segment path truncates long ancestors from left', () {
+      final result = shortenAncestorPath('Very long ancestor name › Another long one here › Leaf');
+      expect(result, contains('Leaf'));
+      expect(result, contains('…'));
+    });
+
+    test('4+ segments collapses to last 2 with ellipsis', () {
+      final result = shortenAncestorPath('A › B › C › D');
+      expect(result, '…C › D');
+    });
+
+    test('5 segments collapses to last 2 with ellipsis', () {
+      final result = shortenAncestorPath('A › B › C › D › E');
+      expect(result, '…D › E');
+    });
+
+    test('immediate parent is always fully visible', () {
+      final result = shortenAncestorPath('Root inboxed tasks › Very important parent task');
+      expect(result, contains('Very important parent task'));
+    });
+
+    test('ancestor <= 12 chars not truncated in 2-segment path', () {
+      expect(shortenAncestorPath('Short name › Child'), 'Short name › Child');
+    });
+
+    test('ancestor exactly 12 chars not truncated', () {
+      expect(shortenAncestorPath('Twelve chars › Child'), 'Twelve chars › Child');
+    });
+
+    test('ancestor 13 chars gets left-truncated', () {
+      final result = shortenAncestorPath('Thirteen char › Child');
+      expect(result, startsWith('…'));
+      expect(result, contains('Child'));
+    });
+
+    test('long immediate parent is NOT truncated by shortenPath', () {
+      // shortenPath only truncates ancestors, not the last segment.
+      // Text widget overflow handles the rest.
+      final result = shortenAncestorPath('Parent › A very long immediate parent name that goes on');
+      expect(result, contains('A very long immediate parent name that goes on'));
+    });
+
+    test('both ancestor and parent long — only ancestor truncated', () {
+      final result = shortenAncestorPath('Root inboxed tasks › Super long child task name here');
+      expect(result, startsWith('…'));
+      expect(result, contains('Super long child task name here'));
+      // Ancestor should be left-truncated
+      expect(result, isNot(contains('Root')));
+    });
+
+    test('4+ segments with long names collapses to last 2', () {
+      final result = shortenAncestorPath(
+        'Very long root name › Another long segment › Third long one › Final destination'
+      );
+      expect(result, '…Third long one › Final destination');
+    });
+  });
 }
