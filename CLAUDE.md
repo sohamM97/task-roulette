@@ -46,39 +46,27 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 
 **Minimal cognitive load.** Every feature should reduce friction. Prefer sensible defaults over configuration. Avoid jargon like "DAG", "node", "parent" in UI — use natural alternatives like "listed under", "show under". Material 3 theming throughout.
 
-## Slash Commands
+## Skills & Hooks
 
-- Each command in `.claude/commands/` is self-documenting — read the file for details.
-- `/code-review` and `/sec-review` — **always run in a fresh session**, not the current one.
+- Skills in `.claude/skills/` are auto-invokable — **always use the relevant skill** instead of doing things manually (e.g. `/commit` instead of raw git commands, `/feature` instead of manual branch creation).
+- `/code-review` and `/sec-review` have `disable-model-invocation: true` — **always run in a fresh session**.
 - `/code-review-fix` and `/sec-review-fix` — can run in any session **except** the one where the corresponding review was run.
-
-## Hooks
-
-Hooks in `.claude/hooks/` enforce guardrails automatically:
-- **`pre-commit-analyze.sh`** — blocks `git commit` if `flutter analyze` fails
-- **`guard-git-tag.sh`** — requires user confirmation for `git tag` (use `/release`)
-- **`guard-pr-merge.sh`** — requires user confirmation for `gh pr merge`
-- **`block-flutter-run-android.sh`** — blocks `flutter run` without `-d linux`
-- **`apk-dart-defines.sh`** — auto-injects `--dart-define` flags into `flutter build apk`
-- **`guard-adb-install.sh`** — requires user confirmation for `adb install`
+- Hooks in `.claude/hooks/` enforce guardrails automatically (analyze before commit, confirm before tag/merge/install, block `flutter run` without `-d linux`, auto-inject `--dart-define` for APK builds).
 
 ## Development Preferences
 
 - **When asked what's pending in a branch**, always check memory (TODO.md and other memory files) for previously discussed next steps — not just the git diff.
 - **Before exiting plan mode**, ask the user if they want to create a feature branch first (via `/feature`).
 - Ask user about committing and pushing occasionally — don't wait until asked. Remind them to review changes and test on Linux (via `./dev.sh`) first.
-- After completing a new feature, ask the user if they want to add test cases for it.
 - When a bug is found and confirmed reproducible, always add a test case for it.
 - When writing tests in bulk, use `flutter test --coverage` to find gaps. Parse `coverage/lcov.info` directly (`genhtml` may not be installed).
-- **Manual test checklists**: Always verify UI elements (button labels, icon placements, interaction patterns) by reading the actual widget code before writing test instructions. Never guess.
 - Capture any user-mentioned future work items as todo tasks immediately.
 - When setup instructions change (new deps, build steps), ask user if they want to update README.
-- **Widget tests with sqflite_ffi**: `testWidgets` runs in `FakeAsync` — use `databaseFactoryFfiNoIsolate` in `setUpAll`. Wrap DB inserts in `tester.runAsync()`. For widget loading, use `runAsync(Future.delayed(10ms)) + pump()` cycles. Provide `AuthProvider` and `SyncService` in MultiProvider for screens that need them.
+- **Widget tests with sqflite_ffi**: `testWidgets` runs in `FakeAsync` — use `databaseFactoryFfiNoIsolate` in `setUpAll`. Use shared helpers from `test/helpers/async_pump.dart` (`pumpAndLoad`, `pumpAsync`) for async loading. Provide `AuthProvider` and `SyncService` in MultiProvider for screens that need them.
 
 ## Mobile Debugging & Testing
 
 - **Don't jump to fixes** when something fails on phone — ask user if they want to troubleshoot with ADB/logcat first.
-- Use `/debug-build` to build and sideload. Hooks block `flutter run` on Android and auto-inject `--dart-define` flags.
 - Before pushing a new version, remind user to **test on phone** and **export their data** first.
 
 ## Android Signing

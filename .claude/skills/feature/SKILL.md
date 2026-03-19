@@ -1,3 +1,8 @@
+---
+name: feature
+description: Start a New Feature. Use when the user wants to start a new feature or create a feature branch.
+---
+
 # Start a New Feature
 
 Create a feature branch from an up-to-date `main`.

@@ -1,3 +1,9 @@
+---
+name: code-review
+description: Code Review. Must run in a fresh session — never auto-invoke.
+disable-model-invocation: true
+---
+
 # Code Review
 
 You are a code review specialist. Your job is to audit the TaskRoulette Flutter codebase for code quality, patterns, and best practices.

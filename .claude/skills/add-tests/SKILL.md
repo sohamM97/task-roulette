@@ -1,3 +1,8 @@
+---
+name: add-tests
+description: Generate Tests. Use when the user asks to add tests, write tests, or after completing a feature.
+---
+
 # Generate Tests
 
 Generate test cases for the TaskRoulette Flutter app.

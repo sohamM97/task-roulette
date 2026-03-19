@@ -1,3 +1,8 @@
+---
+name: merge
+description: Merge Pull Request. Use when the user wants to merge a PR.
+---
+
 # Merge Pull Request
 
 Merge the current branch's PR after verifying CI and review comments.

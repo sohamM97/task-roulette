@@ -1,3 +1,8 @@
+---
+name: pr
+description: Create Pull Request. Use when the user wants to create a PR or is ready to open a pull request.
+---
+
 # Create Pull Request
 
 Create a PR from the current branch to the target branch.
