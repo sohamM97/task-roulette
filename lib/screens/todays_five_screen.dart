@@ -1115,7 +1115,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                     text: completedCount == 0
                         ? _motivationalText()
                         : completedCount == totalCount
-                            ? 'Done for the day.'
+                            ? 'All $totalCount done!'
                             : '$completedCount of $totalCount done',
                     style: completedCount == totalCount && totalCount > 0
                         ? const TextStyle(color: Color(0xFF66BB6A), fontWeight: FontWeight.w500)
