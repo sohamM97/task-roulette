@@ -1212,6 +1212,17 @@ class DatabaseHelper {
     await db.update('tasks', {'star_order': starOrder, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
   }
 
+  /// Batch-updates star_order for all given task IDs in a single transaction.
+  Future<void> reorderStarredTasks(List<int> taskIds) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      for (int i = 0; i < taskIds.length; i++) {
+        await txn.update('tasks', {'star_order': i, ..._dirtyFields()},
+            where: 'id = ?', whereArgs: [taskIds[i]]);
+      }
+    });
+  }
+
   Future<void> markWorkedOn(int taskId) async {
     final db = await database;
     await db.update(

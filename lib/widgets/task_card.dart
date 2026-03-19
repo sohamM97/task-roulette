@@ -135,7 +135,7 @@ class TaskCard extends StatelessWidget {
                 ListTile(
                   leading: Icon(
                     isStarred ? Icons.star : Icons.star_outline,
-                    color: isStarred ? const Color(0xFFFFD700) : null,
+                    color: isStarred ? AppColors.starGold : null,
                   ),
                   title: Text(isStarred ? 'Unstar' : 'Star'),
                   onTap: () {
@@ -362,7 +362,7 @@ class TaskCard extends StatelessWidget {
                         const Icon(
                           Icons.star,
                           size: 16,
-                          color: Color(0xFFFFD700),
+                          color: AppColors.starGold,
                         ),
                     ],
                   ),

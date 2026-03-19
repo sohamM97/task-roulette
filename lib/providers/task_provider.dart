@@ -618,9 +618,7 @@ class TaskProvider extends ChangeNotifier {
 
   /// Reassigns sequential star_order 0..N-1 for the given task IDs.
   Future<void> reorderStarredTasks(List<int> taskIds) async {
-    for (int i = 0; i < taskIds.length; i++) {
-      await _db.updateStarOrder(taskIds[i], i);
-    }
+    await _db.reorderStarredTasks(taskIds);
     onMutation?.call();
   }
 

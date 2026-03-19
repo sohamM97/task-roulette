@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/task.dart';
@@ -27,6 +28,7 @@ class StarredScreenState extends State<StarredScreen>
   Map<int, ({List<({Task child, List<Task> grandchildren, int totalGrandchildren})> children, int totalChildren})> _treeData = {};
   bool _loading = true;
   TaskProvider? _provider;
+  Timer? _debounce;
 
   @override
   void initState() {
@@ -38,43 +40,47 @@ class StarredScreenState extends State<StarredScreen>
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _provider?.removeListener(_onProviderChanged);
     super.dispose();
   }
 
   void _onProviderChanged() {
     if (!mounted || _loading) return;
-    _loadStarredTasks();
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 100), () {
+      if (mounted && !_loading) _loadStarredTasks();
+    });
   }
 
   Future<void> _loadStarredTasks() async {
+    _loading = true;
     final provider = context.read<TaskProvider>();
     final starred = await provider.getStarredTasks();
 
-    // Load tree preview data for each starred task
-    final treeData = <int, ({List<({Task child, List<Task> grandchildren, int totalGrandchildren})> children, int totalChildren})>{};
-    for (final task in starred) {
+    // Load tree preview data for all starred tasks in parallel
+    final treeEntries = await Future.wait(starred.map((task) async {
       final children = await provider.getChildren(task.id!);
       final allActive = children
           .where((c) => c.completedAt == null && c.skippedAt == null)
           .toList();
       final shownChildren = allActive.take(3).toList();
 
-      final childEntries = <({Task child, List<Task> grandchildren, int totalGrandchildren})>[];
-      for (final child in shownChildren) {
+      final childEntries = await Future.wait(shownChildren.map((child) async {
         final grandchildren = await provider.getChildren(child.id!);
         final allActiveGc = grandchildren
             .where((g) => g.completedAt == null && g.skippedAt == null)
             .toList();
-        childEntries.add((
+        return (
           child: child,
           grandchildren: allActiveGc.take(2).toList(),
           totalGrandchildren: allActiveGc.length,
-        ));
-      }
+        );
+      }));
 
-      treeData[task.id!] = (children: childEntries, totalChildren: allActive.length);
-    }
+      return MapEntry(task.id!, (children: childEntries, totalChildren: allActive.length));
+    }));
+    final treeData = Map.fromEntries(treeEntries);
 
     if (!mounted) return;
     setState(() {

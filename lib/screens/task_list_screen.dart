@@ -1364,7 +1364,7 @@ class TaskListScreenState extends State<TaskListScreen>
                     icon: Icon(
                       provider.currentParent!.isStarred ? Icons.star : Icons.star_outline,
                       size: 22,
-                      color: provider.currentParent!.isStarred ? const Color(0xFFFFD700) : null,
+                      color: provider.currentParent!.isStarred ? AppColors.starGold : null,
                     ),
                     onPressed: () => _updateStarred(
                       provider.currentParent!,
