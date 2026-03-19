@@ -1,3 +1,8 @@
+---
+name: release
+description: Push a Release. Use when the user wants to tag a release or push a new version.
+---
+
 # Push a Release
 
 Tag and push a new release version. GitHub Actions will build the APK automatically.

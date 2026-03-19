@@ -1,3 +1,8 @@
+---
+name: sec-review-fix
+description: Security Review Fix. Use when fixing security vulnerabilities from a review.
+---
+
 # Security Review Fix
 
 You are fixing security vulnerabilities found during the security review of the TaskRoulette Flutter codebase.

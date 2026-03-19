@@ -1,3 +1,8 @@
+---
+name: manual-test
+description: Manual Test Checklist. Use when generating manual test instructions for the user.
+---
+
 # Manual Test Checklist
 
 Generate a checklist of manual tests the user should run for recent changes.

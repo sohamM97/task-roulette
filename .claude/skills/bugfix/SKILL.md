@@ -1,3 +1,8 @@
+---
+name: bugfix
+description: Create a Bugfix Branch. Use when the user wants to fix a bug or create a bugfix branch.
+---
+
 # Create a Bugfix Branch
 
 Create a bugfix branch from an up-to-date `main`.

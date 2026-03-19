@@ -1,3 +1,8 @@
+---
+name: commit
+description: Commit and Push. Use when committing changes, pushing code, or when the user agrees to commit.
+---
+
 # Commit and Push
 
 Commit all current uncommitted changes and push to the remote.

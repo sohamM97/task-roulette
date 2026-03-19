@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../helpers/async_pump.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -62,16 +63,6 @@ void main() {
     );
   }
 
-  /// Pumps the widget and waits for all async loading to complete.
-  /// DB operations inside the widget (via databaseFactoryFfiNoIsolate) need
-  /// runAsync to exit FakeAsync, then pump to process microtask continuations.
-  Future<void> pumpAndLoad(WidgetTester tester, Widget widget) async {
-    await tester.pumpWidget(widget);
-    for (var i = 0; i < 20; i++) {
-      await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
-      await tester.pump();
-    }
-  }
 
   group('TodaysFiveScreen', () {
     testWidgets('shows empty state when no tasks exist', (tester) async {

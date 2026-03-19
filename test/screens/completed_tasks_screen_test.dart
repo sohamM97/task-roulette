@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../helpers/async_pump.dart';
 import 'package:provider/provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:task_roulette/data/database_helper.dart';
@@ -38,15 +39,6 @@ void main() {
     );
   }
 
-  /// DB ops inside the widget need runAsync (exit FakeAsync) + pump (process
-  /// microtask continuations) cycles.
-  Future<void> pumpAndLoad(WidgetTester tester, Widget widget) async {
-    await tester.pumpWidget(widget);
-    for (var i = 0; i < 20; i++) {
-      await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
-      await tester.pump();
-    }
-  }
 
   group('CompletedTasksScreen', () {
     testWidgets('shows empty state when no archived tasks', (tester) async {

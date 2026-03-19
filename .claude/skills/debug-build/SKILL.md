@@ -1,3 +1,8 @@
+---
+name: debug-build
+description: Deploy to Phone. Use when the user wants to build and install the app on their phone.
+---
+
 # Deploy to Phone
 
 Build a debug APK and sideload it onto the connected Android device.

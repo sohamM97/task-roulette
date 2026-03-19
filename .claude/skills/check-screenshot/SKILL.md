@@ -1,3 +1,8 @@
+---
+name: check-screenshot
+description: Check Latest Screenshot. Use when the user mentions screenshots, says "look at this", or wants to show something on screen.
+---
+
 # Check Latest Screenshot
 
 Read the most recent screenshot from the user's screenshots directory and describe what's in it.
