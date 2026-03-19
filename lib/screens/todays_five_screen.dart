@@ -1042,8 +1042,17 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         toolbarHeight: 72,
         actions: [
           const ProfileIcon(),
+          Consumer<ThemeProvider>(
+            builder: (context, themeProvider, _) {
+              return IconButton(
+                icon: Icon(themeProvider.icon, size: 22),
+                onPressed: themeProvider.toggle,
+                tooltip: 'Toggle theme',
+              );
+            },
+          ),
           IconButton(
-            icon: const Icon(archiveIcon),
+            icon: const Icon(archiveIcon, size: 22),
             onPressed: () async {
               await Navigator.push(
                 context,
@@ -1054,15 +1063,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
               if (mounted) await refreshSnapshots();
             },
             tooltip: 'Archive',
-          ),
-          Consumer<ThemeProvider>(
-            builder: (context, themeProvider, _) {
-              return IconButton(
-                icon: Icon(themeProvider.icon, size: 28),
-                onPressed: themeProvider.toggle,
-                tooltip: 'Toggle theme',
-              );
-            },
           ),
           if (_todaysTasks.any((t) =>
               !_completedIds.contains(t.id) && !_pinnedIds.contains(t.id)))

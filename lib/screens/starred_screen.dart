@@ -153,6 +153,15 @@ class StarredScreenState extends State<StarredScreen>
       toolbarHeight: 72,
       actions: [
         const ProfileIcon(),
+        Consumer<ThemeProvider>(
+          builder: (context, themeProvider, _) {
+            return IconButton(
+              icon: Icon(themeProvider.icon, size: 22),
+              onPressed: themeProvider.toggle,
+              tooltip: 'Toggle theme',
+            );
+          },
+        ),
         IconButton(
           icon: const Icon(archiveIcon, size: 22),
           onPressed: () {
@@ -164,17 +173,6 @@ class StarredScreenState extends State<StarredScreen>
             );
           },
           tooltip: 'Archive',
-          visualDensity: VisualDensity.compact,
-        ),
-        Consumer<ThemeProvider>(
-          builder: (context, themeProvider, _) {
-            return IconButton(
-              icon: Icon(themeProvider.icon, size: 22),
-              onPressed: themeProvider.toggle,
-              tooltip: 'Toggle theme',
-              visualDensity: VisualDensity.compact,
-            );
-          },
         ),
       ],
     );
@@ -406,8 +404,9 @@ class _StarredTaskCard extends StatelessWidget {
               // Drag handle
               ReorderableDragStartListener(
                 index: index,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                child: Container(
+                  width: 40,
+                  alignment: Alignment.center,
                   child: Icon(
                     Icons.drag_indicator_rounded,
                     size: 18,
