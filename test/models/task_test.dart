@@ -561,4 +561,140 @@ void main() {
       expect(updated.isInbox, isTrue);
     });
   });
+
+  group('Deadline field', () {
+    test('defaults to null', () {
+      final task = Task(name: 'T');
+      expect(task.deadline, isNull);
+    });
+
+    test('creates with deadline set', () {
+      final task = Task(name: 'T', deadline: '2026-03-20');
+      expect(task.deadline, '2026-03-20');
+    });
+
+    test('toMap includes deadline when set', () {
+      final task = Task(id: 1, name: 'T', createdAt: 100, deadline: '2026-03-20');
+      final map = task.toMap();
+      expect(map['deadline'], '2026-03-20');
+    });
+
+    test('toMap includes null deadline', () {
+      final task = Task(id: 1, name: 'T', createdAt: 100);
+      final map = task.toMap();
+      expect(map.containsKey('deadline'), isTrue);
+      expect(map['deadline'], isNull);
+    });
+
+    test('fromMap parses deadline', () {
+      final task = Task.fromMap({
+        'id': 1, 'name': 'T', 'created_at': 100, 'deadline': '2026-03-20',
+      });
+      expect(task.deadline, '2026-03-20');
+    });
+
+    test('fromMap handles null deadline', () {
+      final task = Task.fromMap({
+        'id': 1, 'name': 'T', 'created_at': 100, 'deadline': null,
+      });
+      expect(task.deadline, isNull);
+    });
+
+    test('fromMap handles missing deadline key', () {
+      final task = Task.fromMap({
+        'id': 1, 'name': 'T', 'created_at': 100,
+      });
+      expect(task.deadline, isNull);
+    });
+
+    test('toMap/fromMap round-trip with deadline set', () {
+      final original = Task(id: 1, name: 'T', createdAt: 100, deadline: '2026-12-31');
+      final restored = Task.fromMap(original.toMap());
+      expect(restored.deadline, '2026-12-31');
+    });
+
+    test('toMap/fromMap round-trip with deadline null', () {
+      final original = Task(id: 1, name: 'T', createdAt: 100);
+      final restored = Task.fromMap(original.toMap());
+      expect(restored.deadline, isNull);
+    });
+
+    test('copyWith sets deadline', () {
+      final task = Task(name: 'T');
+      final updated = task.copyWith(deadline: () => '2026-06-15');
+      expect(updated.deadline, '2026-06-15');
+    });
+
+    test('copyWith clears deadline via () => null', () {
+      final task = Task(name: 'T', deadline: '2026-06-15');
+      final updated = task.copyWith(deadline: () => null);
+      expect(updated.deadline, isNull);
+    });
+
+    test('copyWith preserves deadline when not specified', () {
+      final task = Task(name: 'T', deadline: '2026-06-15');
+      final updated = task.copyWith(name: 'New');
+      expect(updated.deadline, '2026-06-15');
+    });
+
+    test('hasDeadline returns true when deadline is set', () {
+      final task = Task(name: 'T', deadline: '2026-03-20');
+      expect(task.hasDeadline, isTrue);
+    });
+
+    test('hasDeadline returns false when deadline is null', () {
+      final task = Task(name: 'T');
+      expect(task.hasDeadline, isFalse);
+    });
+
+    test('hasDeadline returns false when deadline is empty string', () {
+      final task = Task(name: 'T', deadline: '');
+      expect(task.hasDeadline, isFalse);
+    });
+
+    test('deadlineDate parses valid YYYY-MM-DD', () {
+      final task = Task(name: 'T', deadline: '2026-03-20');
+      final date = task.deadlineDate;
+      expect(date, isNotNull);
+      expect(date!.year, 2026);
+      expect(date.month, 3);
+      expect(date.day, 20);
+    });
+
+    test('deadlineDate returns null when deadline is null', () {
+      final task = Task(name: 'T');
+      expect(task.deadlineDate, isNull);
+    });
+
+    test('deadlineDate returns null for invalid date string', () {
+      final task = Task(name: 'T', deadline: 'not-a-date');
+      expect(task.deadlineDate, isNull);
+    });
+
+    test('daysUntilDeadline returns positive for future deadline', () {
+      final futureDate = DateTime.now().add(const Duration(days: 5));
+      final dateStr = '${futureDate.year}-${futureDate.month.toString().padLeft(2, '0')}-${futureDate.day.toString().padLeft(2, '0')}';
+      final task = Task(name: 'T', deadline: dateStr);
+      expect(task.daysUntilDeadline, 5);
+    });
+
+    test('daysUntilDeadline returns 0 for today', () {
+      final today = DateTime.now();
+      final dateStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+      final task = Task(name: 'T', deadline: dateStr);
+      expect(task.daysUntilDeadline, 0);
+    });
+
+    test('daysUntilDeadline returns negative for overdue', () {
+      final pastDate = DateTime.now().subtract(const Duration(days: 3));
+      final dateStr = '${pastDate.year}-${pastDate.month.toString().padLeft(2, '0')}-${pastDate.day.toString().padLeft(2, '0')}';
+      final task = Task(name: 'T', deadline: dateStr);
+      expect(task.daysUntilDeadline, -3);
+    });
+
+    test('daysUntilDeadline returns null when no deadline', () {
+      final task = Task(name: 'T');
+      expect(task.daysUntilDeadline, isNull);
+    });
+  });
 }

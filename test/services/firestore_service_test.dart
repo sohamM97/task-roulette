@@ -548,6 +548,121 @@ void main() {
       expect(fields.containsKey('last_worked_at'), isFalse);
       expect(fields.containsKey('repeat_interval'), isFalse);
       expect(fields.containsKey('next_due_at'), isFalse);
+      expect(fields.containsKey('deadline'), isFalse);
+    });
+  });
+
+  group('Deadline in Firestore serialization', () {
+    test('taskToFirestoreFields includes deadline when set', () {
+      final task = Task(name: 'T', createdAt: 100, deadline: '2026-03-20');
+      final fields = service.taskToFirestoreFields(task);
+
+      expect(fields.containsKey('deadline'), isTrue);
+      expect(fields['deadline'], {'stringValue': '2026-03-20'});
+    });
+
+    test('taskToFirestoreFields omits deadline when null', () {
+      final task = Task(name: 'T', createdAt: 100);
+      final fields = service.taskToFirestoreFields(task);
+
+      expect(fields.containsKey('deadline'), isFalse);
+    });
+
+    test('taskFromFirestoreDoc parses deadline', () {
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'Task'},
+          'created_at': {'integerValue': '100'},
+          'priority': {'integerValue': '0'},
+          'deadline': {'stringValue': '2026-03-20'},
+        },
+      };
+
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.deadline, '2026-03-20');
+    });
+
+    test('taskFromFirestoreDoc returns null deadline when absent', () {
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'Task'},
+          'created_at': {'integerValue': '100'},
+          'priority': {'integerValue': '0'},
+        },
+      };
+
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.deadline, isNull);
+    });
+
+    test('taskFromFirestoreDoc rejects deadline string > 10 chars', () {
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'Task'},
+          'created_at': {'integerValue': '100'},
+          'priority': {'integerValue': '0'},
+          'deadline': {'stringValue': '2026-03-20T00:00:00'},
+        },
+      };
+
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.deadline, isNull);
+    });
+
+    test('taskFromFirestoreDoc accepts deadline at exactly 10 chars', () {
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'Task'},
+          'created_at': {'integerValue': '100'},
+          'priority': {'integerValue': '0'},
+          'deadline': {'stringValue': '2026-03-20'},
+        },
+      };
+
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.deadline, '2026-03-20');
+      expect(task.deadline!.length, 10);
+    });
+
+    test('round-trip preserves deadline through Firestore serialization', () {
+      final original = Task(
+        name: 'Deadline task',
+        createdAt: 1000,
+        updatedAt: 2000,
+        syncId: 'deadline-rt',
+        deadline: '2026-12-31',
+      );
+
+      final fields = service.taskToFirestoreFields(original);
+      final doc = {
+        'name': 'projects/p/databases/(default)/documents/users/u/tasks/${original.syncId}',
+        'fields': fields,
+      };
+
+      final restored = service.taskFromFirestoreDoc(doc);
+      expect(restored!.deadline, '2026-12-31');
+    });
+
+    test('round-trip with null deadline', () {
+      final original = Task(
+        name: 'No deadline',
+        createdAt: 1000,
+        updatedAt: 2000,
+        syncId: 'no-dl',
+      );
+
+      final fields = service.taskToFirestoreFields(original);
+      final doc = {
+        'name': 'projects/p/databases/(default)/documents/users/u/tasks/${original.syncId}',
+        'fields': fields,
+      };
+
+      final restored = service.taskFromFirestoreDoc(doc);
+      expect(restored!.deadline, isNull);
     });
   });
 }

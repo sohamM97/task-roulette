@@ -6,14 +6,13 @@ import '../data/database_helper.dart';
 import '../platform/platform_utils.dart'
     if (dart.library.io) '../platform/platform_utils_native.dart' as platform;
 import '../providers/task_provider.dart';
+import '../utils/display_utils.dart' show showInfoSnackBar;
 
 class BackupService {
   static Future<void> exportDatabase(BuildContext context) async {
     if (kIsWeb) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Backup is not available on web'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'Backup is not available on web');
       }
       return;
     }
@@ -22,9 +21,7 @@ class BackupService {
 
     if (!platform.fileExistsSync(dbPath)) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No database to export'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'No database to export');
       }
       return;
     }
@@ -42,9 +39,7 @@ class BackupService {
       );
       if (result != null && context.mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Backup saved'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'Backup saved');
       }
       return;
     } else {
@@ -54,9 +49,7 @@ class BackupService {
       await platform.copyFile(dbPath, destPath);
       if (context.mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Backup saved to Downloads/$fileName'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'Backup saved to Downloads/$fileName');
       }
     }
   }
@@ -67,9 +60,7 @@ class BackupService {
   ) async {
     if (kIsWeb) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Restore is not available on web'), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, 'Restore is not available on web');
       }
       return;
     }
@@ -111,9 +102,7 @@ class BackupService {
     } on FormatException catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.message), showCloseIcon: true, persist: false),
-        );
+        showInfoSnackBar(context, e.message);
       }
       return;
     }
@@ -122,9 +111,7 @@ class BackupService {
 
     if (context.mounted) {
       ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Backup restored'), showCloseIcon: true, persist: false),
-      );
+      showInfoSnackBar(context, 'Backup restored');
     }
   }
 }

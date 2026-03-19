@@ -3180,4 +3180,181 @@ void main() {
       expect(suggestions.any((s) => s.task.name == 'XYZZY'), isFalse);
     });
   });
+
+  group('Deadline sort tier', () {
+    test('task with deadline <= 3 days sorts at tier 1 (virtual high priority)', () async {
+      // Create a task with near deadline and a normal task
+      final tomorrow = DateTime.now().add(const Duration(days: 1));
+      final deadlineStr = '${tomorrow.year}-${tomorrow.month.toString().padLeft(2, '0')}-${tomorrow.day.toString().padLeft(2, '0')}';
+      final deadlineId = await db.insertTask(Task(name: 'Deadline Soon', deadline: deadlineStr));
+      final normalId = await db.insertTask(Task(name: 'Normal Task'));
+
+      await provider.loadRootTasks();
+      final ids = provider.tasks.map((t) => t.id).toList();
+      final deadlineIdx = ids.indexOf(deadlineId);
+      final normalIdx = ids.indexOf(normalId);
+
+      // Near-deadline (tier 1) should sort before normal (tier 3)
+      expect(deadlineIdx, lessThan(normalIdx),
+          reason: 'Near-deadline task should sort before normal task');
+    });
+
+    test('task with deadline today sorts at tier 1', () async {
+      final today = DateTime.now();
+      final deadlineStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+      final deadlineId = await db.insertTask(Task(name: 'Due Today', deadline: deadlineStr));
+      final normalId = await db.insertTask(Task(name: 'Normal'));
+
+      await provider.loadRootTasks();
+      final ids = provider.tasks.map((t) => t.id).toList();
+
+      expect(ids.indexOf(deadlineId), lessThan(ids.indexOf(normalId)),
+          reason: 'Today-deadline task should sort before normal');
+    });
+
+    test('task with deadline 3 days out sorts at tier 1', () async {
+      final threeDays = DateTime.now().add(const Duration(days: 3));
+      final deadlineStr = '${threeDays.year}-${threeDays.month.toString().padLeft(2, '0')}-${threeDays.day.toString().padLeft(2, '0')}';
+      final deadlineId = await db.insertTask(Task(name: 'Due in 3d', deadline: deadlineStr));
+      final normalId = await db.insertTask(Task(name: 'Normal'));
+
+      await provider.loadRootTasks();
+      final ids = provider.tasks.map((t) => t.id).toList();
+
+      expect(ids.indexOf(deadlineId), lessThan(ids.indexOf(normalId)),
+          reason: 'Deadline in 3 days should sort at tier 1 (before normal tier 3)');
+    });
+
+    test('task with deadline > 3 days does not get tier 1', () async {
+      final fiveDays = DateTime.now().add(const Duration(days: 5));
+      final deadlineStr = '${fiveDays.year}-${fiveDays.month.toString().padLeft(2, '0')}-${fiveDays.day.toString().padLeft(2, '0')}';
+      final deadlineId = await db.insertTask(Task(name: 'Due in 5d', deadline: deadlineStr));
+      final normalId = await db.insertTask(Task(name: 'Normal'));
+
+      await provider.loadRootTasks();
+      final ids = provider.tasks.map((t) => t.id).toList();
+      final deadlineIdx = ids.indexOf(deadlineId);
+      final normalIdx = ids.indexOf(normalId);
+
+      // Both should be tier 3 (normal), so preserve DB insert order
+      // deadlineId was inserted first
+      expect(deadlineIdx, lessThan(normalIdx),
+          reason: 'Both are tier 3, preserve insert order');
+    });
+
+    test('overdue deadline sorts at tier 1', () async {
+      final yesterday = DateTime.now().subtract(const Duration(days: 1));
+      final deadlineStr = '${yesterday.year}-${yesterday.month.toString().padLeft(2, '0')}-${yesterday.day.toString().padLeft(2, '0')}';
+      final overdueId = await db.insertTask(Task(name: 'Overdue', deadline: deadlineStr));
+      final normalId = await db.insertTask(Task(name: 'Normal'));
+
+      await provider.loadRootTasks();
+      final ids = provider.tasks.map((t) => t.id).toList();
+
+      expect(ids.indexOf(overdueId), lessThan(ids.indexOf(normalId)),
+          reason: 'Overdue deadline (daysUntil=-1, <=3) should sort at tier 1');
+    });
+  });
+
+  group('Deadline updateTaskDeadline via provider', () {
+    test('updateTaskDeadline sets deadline and refreshes currentParent', () async {
+      final leafId = await db.insertTask(Task(name: 'Leaf'));
+
+      await provider.loadRootTasks();
+      final leaf = provider.tasks.firstWhere((t) => t.id == leafId);
+      await provider.navigateInto(leaf);
+
+      expect(provider.currentParent!.deadline, isNull);
+
+      await provider.updateTaskDeadline(leafId, '2026-06-15');
+
+      expect(provider.currentParent!.deadline, '2026-06-15');
+      expect(provider.currentParent!.hasDeadline, isTrue);
+    });
+
+    test('updateTaskDeadline clears deadline on currentParent', () async {
+      final leafId = await db.insertTask(Task(name: 'Leaf', deadline: '2026-06-15'));
+
+      await provider.loadRootTasks();
+      final leaf = provider.tasks.firstWhere((t) => t.id == leafId);
+      await provider.navigateInto(leaf);
+
+      expect(provider.currentParent!.deadline, '2026-06-15');
+
+      await provider.updateTaskDeadline(leafId, null);
+
+      expect(provider.currentParent!.deadline, isNull);
+      expect(provider.currentParent!.hasDeadline, isFalse);
+    });
+
+    test('updateTaskDeadline persists to database', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+
+      await provider.loadRootTasks();
+      await provider.updateTaskDeadline(id, '2026-12-25');
+
+      final task = await db.getTaskById(id);
+      expect(task!.deadline, '2026-12-25');
+    });
+  });
+
+  group('Deadline weight multiplier', () {
+    // We test _taskWeight indirectly: create two tasks — one with deadline, one without.
+    // The deadline task should be picked more often by pickRandom due to higher weight.
+    test('deadline today heavily favors picking (approx 8x base)', () async {
+      final today = DateTime.now();
+      final deadlineStr = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+
+      // Both tasks created now, same age, same priority
+      final deadlineId = await db.insertTask(Task(name: 'Deadline Today', deadline: deadlineStr));
+      await db.insertTask(Task(name: 'Normal'));
+
+      await provider.loadRootTasks();
+
+      // Pick 200 times and count
+      int deadlinePicks = 0;
+      int normalPicks = 0;
+      for (int i = 0; i < 200; i++) {
+        final picked = provider.pickRandom();
+        if (picked!.id == deadlineId) {
+          deadlinePicks++;
+        } else {
+          normalPicks++;
+        }
+      }
+
+      // With ~8x weight, deadline should be picked roughly 80%+ of the time
+      // Allow wide margin for randomness
+      expect(deadlinePicks, greaterThan(normalPicks),
+          reason: 'Deadline-today task (8x weight) should be picked more often');
+      // At least 60% of picks should be the deadline task
+      expect(deadlinePicks, greaterThan(120),
+          reason: 'Deadline-today should be picked at least 60% of 200 times');
+    });
+
+    test('deadline 15+ days away does not boost weight', () async {
+      final farFuture = DateTime.now().add(const Duration(days: 20));
+      final deadlineStr = '${farFuture.year}-${farFuture.month.toString().padLeft(2, '0')}-${farFuture.day.toString().padLeft(2, '0')}';
+
+      // Both tasks created now, same age, same priority
+      final deadlineId = await db.insertTask(Task(name: 'Far Deadline', deadline: deadlineStr));
+      await db.insertTask(Task(name: 'Normal'));
+
+      await provider.loadRootTasks();
+
+      // Pick 200 times and count
+      int deadlinePicks = 0;
+      for (int i = 0; i < 200; i++) {
+        final picked = provider.pickRandom();
+        if (picked!.id == deadlineId) deadlinePicks++;
+      }
+
+      // With 1.0x multiplier (no boost), picks should be roughly even (~50%)
+      // Allow wide margin: between 30% and 70%
+      expect(deadlinePicks, greaterThan(60),
+          reason: 'Far-deadline task should get some picks (no penalty)');
+      expect(deadlinePicks, lessThan(140),
+          reason: 'Far-deadline task should not dominate (no boost)');
+    });
+  });
 }

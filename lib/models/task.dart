@@ -16,6 +16,10 @@ class Task {
   final bool isSomeday;
   final bool isScheduleOverride;
   final bool isInbox;
+  final String? deadline;
+  /// 'due_by' (default) = gradual weight boost + color ramp.
+  /// 'on' = silent until the date, then auto-pin. No ramp-up.
+  final String deadlineType;
 
   static const priorityLabels = ['Normal', 'High'];
 
@@ -37,6 +41,8 @@ class Task {
     this.isSomeday = false,
     this.isScheduleOverride = false,
     this.isInbox = false,
+    this.deadline,
+    this.deadlineType = 'due_by',
   }) : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch;
 
   bool get isCompleted => completedAt != null;
@@ -46,6 +52,25 @@ class Task {
 
   bool get isHighPriority => priority >= 1;
   String get priorityLabel => isHighPriority ? 'High' : 'Normal';
+
+  bool get hasDeadline => deadline != null && deadline!.isNotEmpty;
+  bool get isDeadlineDueBy => deadlineType != 'on';
+  bool get isDeadlineOn => deadlineType == 'on';
+
+  DateTime? get deadlineDate {
+    if (!hasDeadline) return null;
+    return DateTime.tryParse(deadline!);
+  }
+
+  /// Days until deadline. Negative = overdue. Null = no deadline.
+  int? get daysUntilDeadline {
+    final d = deadlineDate;
+    if (d == null) return null;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final deadlineDay = DateTime(d.year, d.month, d.day);
+    return deadlineDay.difference(today).inDays;
+  }
 
   bool get isWorkedOnToday {
     if (lastWorkedAt == null) return false;
@@ -74,6 +99,8 @@ class Task {
     bool? isSomeday,
     bool? isScheduleOverride,
     bool? isInbox,
+    String? Function()? deadline,
+    String? deadlineType,
   }) {
     return Task(
       id: id ?? this.id,
@@ -93,6 +120,8 @@ class Task {
       isSomeday: isSomeday ?? this.isSomeday,
       isScheduleOverride: isScheduleOverride ?? this.isScheduleOverride,
       isInbox: isInbox ?? this.isInbox,
+      deadline: deadline != null ? deadline() : this.deadline,
+      deadlineType: deadlineType ?? this.deadlineType,
     );
   }
 
@@ -115,6 +144,8 @@ class Task {
       'is_someday': isSomeday ? 1 : 0,
       'is_schedule_override': isScheduleOverride ? 1 : 0,
       'is_inbox': isInbox ? 1 : 0,
+      'deadline': deadline,
+      'deadline_type': deadlineType,
     };
   }
 
@@ -137,6 +168,8 @@ class Task {
       isSomeday: (map['is_someday'] as int? ?? 0) == 1,
       isScheduleOverride: (map['is_schedule_override'] as int? ?? 0) == 1,
       isInbox: (map['is_inbox'] as int? ?? 0) == 1,
+      deadline: map['deadline'] as String?,
+      deadlineType: map['deadline_type'] as String? ?? 'due_by',
     );
   }
 }

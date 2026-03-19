@@ -2693,23 +2693,23 @@ void main() {
       await db.importDatabase(v14DbPath);
     });
 
-    test('rejects version 19 as too high', () async {
+    test('rejects version 22 as too high', () async {
       DatabaseHelper.testDatabasePath = mainDbPath;
       await db.reset();
       await db.database;
 
-      final v19DbPath = '${tempDir.path}/v19.db';
-      final v19Db = await openDatabase(v19DbPath, version: 19,
+      final v21DbPath = '${tempDir.path}/v22.db';
+      final v21Db = await openDatabase(v21DbPath, version: 22,
         onCreate: (db, version) async {
           await db.execute('CREATE TABLE tasks (id INTEGER PRIMARY KEY, name TEXT)');
           await db.execute('CREATE TABLE task_relationships (parent_id INTEGER, child_id INTEGER)');
           await db.execute('CREATE TABLE task_dependencies (task_id INTEGER, depends_on_task_id INTEGER)');
         },
       );
-      await v19Db.close();
+      await v21Db.close();
 
       expect(
-        () => db.importDatabase(v19DbPath),
+        () => db.importDatabase(v21DbPath),
         throwsA(isA<FormatException>().having(
           (e) => e.message, 'message', contains('Incompatible backup version'),
         )),
@@ -4639,6 +4639,307 @@ void main() {
       final id = await db.insertTask(Task(name: 'Test'));
       final task = await db.getTaskById(id);
       expect(task!.isInbox, isFalse);
+    });
+  });
+
+  group('Deadline', () {
+    test('updateTaskDeadline sets deadline', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      await db.updateTaskDeadline(id, '2026-03-20');
+
+      final task = await db.getTaskById(id);
+      expect(task!.deadline, '2026-03-20');
+    });
+
+    test('updateTaskDeadline clears deadline', () async {
+      final id = await db.insertTask(Task(name: 'Task', deadline: '2026-03-20'));
+      await db.updateTaskDeadline(id, null);
+
+      final task = await db.getTaskById(id);
+      expect(task!.deadline, isNull);
+    });
+
+    test('insertTask preserves deadline field', () async {
+      final id = await db.insertTask(Task(name: 'Task', deadline: '2026-06-01'));
+      final task = await db.getTaskById(id);
+      expect(task!.deadline, '2026-06-01');
+    });
+
+    test('insertTask with null deadline', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      final task = await db.getTaskById(id);
+      expect(task!.deadline, isNull);
+    });
+
+    group('getDeadlinePinLeafIds', () {
+      test('returns leaf IDs with deadline <= today', () async {
+        final today = DateTime(2026, 3, 18);
+        final id1 = await db.insertTask(Task(name: 'Due today', deadline: '2026-03-18'));
+        final id2 = await db.insertTask(Task(name: 'Overdue', deadline: '2026-03-15'));
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        expect(ids, contains(id1));
+        expect(ids, contains(id2));
+      });
+
+      test('excludes tasks with future deadlines', () async {
+        final today = DateTime(2026, 3, 18);
+        final id = await db.insertTask(Task(name: 'Future', deadline: '2026-03-19'));
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        expect(ids, isNot(contains(id)));
+      });
+
+      test('excludes tasks without deadlines', () async {
+        final today = DateTime(2026, 3, 18);
+        final id = await db.insertTask(Task(name: 'No deadline'));
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        expect(ids, isNot(contains(id)));
+      });
+
+      test('excludes completed tasks', () async {
+        final today = DateTime(2026, 3, 18);
+        final id = await db.insertTask(Task(name: 'Done', deadline: '2026-03-18'));
+        await db.completeTask(id);
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        expect(ids, isNot(contains(id)));
+      });
+
+      test('excludes skipped tasks', () async {
+        final today = DateTime(2026, 3, 18);
+        final id = await db.insertTask(Task(name: 'Skipped', deadline: '2026-03-18'));
+        await db.skipTask(id);
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        expect(ids, isNot(contains(id)));
+      });
+
+      test('excludes non-leaf tasks (parents with active children)', () async {
+        final today = DateTime(2026, 3, 18);
+        final parentId = await db.insertTask(Task(name: 'Parent', deadline: '2026-03-18'));
+        final childId = await db.insertTask(Task(name: 'Child'));
+        await db.addRelationship(parentId, childId);
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        expect(ids, isNot(contains(parentId)));
+      });
+
+      test('includes parent whose only children are all completed', () async {
+        final today = DateTime(2026, 3, 18);
+        final parentId = await db.insertTask(Task(name: 'Parent', deadline: '2026-03-18'));
+        final childId = await db.insertTask(Task(name: 'Child'));
+        await db.addRelationship(parentId, childId);
+        await db.completeTask(childId);
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        expect(ids, contains(parentId));
+      });
+
+      test('returns empty set when no tasks match', () async {
+        final today = DateTime(2026, 3, 18);
+        await db.insertTask(Task(name: 'No deadline'));
+        await db.insertTask(Task(name: 'Future', deadline: '2026-04-01'));
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        expect(ids, isEmpty);
+      });
+
+      test('includes leaf descendants of parent with deadline due', () async {
+        final today = DateTime(2026, 3, 18);
+        final parentId = await db.insertTask(Task(name: 'Project', deadline: '2026-03-18'));
+        final childId = await db.insertTask(Task(name: 'Subtask'));
+        await db.addRelationship(parentId, childId);
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        expect(ids, contains(childId));
+        expect(ids, isNot(contains(parentId)));
+      });
+
+      test('includes deep leaf descendants of grandparent with deadline', () async {
+        final today = DateTime(2026, 3, 18);
+        final grandparent = await db.insertTask(Task(name: 'Epic', deadline: '2026-03-17'));
+        final parent = await db.insertTask(Task(name: 'Feature'));
+        final leaf = await db.insertTask(Task(name: 'Task'));
+        await db.addRelationship(grandparent, parent);
+        await db.addRelationship(parent, leaf);
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        expect(ids, contains(leaf));
+        expect(ids, isNot(contains(parent)));
+        expect(ids, isNot(contains(grandparent)));
+      });
+
+      test('does not include descendants of parent with future deadline', () async {
+        final today = DateTime(2026, 3, 18);
+        final parentId = await db.insertTask(Task(name: 'Project', deadline: '2026-04-01'));
+        final childId = await db.insertTask(Task(name: 'Subtask'));
+        await db.addRelationship(parentId, childId);
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        expect(ids, isEmpty);
+      });
+
+      test('excludes completed descendants of parent with deadline', () async {
+        final today = DateTime(2026, 3, 18);
+        final parentId = await db.insertTask(Task(name: 'Project', deadline: '2026-03-18'));
+        final childId = await db.insertTask(Task(name: 'Done subtask'));
+        await db.addRelationship(parentId, childId);
+        await db.completeTask(childId);
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        // Parent becomes a leaf when all children are completed
+        expect(ids, contains(parentId));
+        expect(ids, isNot(contains(childId)));
+      });
+    });
+
+    group('getInheritedDeadline', () {
+      test('returns nearest ancestor deadline', () async {
+        final parentId = await db.insertTask(Task(name: 'Project', deadline: '2026-03-20'));
+        final childId = await db.insertTask(Task(name: 'Task'));
+        await db.addRelationship(parentId, childId);
+
+        final result = await db.getInheritedDeadline(childId);
+        expect(result, isNotNull);
+        expect(result!.deadline, '2026-03-20');
+        expect(result.sourceName, 'Project');
+      });
+
+      test('returns null when no ancestor has deadline', () async {
+        final parentId = await db.insertTask(Task(name: 'Project'));
+        final childId = await db.insertTask(Task(name: 'Task'));
+        await db.addRelationship(parentId, childId);
+
+        final result = await db.getInheritedDeadline(childId);
+        expect(result, isNull);
+      });
+
+      test('returns closest ancestor (depth 1 before depth 2)', () async {
+        final grandparent = await db.insertTask(Task(name: 'Epic', deadline: '2026-04-01'));
+        final parent = await db.insertTask(Task(name: 'Feature', deadline: '2026-03-20'));
+        final child = await db.insertTask(Task(name: 'Task'));
+        await db.addRelationship(grandparent, parent);
+        await db.addRelationship(parent, child);
+
+        final result = await db.getInheritedDeadline(child);
+        expect(result!.deadline, '2026-03-20');
+        expect(result.sourceName, 'Feature');
+      });
+
+      test('returns null for root task', () async {
+        await db.insertTask(Task(name: 'Root'));
+        final rootTask = (await db.getRootTasks()).first;
+
+        final result = await db.getInheritedDeadline(rootTask.id!);
+        expect(result, isNull);
+      });
+    });
+
+    group('getEffectiveDeadlines', () {
+      test('returns own deadline for task with deadline', () async {
+        final id = await db.insertTask(Task(name: 'Task', deadline: '2026-03-25'));
+
+        final result = await db.getEffectiveDeadlines([id]);
+        expect(result[id]?.deadline, '2026-03-25');
+        expect(result[id]?.type, 'due_by');
+      });
+
+      test('returns inherited deadline for task without own deadline', () async {
+        final parentId = await db.insertTask(Task(name: 'Project', deadline: '2026-03-22'));
+        final childId = await db.insertTask(Task(name: 'Subtask'));
+        await db.addRelationship(parentId, childId);
+
+        final result = await db.getEffectiveDeadlines([childId]);
+        expect(result[childId]?.deadline, '2026-03-22');
+      });
+
+      test('returns empty for task with no deadline anywhere', () async {
+        final id = await db.insertTask(Task(name: 'Task'));
+
+        final result = await db.getEffectiveDeadlines([id]);
+        expect(result.containsKey(id), isFalse);
+      });
+
+      test('own deadline takes precedence over inherited', () async {
+        final parentId = await db.insertTask(Task(name: 'Parent', deadline: '2026-04-01'));
+        final childId = await db.insertTask(Task(name: 'Child', deadline: '2026-03-20'));
+        await db.addRelationship(parentId, childId);
+
+        final result = await db.getEffectiveDeadlines([childId]);
+        expect(result[childId]?.deadline, '2026-03-20');
+      });
+
+      test('handles batch of mixed tasks', () async {
+        final withOwn = await db.insertTask(Task(name: 'Own', deadline: '2026-03-25'));
+        final parentId = await db.insertTask(Task(name: 'Parent', deadline: '2026-03-30'));
+        final inherited = await db.insertTask(Task(name: 'Inherited'));
+        final noDeadline = await db.insertTask(Task(name: 'None'));
+        await db.addRelationship(parentId, inherited);
+
+        final result = await db.getEffectiveDeadlines([withOwn, inherited, noDeadline]);
+        expect(result[withOwn]?.deadline, '2026-03-25');
+        expect(result[inherited]?.deadline, '2026-03-30');
+        expect(result.containsKey(noDeadline), isFalse);
+      });
+
+      test('returns deadline type from ancestor', () async {
+        final parentId = await db.insertTask(Task(name: 'Project', deadline: '2026-03-22', deadlineType: 'on'));
+        final childId = await db.insertTask(Task(name: 'Subtask'));
+        await db.addRelationship(parentId, childId);
+
+        final result = await db.getEffectiveDeadlines([childId]);
+        expect(result[childId]?.type, 'on');
+      });
+    });
+
+    group('getDeadlineBoostedLeafData', () {
+      test('returns own deadline days for leaf with deadline', () async {
+        final today = DateTime(2026, 3, 18);
+        final id = await db.insertTask(Task(name: 'Task', deadline: '2026-03-25'));
+
+        final result = await db.getDeadlineBoostedLeafData(now: today);
+        expect(result[id], 7); // 7 days until
+      });
+
+      test('returns inherited deadline days for leaf under parent with deadline', () async {
+        final today = DateTime(2026, 3, 18);
+        final parentId = await db.insertTask(Task(name: 'Project', deadline: '2026-03-20'));
+        final childId = await db.insertTask(Task(name: 'Task'));
+        await db.addRelationship(parentId, childId);
+
+        final result = await db.getDeadlineBoostedLeafData(now: today);
+        expect(result[childId], 2); // 2 days until parent's deadline
+      });
+
+      test('uses closest deadline when multiple ancestors have deadlines', () async {
+        final today = DateTime(2026, 3, 18);
+        final grandparent = await db.insertTask(Task(name: 'Epic', deadline: '2026-03-30'));
+        final parent = await db.insertTask(Task(name: 'Feature', deadline: '2026-03-20'));
+        final leaf = await db.insertTask(Task(name: 'Task'));
+        await db.addRelationship(grandparent, parent);
+        await db.addRelationship(parent, leaf);
+
+        final result = await db.getDeadlineBoostedLeafData(now: today);
+        expect(result[leaf], 2); // closest: parent at 2 days
+      });
+
+      test('excludes deadlines beyond 14-day window', () async {
+        final today = DateTime(2026, 3, 18);
+        final id = await db.insertTask(Task(name: 'Far', deadline: '2026-04-15'));
+
+        final result = await db.getDeadlineBoostedLeafData(now: today);
+        expect(result.containsKey(id), isFalse);
+      });
+
+      test('returns negative days for overdue', () async {
+        final today = DateTime(2026, 3, 18);
+        final id = await db.insertTask(Task(name: 'Overdue', deadline: '2026-03-15'));
+
+        final result = await db.getDeadlineBoostedLeafData(now: today);
+        expect(result[id], -3); // 3 days overdue
+      });
     });
   });
 }

@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import '../data/database_helper.dart';
 import '../providers/auth_provider.dart';
 import '../services/sync_service.dart';
-import '../utils/display_utils.dart' show isAllowedUrl;
+import '../utils/display_utils.dart' show isAllowedUrl, showInfoSnackBar;
 
 /// Profile icon for the AppBar. Shows Google profile picture when signed in,
 /// generic account icon when not. Includes sync status badge.
@@ -125,13 +125,7 @@ class ProfileIcon extends StatelessWidget {
                     final syncService = context.read<SyncService>();
                     await _handlePostSignIn(context, syncService);
                   } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Sign-in failed. Please try again.'),
-                        showCloseIcon: true,
-                        persist: false,
-                      ),
-                    );
+                    showInfoSnackBar(context, 'Sign-in failed. Please try again.');
                   }
                 },
                 icon: const Icon(Icons.login),

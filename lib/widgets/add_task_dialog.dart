@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../utils/display_utils.dart' show normalizeUrl, isAllowedUrl, UrlTextField;
+import '../utils/display_utils.dart' show normalizeUrl, isAllowedUrl, showInfoSnackBar, UrlTextField;
 
 /// Result from AddTaskDialog: either a single task name or a request
 /// to switch to brain dump mode.
@@ -54,9 +54,7 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
         url = normalizeUrl(raw);
         if (url == null || !isAllowedUrl(url)) {
           ScaffoldMessenger.of(context).clearSnackBars();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Invalid URL'), showCloseIcon: true, persist: false),
-          );
+          showInfoSnackBar(context, 'Invalid URL');
           return;
         }
       }

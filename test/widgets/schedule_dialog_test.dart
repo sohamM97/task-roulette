@@ -221,5 +221,109 @@ void main() {
       expect(result.schedules.length, 1);
       expect(result.isOverride, isTrue);
     });
+
+    test('constructor stores deadline field', () {
+      final result = ScheduleDialogResult(
+        schedules: [],
+        isOverride: false,
+        deadline: '2026-03-25',
+      );
+      expect(result.deadline, '2026-03-25');
+    });
+  });
+
+  group('Deadline section', () {
+    testWidgets('shows "Set deadline" when no deadline', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: ScheduleDialog(
+            taskId: 1,
+            currentSchedules: const [],
+          ),
+        ),
+      ));
+
+      expect(find.text('Set deadline'), findsOneWidget);
+      expect(find.byIcon(Icons.event_available), findsOneWidget);
+    });
+
+    testWidgets('shows formatted date when deadline is set', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: ScheduleDialog(
+            taskId: 1,
+            currentSchedules: const [],
+            currentDeadline: '2026-03-25',
+          ),
+        ),
+      ));
+
+      expect(find.text('Due by: Mar 25, 2026'), findsOneWidget);
+      expect(find.byIcon(Icons.close), findsOneWidget); // clear button
+    });
+
+    testWidgets('shows inherited deadline as read-only', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: ScheduleDialog(
+            taskId: 1,
+            currentSchedules: const [],
+            inheritedDeadline: (deadline: '2026-03-20', deadlineType: 'due_by', sourceName: 'Project X'),
+          ),
+        ),
+      ));
+
+      expect(find.text('Due by: Mar 20, 2026'), findsOneWidget);
+      expect(find.text('Inherited from: Project X'), findsOneWidget);
+      // Should NOT show clear button for inherited deadline
+      expect(find.byIcon(Icons.close), findsNothing);
+    });
+
+    testWidgets('own deadline shown instead of inherited when both exist', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: ScheduleDialog(
+            taskId: 1,
+            currentSchedules: const [],
+            currentDeadline: '2026-03-22',
+            inheritedDeadline: (deadline: '2026-03-20', deadlineType: 'due_by', sourceName: 'Project X'),
+          ),
+        ),
+      ));
+
+      // Own deadline shown (editable)
+      expect(find.text('Due by: Mar 22, 2026'), findsOneWidget);
+      expect(find.byIcon(Icons.close), findsOneWidget);
+      // Inherited not shown
+      expect(find.text('Inherited from: Project X'), findsNothing);
+    });
+
+    testWidgets('Save enabled when only deadline changes', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: ScheduleDialog(
+            taskId: 1,
+            currentSchedules: const [],
+            currentDeadline: '2026-03-25',
+          ),
+        ),
+      ));
+
+      // Save should be disabled initially (no changes)
+      final saveButton = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Save'),
+      );
+      expect(saveButton.onPressed, isNull);
+
+      // Tap clear to remove deadline
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pump();
+
+      // Save should now be enabled
+      final saveButton2 = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Save'),
+      );
+      expect(saveButton2.onPressed, isNotNull);
+    });
   });
 }

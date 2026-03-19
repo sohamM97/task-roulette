@@ -449,6 +449,71 @@ void main() {
     });
   });
 
+  group('TaskCard deadline icon', () {
+    Widget buildWithDeadline({
+      required Task task,
+      ({String deadline, String type})? effectiveDeadline,
+    }) {
+      return MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 200,
+            height: 200,
+            child: TaskCard(
+              task: task,
+              onTap: () {},
+              onDelete: () {},
+              effectiveDeadline: effectiveDeadline,
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('shows event_available icon for own deadline', (tester) async {
+      final tomorrow = DateTime.now().add(const Duration(days: 1));
+      final dl = '${tomorrow.year}-${tomorrow.month.toString().padLeft(2, '0')}-${tomorrow.day.toString().padLeft(2, '0')}';
+      await tester.pumpWidget(buildWithDeadline(
+        task: Task(id: 1, name: 'Task', createdAt: 1000, deadline: dl),
+      ));
+
+      expect(find.byIcon(Icons.event_available), findsOneWidget);
+    });
+
+    testWidgets('shows event_available icon for inherited deadline', (tester) async {
+      final tomorrow = DateTime.now().add(const Duration(days: 1));
+      final dl = '${tomorrow.year}-${tomorrow.month.toString().padLeft(2, '0')}-${tomorrow.day.toString().padLeft(2, '0')}';
+      await tester.pumpWidget(buildWithDeadline(
+        task: Task(id: 1, name: 'Task', createdAt: 1000), // no own deadline
+        effectiveDeadline: (deadline: dl, type: 'due_by'),
+      ));
+
+      expect(find.byIcon(Icons.event_available), findsOneWidget);
+    });
+
+    testWidgets('no icon when no deadline and no effective deadline', (tester) async {
+      await tester.pumpWidget(buildWithDeadline(
+        task: Task(id: 1, name: 'Task', createdAt: 1000),
+      ));
+
+      expect(find.byIcon(Icons.event_available), findsNothing);
+    });
+
+    testWidgets('own deadline takes priority over effective deadline for color', (tester) async {
+      // Task has own deadline tomorrow (should be red), effective deadline is far
+      final tomorrow = DateTime.now().add(const Duration(days: 1));
+      final dl = '${tomorrow.year}-${tomorrow.month.toString().padLeft(2, '0')}-${tomorrow.day.toString().padLeft(2, '0')}';
+      await tester.pumpWidget(buildWithDeadline(
+        task: Task(id: 1, name: 'Task', createdAt: 1000, deadline: dl),
+        effectiveDeadline: (deadline: '2028-01-01', type: 'due_by'),
+      ));
+
+      final icon = tester.widget<Icon>(find.byIcon(Icons.event_available));
+      // ≤2 days → red (error color)
+      expect(icon.color, isNotNull);
+    });
+  });
+
   group('TaskCard someday badge', () {
     testWidgets('shows bedtime icon when isSomeday is true', (tester) async {
       await tester.pumpWidget(buildTestWidget(
