@@ -176,28 +176,14 @@ class TaskCard extends StatelessWidget {
   bool get _hasEffectiveDeadline =>
       task.hasDeadline || effectiveDeadline != null;
 
-  bool get _isEffectiveDeadlineOn {
-    if (task.hasDeadline) return task.deadlineType == 'on';
-    return effectiveDeadline?.type == 'on';
-  }
-
-  int? get _effectiveDaysUntilDeadline {
-    if (task.hasDeadline) return task.daysUntilDeadline;
-    if (effectiveDeadline == null) return null;
-    final d = DateTime.tryParse(effectiveDeadline!.deadline);
-    if (d == null) return null;
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    return DateTime(d.year, d.month, d.day).difference(today).inDays;
-  }
-
   Color? _deadlineColor(BuildContext context) {
-    final days = _effectiveDaysUntilDeadline;
-    if (days == null) return null;
-    if (_isEffectiveDeadlineOn && days > 0) {
-      return Theme.of(context).colorScheme.primary;
+    final colorScheme = Theme.of(context).colorScheme;
+    if (task.hasDeadline) {
+      return deadlineDisplayColor(task.deadline!, task.deadlineType, colorScheme);
     }
-    return deadlineProximityColor(days, Theme.of(context).colorScheme);
+    if (effectiveDeadline == null) return null;
+    return deadlineDisplayColor(
+        effectiveDeadline!.deadline, effectiveDeadline!.type, colorScheme);
   }
 
   Color _indicatorColor(BuildContext context) {

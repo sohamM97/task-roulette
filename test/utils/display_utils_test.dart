@@ -288,4 +288,190 @@ void main() {
       expect(result, '…Third long one › Final destination');
     });
   });
+
+  group('deadlineProximityColor', () {
+    final colorScheme = ColorScheme.fromSeed(seedColor: Colors.blue);
+
+    test('returns deepOrange for negative days (overdue)', () {
+      expect(deadlineProximityColor(-1, colorScheme), Colors.deepOrange);
+    });
+
+    test('returns deepOrange for 0 days (today)', () {
+      expect(deadlineProximityColor(0, colorScheme), Colors.deepOrange);
+    });
+
+    test('returns deepOrange for 1 day', () {
+      expect(deadlineProximityColor(1, colorScheme), Colors.deepOrange);
+    });
+
+    test('returns deepOrange for 2 days', () {
+      expect(deadlineProximityColor(2, colorScheme), Colors.deepOrange);
+    });
+
+    test('returns orange for 3 days', () {
+      expect(deadlineProximityColor(3, colorScheme), Colors.orange);
+    });
+
+    test('returns orange for 7 days', () {
+      expect(deadlineProximityColor(7, colorScheme), Colors.orange);
+    });
+
+    test('returns primary for 8 days', () {
+      expect(deadlineProximityColor(8, colorScheme), colorScheme.primary);
+    });
+
+    test('returns primary for 30 days', () {
+      expect(deadlineProximityColor(30, colorScheme), colorScheme.primary);
+    });
+  });
+
+  group('deadlineDisplayColor', () {
+    final colorScheme = ColorScheme.fromSeed(seedColor: Colors.blue);
+
+    String dateFromNow(int daysOffset) {
+      final d = DateTime.now().add(Duration(days: daysOffset));
+      return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    }
+
+    group('due_by deadlines use proximity colors at all ranges', () {
+      test('overdue (-3 days) returns deepOrange', () {
+        expect(
+          deadlineDisplayColor(dateFromNow(-3), 'due_by', colorScheme),
+          Colors.deepOrange,
+        );
+      });
+
+      test('today (0 days) returns deepOrange', () {
+        expect(
+          deadlineDisplayColor(dateFromNow(0), 'due_by', colorScheme),
+          Colors.deepOrange,
+        );
+      });
+
+      test('tomorrow (1 day) returns deepOrange', () {
+        expect(
+          deadlineDisplayColor(dateFromNow(1), 'due_by', colorScheme),
+          Colors.deepOrange,
+        );
+      });
+
+      test('2 days out returns deepOrange', () {
+        expect(
+          deadlineDisplayColor(dateFromNow(2), 'due_by', colorScheme),
+          Colors.deepOrange,
+        );
+      });
+
+      test('3 days out returns orange', () {
+        expect(
+          deadlineDisplayColor(dateFromNow(3), 'due_by', colorScheme),
+          Colors.orange,
+        );
+      });
+
+      test('7 days out returns orange', () {
+        expect(
+          deadlineDisplayColor(dateFromNow(7), 'due_by', colorScheme),
+          Colors.orange,
+        );
+      });
+
+      test('8 days out returns primary', () {
+        expect(
+          deadlineDisplayColor(dateFromNow(8), 'due_by', colorScheme),
+          colorScheme.primary,
+        );
+      });
+
+      test('14 days out returns primary', () {
+        expect(
+          deadlineDisplayColor(dateFromNow(14), 'due_by', colorScheme),
+          colorScheme.primary,
+        );
+      });
+    });
+
+    group('on deadlines return primary when future, proximity when due', () {
+      test('future (8 days) returns primary', () {
+        expect(
+          deadlineDisplayColor(dateFromNow(8), 'on', colorScheme),
+          colorScheme.primary,
+        );
+      });
+
+      test('future (1 day) returns primary', () {
+        expect(
+          deadlineDisplayColor(dateFromNow(1), 'on', colorScheme),
+          colorScheme.primary,
+        );
+      });
+
+      test('today (0 days) falls through to proximity — deepOrange', () {
+        expect(
+          deadlineDisplayColor(dateFromNow(0), 'on', colorScheme),
+          Colors.deepOrange,
+        );
+      });
+
+      test('past (-1 day) falls through to proximity — deepOrange', () {
+        expect(
+          deadlineDisplayColor(dateFromNow(-1), 'on', colorScheme),
+          Colors.deepOrange,
+        );
+      });
+
+      test('past (-10 days) falls through to proximity — deepOrange', () {
+        expect(
+          deadlineDisplayColor(dateFromNow(-10), 'on', colorScheme),
+          Colors.deepOrange,
+        );
+      });
+    });
+
+    test('returns onSurfaceVariant for unparseable date', () {
+      expect(
+        deadlineDisplayColor('not-a-date', 'due_by', colorScheme),
+        colorScheme.onSurfaceVariant,
+      );
+    });
+
+    test('returns onSurfaceVariant for empty string', () {
+      expect(
+        deadlineDisplayColor('', 'on', colorScheme),
+        colorScheme.onSurfaceVariant,
+      );
+    });
+
+    test('handles ISO 8601 datetime with time component', () {
+      // DateTime.tryParse handles full ISO strings; only the date part matters
+      final d = DateTime.now().add(const Duration(days: 5));
+      final isoStr = d.toIso8601String(); // includes time
+      expect(
+        deadlineDisplayColor(isoStr, 'due_by', colorScheme),
+        Colors.orange,
+      );
+    });
+
+    test('due_by and on agree for day-of deadline', () {
+      final today = dateFromNow(0);
+      // Both should use proximity color for day 0 → deepOrange
+      expect(
+        deadlineDisplayColor(today, 'due_by', colorScheme),
+        deadlineDisplayColor(today, 'on', colorScheme),
+      );
+    });
+
+    test('due_by and on differ for future deadline', () {
+      final future = dateFromNow(3);
+      // due_by → orange (proximity), on → primary (future shortcut)
+      expect(
+        deadlineDisplayColor(future, 'due_by', colorScheme),
+        Colors.orange,
+      );
+      expect(
+        deadlineDisplayColor(future, 'on', colorScheme),
+        colorScheme.primary,
+      );
+    });
+  });
 }

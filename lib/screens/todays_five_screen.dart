@@ -500,15 +500,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   /// are more than 3, so the immediate parent is always visible.
   /// e.g. "Coding › App › Enhancements › Random" → "… › Enhancements › Random"
   Color _deadlineIconColor(({String deadline, String type}) info, ColorScheme colorScheme) {
-    final parsed = DateTime.tryParse(info.deadline);
-    if (parsed == null) return colorScheme.onSurfaceVariant;
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final days = DateTime(parsed.year, parsed.month, parsed.day)
-        .difference(today)
-        .inDays;
-    if (info.type == 'on' && days > 0) return colorScheme.primary;
-    return deadlineProximityColor(days, colorScheme);
+    return deadlineDisplayColor(info.deadline, info.type, colorScheme);
   }
 
   String _shortenPath(String path) => shortenAncestorPath(path);

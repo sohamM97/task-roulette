@@ -13,6 +13,22 @@ Color deadlineProximityColor(int daysUntil, ColorScheme colorScheme) {
   return colorScheme.primary;
 }
 
+/// Returns the color for a deadline display (icon and text) given a date
+/// string and type. "On" deadlines stay primary when still in the future;
+/// on the day itself (or past) they use proximity coloring like "due by".
+/// Returns [ColorScheme.onSurfaceVariant] for unparseable dates.
+Color deadlineDisplayColor(String deadlineStr, String deadlineType, ColorScheme colorScheme) {
+  final parsed = DateTime.tryParse(deadlineStr);
+  if (parsed == null) return colorScheme.onSurfaceVariant;
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final days = DateTime(parsed.year, parsed.month, parsed.day)
+      .difference(today)
+      .inDays;
+  if (deadlineType == 'on' && days > 0) return colorScheme.primary;
+  return deadlineProximityColor(days, colorScheme);
+}
+
 /// Shows a brief informational snackbar with a close icon (or Undo action).
 void showInfoSnackBar(BuildContext context, String message, {VoidCallback? onUndo}) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
