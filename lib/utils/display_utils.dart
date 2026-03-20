@@ -18,6 +18,7 @@ void showInfoSnackBar(BuildContext context, String message, {VoidCallback? onUnd
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
     content: Text(message),
     showCloseIcon: true,
+    persist: false,
     action: onUndo != null ? SnackBarAction(label: 'Undo', onPressed: onUndo) : null,
     duration: Duration(seconds: onUndo != null ? 5 : 3),
   ));
