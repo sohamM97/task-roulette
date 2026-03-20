@@ -53,7 +53,8 @@ class TaskCard extends StatelessWidget {
       context: context,
       builder: (bottomSheetContext) {
         return SafeArea(
-          child: Column(
+          child: SingleChildScrollView(
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (onFile != null)
@@ -160,6 +161,7 @@ class TaskCard extends StatelessWidget {
                 },
               ),
             ],
+          ),
           ),
         );
       },

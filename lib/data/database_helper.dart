@@ -158,6 +158,13 @@ class DatabaseHelper {
         ''');
         await db.execute('CREATE INDEX idx_todays_five_state_date ON todays_five_state(date)');
         await db.execute('''
+          CREATE TABLE todays_five_deadline_suppressed (
+            date TEXT NOT NULL,
+            task_id INTEGER NOT NULL,
+            PRIMARY KEY (date, task_id)
+          )
+        ''');
+        await db.execute('''
           CREATE TABLE task_schedules (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             task_id INTEGER NOT NULL,
@@ -349,6 +356,15 @@ class DatabaseHelper {
             await db.execute('ALTER TABLE tasks ADD COLUMN star_order INTEGER');
           }
         }
+        if (oldVersion < 23) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS todays_five_deadline_suppressed (
+              date TEXT NOT NULL,
+              task_id INTEGER NOT NULL,
+              PRIMARY KEY (date, task_id)
+            )
+          ''');
+        }
       },
     );
   }
@@ -361,7 +377,7 @@ class DatabaseHelper {
   }
 
   static const _maxBackupSizeBytes = 100 * 1024 * 1024; // 100 MB
-  static const _dbVersion = 22;
+  static const _dbVersion = 23;
   static const _expectedTables = ['tasks', 'task_relationships', 'task_dependencies'];
 
   /// Validates that [sourcePath] is a valid TaskRoulette backup.
@@ -2104,6 +2120,7 @@ class DatabaseHelper {
     await db.transaction((txn) async {
       await txn.delete('sync_queue');
       await txn.delete('todays_five_state');
+      await txn.delete('todays_five_deadline_suppressed');
       await txn.delete('task_schedules');
       await txn.delete('task_dependencies');
       await txn.delete('task_relationships');
@@ -2462,6 +2479,30 @@ class DatabaseHelper {
       if (row['is_pinned'] == 1) pinnedIds.add(id);
     }
     return (taskIds: taskIds, pinnedIds: pinnedIds);
+  }
+
+  /// Adds a task ID to the deadline-suppressed set for [date].
+  /// Suppressed tasks won't be auto-pinned by deadline logic.
+  Future<void> suppressDeadlineAutoPin(String date, int taskId) async {
+    final db = await database;
+    await db.insert('todays_five_deadline_suppressed',
+        {'date': date, 'task_id': taskId},
+        conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
+  /// Removes a task ID from the deadline-suppressed set for [date].
+  Future<void> unsuppressDeadlineAutoPin(String date, int taskId) async {
+    final db = await database;
+    await db.delete('todays_five_deadline_suppressed',
+        where: 'date = ? AND task_id = ?', whereArgs: [date, taskId]);
+  }
+
+  /// Returns all suppressed deadline auto-pin task IDs for [date].
+  Future<Set<int>> getDeadlineSuppressedIds(String date) async {
+    final db = await database;
+    final rows = await db.query('todays_five_deadline_suppressed',
+        columns: ['task_id'], where: 'date = ?', whereArgs: [date]);
+    return rows.map((r) => r['task_id'] as int).toSet();
   }
 
   /// Returns Today's 5 state for [date] with sync_ids instead of local IDs.
