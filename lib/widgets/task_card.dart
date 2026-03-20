@@ -192,11 +192,11 @@ class TaskCard extends StatelessWidget {
   }
 
   Color? _deadlineColor(BuildContext context) {
-    if (_isEffectiveDeadlineOn) {
-      return Theme.of(context).colorScheme.primary;
-    }
     final days = _effectiveDaysUntilDeadline;
     if (days == null) return null;
+    if (_isEffectiveDeadlineOn && days > 0) {
+      return Theme.of(context).colorScheme.primary;
+    }
     return deadlineProximityColor(days, Theme.of(context).colorScheme);
   }
 
