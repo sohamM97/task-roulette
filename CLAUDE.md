@@ -57,7 +57,8 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 
 - **When asked what's pending in a branch**, always check memory (TODO.md and other memory files) for previously discussed next steps — not just the git diff.
 - **Before exiting plan mode**, ask the user if they want to create a feature branch first (via `/feature`).
-- Ask user about committing and pushing occasionally — don't wait until asked. Remind them to review changes and test on Linux (via `./dev.sh`) first.
+- **Always ask for confirmation before committing.** Never run `/commit` or `git commit` without explicit user approval first.
+- Remind user about committing occasionally — don't wait until asked. Remind them to review changes and test on Linux (via `./dev.sh`) first.
 - When a bug is found and confirmed reproducible, always add a test case for it.
 - When writing tests in bulk, use `flutter test --coverage` to find gaps. Parse `coverage/lcov.info` directly (`genhtml` may not be installed).
 - Capture any user-mentioned future work items as todo tasks immediately.
