@@ -263,14 +263,7 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
 
   Color _deadlineColor(ColorScheme colorScheme) {
     if (_deadline == null) return colorScheme.onSurfaceVariant;
-    final parsed = DateTime.tryParse(_deadline!);
-    if (parsed == null) return colorScheme.onSurfaceVariant;
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final days = DateTime(parsed.year, parsed.month, parsed.day)
-        .difference(today)
-        .inDays;
-    return deadlineProximityColor(days, colorScheme);
+    return deadlineDisplayColor(_deadline!, _deadlineType, colorScheme);
   }
 
   static String _formatDeadline(String deadlineStr) {
@@ -289,9 +282,8 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
     // Show inherited deadline as read-only
     if (hasInherited) {
       final isOn = inherited.deadlineType == 'on';
-      final inheritedColor = isOn
-          ? colorScheme.primary
-          : _deadlineColorFor(inherited.deadline, colorScheme);
+      final inheritedColor = deadlineDisplayColor(
+          inherited.deadline, inherited.deadlineType, colorScheme);
       final inheritedLabel = isOn ? 'On' : 'Due by';
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -327,9 +319,7 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
     }
 
     // Own deadline (editable)
-    final color = _deadlineType == 'on'
-        ? colorScheme.primary
-        : _deadlineColor(colorScheme);
+    final color = _deadlineColor(colorScheme);
     final typeLabel = _deadlineType == 'on' ? 'On' : 'Due by';
     final label = hasOwnDeadline
         ? '$typeLabel: ${_formatDeadline(_deadline!)}'
@@ -421,16 +411,6 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
     }
   }
 
-  Color _deadlineColorFor(String deadlineStr, ColorScheme colorScheme) {
-    final parsed = DateTime.tryParse(deadlineStr);
-    if (parsed == null) return colorScheme.onSurfaceVariant;
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final days = DateTime(parsed.year, parsed.month, parsed.day)
-        .difference(today)
-        .inDays;
-    return deadlineProximityColor(days, colorScheme);
-  }
 
   Widget _buildInheritedChip(int day, ColorScheme colorScheme) {
     final inherited = widget.inheritedDays.contains(day);

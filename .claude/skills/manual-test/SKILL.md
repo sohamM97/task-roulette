@@ -26,7 +26,14 @@ Generate a checklist of manual tests the user should run for recent changes.
 
 3. **Before writing any test**, read the widget code for every screen/dialog touched by the changes. Note the exact button labels, icon names, menu item text, and how each interaction is triggered (tap, long press, swipe, overflow menu, etc.). Do NOT proceed to step 4 until you have read every relevant widget file.
 
-4. Generate a numbered checklist of manual tests. Keep each test **short** — one line for what to do, one line for what to expect. No verbose setup paragraphs. The user should be able to scan the list quickly without getting bored. Every UI element referenced in a test step MUST come from step 3's reading — never from memory or assumption.
+4. Generate a numbered checklist of manual tests. Every UI element referenced MUST come from step 3's reading — never from memory or assumption. Format rules:
+   - **One line per test.** Action → expected result, joined by `→`. No multi-line explanations.
+   - **No tables.** Tables add visual bulk. Use a flat numbered list.
+   - **No setup paragraphs.** If setup is needed, put it as the first 1-2 items in the list ("Create a task with deadline set to today, type On").
+   - **Group by what changed**, not by screen. The user cares about "does the new behavior work?" not "let me exhaustively test every screen."
+   - **Mark the key behavior changes** with ⚡ so the user can spot what's new vs regression checks.
+   - Keep it scannable — if the user's eyes glaze over, it's too long.
+   - **Each section must be self-contained.** Tests within a section can build on each other, but a new section/subheading must never assume state from a previous section. Include the exact steps to reach the required state.
 
 5. Prioritize tests by risk:
    - Start with **happy path** tests that verify the core change works
@@ -38,23 +45,21 @@ Generate a checklist of manual tests the user should run for recent changes.
 ## Output Format
 
 ```
-## Manual Test Checklist: [feature/change name]
+## Manual Test: [change name]
 
-### Core Behavior
-1. ...
-2. ...
+### [What changed]
+1. Do X → expect Y
+2. ⚡ Do A → expect B (was C before fix)
 
 ### Regression
-3. ...
-4. ...
-
-### Edge Cases
-5. ...
+3. Do X → still works as before
 ```
 
 ## Rules
 
 - BLOCKING: You must read every relevant widget file in step 3 before generating any tests. If a test step mentions a UI element you haven't read the code for, delete the test and read the code first.
+- Never write instructions that contradict or omit app behavior. Use precise language that reflects how the app actually works. If the app does something automatically (e.g. deadline inheritance from parent to child), mention it explicitly so the user isn't confused when it happens. Don't say "no deadline" when the task inherits one — say "it will automatically inherit the parent's deadline".
 - Don't suggest tests that duplicate what automated tests already cover — check the test files first.
 - If a change is purely algorithmic with no UI impact, say so and focus tests on observable outcomes.
 - Mention which platform to test on (Linux via `./dev.sh` unless the change is mobile-specific).
+- The user reports results like "1. works / 2. works". If their list is incomplete (doesn't cover all test cases), don't assume they're skipping the rest. Ask (via AskUserQuestion, with "continue" as the default) whether they want to carry on or skip. If they want to carry on, re-display the remaining test cases so they don't have to scroll up.
