@@ -31,8 +31,8 @@ Run Phase 1 using a **background Agent** so the user can continue working. When 
 4. Report the Phase 1 results (CI status, any Codex comments found/addressed).
 5. If CI failed, stop — do NOT merge.
 6. If there were unresolved Codex comments, ask the user what to do.
-7. If no comments arrived, ask the user to check manually before proceeding.
-8. **Merge:** Run `gh pr merge --merge` (not squash, not rebase). The guard-pr-merge hook will ask the user for confirmation — that's expected.
+7. If no comments arrived, tell the user and **wait for explicit confirmation** before merging. Do NOT run the merge command until the user says to proceed — they may want to check Codex manually first.
+8. **Merge:** Only after user confirms. Run `gh pr merge --merge` (not squash, not rebase). The guard-pr-merge hook will ask the user for confirmation — that's expected.
 9. **Cleanup:** Switch back to `main` and pull latest.
 10. Report the merge result.
 
