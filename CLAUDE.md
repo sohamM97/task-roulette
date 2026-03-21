@@ -55,6 +55,7 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 
 ## Development Preferences
 
+- **Verify before documenting.** Before writing any factual claim in a doc (docs/, CHANGELOG, comments), verify it exists in the codebase first — grep for the feature, check the model, read the code. Do not rely on memory, TODO lists, or stale branch knowledge. If it's not in the code on the current branch, don't claim it exists.
 - **When asked what's pending in a branch**, always check memory (TODO.md and other memory files) for previously discussed next steps — not just the git diff.
 - **Before exiting plan mode**, ask the user if they want to create a feature branch first (via `/feature`).
 - **Always ask for confirmation before committing.** Never run `/commit` or `git commit` without explicit user approval first.

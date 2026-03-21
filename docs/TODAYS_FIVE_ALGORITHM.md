@@ -151,8 +151,8 @@ Current `1/sqrt(N)` is a good middle ground. `1/N` was considered but rejected â
 
 ### Energy-Level Matching
 
-Optional effort tags (low/med/high) on tasks; filter or boost based on current energy level. Would add a user-input dimension to weight calculation. Complementary to existing priority/difficulty fields.
+Optional effort tags (low/med/high) on tasks; filter or boost based on current energy level. Would add a user-input dimension to weight calculation alongside the existing priority field. Note: a "quick task" difficulty flag existed previously (vestigial `difficulty` column still in DB schema) but was removed from the Task model and UI due to low usage.
 
 ### Schedule Inheritance Rethink
 
-Currently, scheduling a parent boosts all leaf descendants. If a child also has its own schedule, both apply (additive). Open question: should child schedules override parent schedules? See TODO.md for details.
+Currently, scheduling a parent boosts all leaf descendants. A child with its own schedule acts as a **barrier** â€” it blocks parent schedule propagation and only uses its own schedule days. The `schedule_barrier` CTE in `getScheduleBoostedLeafIds` enforces this. Open question: is this barrier behavior always desirable, or should there be more nuanced inheritance controls? See TODO.md for details.

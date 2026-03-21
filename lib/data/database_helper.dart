@@ -95,7 +95,7 @@ class DatabaseHelper {
             url TEXT,
             skipped_at INTEGER,
             priority INTEGER NOT NULL DEFAULT 0,
-            difficulty INTEGER NOT NULL DEFAULT 0,
+            difficulty INTEGER NOT NULL DEFAULT 0, -- vestigial: was quick-task flag, no longer in Task model or UI
             last_worked_at INTEGER,
             repeat_interval TEXT,
             next_due_at INTEGER,
