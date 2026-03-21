@@ -291,7 +291,13 @@ class StarredScreenState extends State<StarredScreen>
             task: task,
             tree: treeInfo?.children ?? [],
             totalChildren: treeInfo?.totalChildren ?? 0,
-            onTap: () => _showExpandedView(task),
+            onTap: () {
+              if ((treeInfo?.totalChildren ?? 0) == 0) {
+                widget.onNavigateToTask?.call(task);
+              } else {
+                _showExpandedView(task);
+              }
+            },
             onLongPress: () => widget.onNavigateToTask?.call(task),
           );
         },

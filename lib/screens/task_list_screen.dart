@@ -1505,7 +1505,7 @@ class TaskListScreenState extends State<TaskListScreen>
                       ),
                     ],
                     if (!kIsWeb) ...[
-                      const PopupMenuDivider(),
+                      if (!provider.isRoot) const PopupMenuDivider(),
                       const PopupMenuItem(
                         value: 'export',
                         child: Text('Export backup'),

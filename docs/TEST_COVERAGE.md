@@ -1,10 +1,10 @@
 # Test Coverage Inventory
 
-Last updated: 2026-03-18
+Last updated: 2026-03-21
 
 ## Summary
 
-~1007 tests across 26 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
+~1014 tests across 27 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
 
 ## Covered
 
@@ -28,6 +28,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 - **test/screens/todays_five_screen_test.dart** (~24 tests) — Empty state, task rendering (max 5, leaf-only, blocked excluded), bottom sheet options, swap/navigate buttons, progress bar, priority icon, refresh dialog, DB state restore, SharedPrefs→DB migration, sync reload (task list replacement, completed status from remote), **deadline auto-pin override** (unpinned deadline stays unpinned on reload, generate doesn't re-pin suppressed tasks, suppression cleared on re-pin, re-pin persists across reload).
 - **test/screens/completed_tasks_screen_test.dart** (~15 tests) — Empty state, completed/skipped display, today/older labels, restore/delete buttons, parent context, AppBar title.
 - **test/screens/starred_screen_test.dart** (27 tests) — Empty state, card display (single/multiple/subtitle/in-progress/tree preview/badge count), long-press navigation, drag handle, **tap expanded view** (dialog open, lazy-expand direct children on tap, collapse hides grandchildren, "No sub-tasks" leaf, star icon confirmation dialog, cancel keeps starred, confirm unstar + undo snackbar, undo re-stars, long-press tree node navigates, tap leaf navigates directly, dismiss by tapping outside, **child count badge**, **no chevron on leaves**, **header navigate icon**, **leaf navigate icon**). **starOrder preservation** (explicit starOrder on re-star, appends to end without).
+- **test/screens/task_list_screen_overflow_menu_test.dart** (7 tests) — Overflow menu: root shows export/import only (no task items), non-root with children shows Rename/Do after/Schedule/Delete/export/import, leaf shows "Also show under..." instead of Rename/Do after, "Add link" vs "Edit link" based on URL presence, divider count (2 for non-root, 1 for root on non-web).
 
 ### Services (minimal)
 - **test/services/notification_service_test.dart** (13 tests) — `nextEightAM` (before/after/at 8 AM, midnight, month/year rollover, DST spring-forward, timezone preservation), `onNotificationTap` callback (null default, set and invoke, pendingTap drain on register, no spurious invoke without pending).
@@ -54,7 +55,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 ## NOT Covered
 
 ### Screens (high priority)
-- **task_list_screen.dart** (1122 lines) — NO TESTS. Main nav screen: task hierarchy, search, filtering, add/rename/delete, link/unlink, context menu.
+- **task_list_screen.dart** (1122 lines) — PARTIAL (overflow menu only, 7 tests). Main nav screen: task hierarchy, search, filtering, add/rename/delete, link/unlink, context menu. Still untested: search, task card interactions, add/delete dialogs, leaf detail view, navigation, drag reorder.
 - **dag_view_screen.dart** (797 lines) — NO TESTS. Force-directed graph, node selection, pinch-to-zoom/pan.
 
 ### Services (high priority)

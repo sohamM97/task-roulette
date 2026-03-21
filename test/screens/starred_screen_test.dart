@@ -174,12 +174,30 @@ void main() {
   });
 
   group('StarredScreen - Tap expanded view', () {
-    testWidgets('long press opens expanded dialog', (tester) async {
+    testWidgets('tap leaf starred task navigates directly', (tester) async {
       await tester.runAsync(() => createStarredTask('Guitar'));
 
       await pumpAndLoad(tester, buildTestWidget());
 
       await tester.tap(find.text('Guitar'));
+      await pumpAsync(tester);
+
+      // Leaf task should navigate instead of opening expanded view
+      expect(navigatedTask, isNotNull);
+      expect(navigatedTask!.name, 'Guitar');
+    });
+
+    testWidgets('tap non-leaf starred task opens expanded dialog', (tester) async {
+      await tester.runAsync(() async {
+        final parentId = await createStarredTask('Guitar');
+        await db.insertTask(Task(name: 'Fingerpicking')).then(
+          (childId) => db.addRelationship(parentId, childId),
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Guitar').first);
       await pumpAsync(tester);
 
       // Dialog should show the task name in the header
@@ -240,24 +258,30 @@ void main() {
       expect(find.text('Leaf'), findsOneWidget);
     });
 
-    testWidgets('expanded view shows "No sub-tasks" for leaf', (tester) async {
+    testWidgets('long-press leaf starred task also navigates', (tester) async {
       await tester.runAsync(() => createStarredTask('Leaf task'));
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.tap(find.text('Leaf task'));
+      await tester.longPress(find.text('Leaf task'));
       await pumpAsync(tester);
 
-      expect(find.text('No sub-tasks'), findsOneWidget);
+      expect(navigatedTask, isNotNull);
+      expect(navigatedTask!.name, 'Leaf task');
     });
 
     testWidgets('star icon in expanded view opens confirmation dialog',
         (tester) async {
-      await tester.runAsync(() => createStarredTask('Confirm me'));
+      await tester.runAsync(() async {
+        final id = await createStarredTask('Confirm me');
+        await db.insertTask(Task(name: 'Sub')).then(
+          (childId) => db.addRelationship(id, childId),
+        );
+      });
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.tap(find.text('Confirm me'));
+      await tester.tap(find.text('Confirm me').first);
       await pumpAsync(tester);
 
       // Tap the star icon button in the dialog header
@@ -272,11 +296,16 @@ void main() {
 
     testWidgets('cancel in confirmation dialog keeps task starred',
         (tester) async {
-      await tester.runAsync(() => createStarredTask('Keep me'));
+      await tester.runAsync(() async {
+        final id = await createStarredTask('Keep me');
+        await db.insertTask(Task(name: 'Sub')).then(
+          (childId) => db.addRelationship(id, childId),
+        );
+      });
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.tap(find.text('Keep me'));
+      await tester.tap(find.text('Keep me').first);
       await pumpAsync(tester);
 
       // Tap star to trigger confirmation
@@ -293,11 +322,16 @@ void main() {
 
     testWidgets('confirm unstar removes task and shows undo snackbar',
         (tester) async {
-      await tester.runAsync(() => createStarredTask('Remove me'));
+      await tester.runAsync(() async {
+        final id = await createStarredTask('Remove me');
+        await db.insertTask(Task(name: 'Sub')).then(
+          (childId) => db.addRelationship(id, childId),
+        );
+      });
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.tap(find.text('Remove me'));
+      await tester.tap(find.text('Remove me').first);
       await pumpAsync(tester);
 
       // Tap star to trigger confirmation
@@ -314,11 +348,16 @@ void main() {
     });
 
     testWidgets('undo in snackbar re-stars the task', (tester) async {
-      await tester.runAsync(() => createStarredTask('Undo me'));
+      await tester.runAsync(() async {
+        final id = await createStarredTask('Undo me');
+        await db.insertTask(Task(name: 'Sub')).then(
+          (childId) => db.addRelationship(id, childId),
+        );
+      });
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.tap(find.text('Undo me'));
+      await tester.tap(find.text('Undo me').first);
       await pumpAsync(tester);
 
       // Unstar flow
@@ -435,26 +474,36 @@ void main() {
     });
 
     testWidgets('navigate icon shown in dialog header', (tester) async {
-      await tester.runAsync(() => createStarredTask('Header task'));
+      await tester.runAsync(() async {
+        final id = await createStarredTask('Header task');
+        await db.insertTask(Task(name: 'Sub')).then(
+          (childId) => db.addRelationship(id, childId),
+        );
+      });
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.tap(find.text('Header task'));
+      await tester.tap(find.text('Header task').first);
       await pumpAsync(tester);
 
-      expect(find.byIcon(Icons.open_in_new_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.open_in_new_rounded), findsAtLeastNWidgets(1));
     });
 
     testWidgets('header navigate icon goes to task', (tester) async {
-      await tester.runAsync(() => createStarredTask('Go here'));
+      await tester.runAsync(() async {
+        final id = await createStarredTask('Go here');
+        await db.insertTask(Task(name: 'Sub')).then(
+          (childId) => db.addRelationship(id, childId),
+        );
+      });
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      await tester.tap(find.text('Go here'));
+      await tester.tap(find.text('Go here').first);
       await pumpAsync(tester);
 
-      // Tap the navigate icon in the header
-      await tester.tap(find.byIcon(Icons.open_in_new_rounded));
+      // Tap the navigate icon in the header (first one)
+      await tester.tap(find.byIcon(Icons.open_in_new_rounded).first);
       await tester.pump();
 
       expect(navigatedTask, isNotNull);
