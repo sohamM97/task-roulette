@@ -108,7 +108,13 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   void _onSyncStatusChanged() {
     if (!mounted || _loading) return;
     if (_authProvider?.syncStatus == SyncStatus.synced) {
-      _reloadFromDb();
+      // Use refreshSnapshots() instead of _reloadFromDb() — it checks
+      // whether the DB actually differs from in-memory state before
+      // reloading. This avoids clearing in-flight pin/completion changes
+      // when the sync didn't change Today's 5 data at all.
+      // Pass checkCompletionStatus: true so remote completion changes are
+      // detected (unlike tab-switch, where local state is authoritative).
+      refreshSnapshots(checkCompletionStatus: true);
     }
   }
 
@@ -252,7 +258,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   /// made in All Tasks (e.g. unstarting a task, toggling pins).
   /// If the current set is empty, generates a new set instead (handles
   /// the case where the app started with no tasks and user added some).
-  Future<void> refreshSnapshots() async {
+  Future<void> refreshSnapshots({bool checkCompletionStatus = false}) async {
     // Midnight rollover: date changed since last load → generate fresh set
     if (_todayKey() != _loadedDateKey) {
       await _reloadFromDb();
@@ -272,7 +278,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       final inMemoryTaskIds = _todaysTasks.map((t) => t.id!).toSet();
       final savedTaskIds = saved.taskIds.toSet();
       if (!setEquals(saved.pinnedIds, _pinnedIds) ||
-          !setEquals(savedTaskIds, inMemoryTaskIds)) {
+          !setEquals(savedTaskIds, inMemoryTaskIds) ||
+          (checkCompletionStatus && (
+            !setEquals(saved.completedIds, _completedIds) ||
+            !setEquals(saved.workedOnIds, _workedOnIds)))) {
         // Preserve session-only undo state (not persisted to DB)
         final prevAutoStarted = Set<int>.from(_autoStartedIds);
         final prevPreWorkedOn = Map<int, int?>.from(_preWorkedOnLastWorkedAt);
@@ -1036,14 +1045,20 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         existingRootPickCounts: rootPickCounts);
     if (picked.isNotEmpty) {
       // Complete async work before mutating state
-      final ancestors = await DatabaseHelper().getAncestorPath(picked.first.id!);
+      final db = DatabaseHelper();
+      final newId = picked.first.id!;
+      final ancestors = await db.getAncestorPath(newId);
+      final deadlines = await db.getEffectiveDeadlines([newId]);
       if (!mounted) return;
       _pinnedIds.remove(_todaysTasks[index].id);
       _todaysTasks[index] = picked.first;
       if (ancestors.isNotEmpty) {
-        _taskPaths[picked.first.id!] = ancestors.map((t) => t.name).join(' › ');
+        _taskPaths[newId] = ancestors.map((t) => t.name).join(' › ');
       } else {
-        _taskPaths.remove(picked.first.id!);
+        _taskPaths.remove(newId);
+      }
+      if (deadlines.containsKey(newId)) {
+        _effectiveDeadlines[newId] = deadlines[newId]!;
       }
       setState(() {});
       await _persist();

@@ -83,7 +83,7 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   int _currentIndex = 0;
   final _todaysFiveKey = GlobalKey<TodaysFiveScreenState>();
   final _starredKey = GlobalKey<StarredScreenState>();
@@ -93,8 +93,17 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     NotificationService.onNotificationTap = _navigateToToday;
     _initAuth();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      context.read<SyncService>().flushPush();
+    }
   }
 
   void _navigateToToday() {
@@ -140,6 +149,7 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     NotificationService.onNotificationTap = null;
     _pageController.dispose();
     super.dispose();

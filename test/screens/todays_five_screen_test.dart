@@ -191,6 +191,54 @@ void main() {
       expect(find.byIcon(Icons.shuffle), findsOneWidget);
     });
 
+    testWidgets('swap shows deadline icon immediately on swapped-in task', (tester) async {
+      // Set up: 5 plain tasks fill Today's 5, plus one deadline task outside
+      // the set as the only swap candidate. Use a future deadline to avoid
+      // auto-pin behaviour.
+      final future = DateTime.now().add(const Duration(days: 3));
+      final futureStr = '${future.year}-${future.month.toString().padLeft(2, '0')}-${future.day.toString().padLeft(2, '0')}';
+      final plainIds = <int>[];
+      await tester.runAsync(() async {
+        for (var i = 1; i <= 5; i++) {
+          plainIds.add(await db.insertTask(Task(name: 'Plain $i')));
+        }
+        await db.insertTask(Task(name: 'Deadline task', deadline: futureStr));
+        // Pre-save Today's 5 with all 5 plain tasks — no backfill needed
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: plainIds,
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // All plain tasks visible, no deadline icon
+      expect(find.text('Plain 1'), findsOneWidget);
+      expect(find.byIcon(Icons.event_available), findsNothing);
+
+      // Swap buttons should be present for all undone tasks
+      expect(find.byIcon(Icons.shuffle), findsWidgets);
+
+      // Tap the swap button to open the bottom sheet
+      await tester.tap(find.byIcon(Icons.shuffle).first);
+      await tester.pumpAndSettle();
+
+      // Tap "Random replacement" in the bottom sheet
+      await tester.tap(find.text('Random replacement'));
+      // Pump enough for bottom sheet dismiss + async swap to complete
+      for (var i = 0; i < 30; i++) {
+        await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // Deadline task should now be visible with its calendar icon
+      expect(find.text('Deadline task'), findsOneWidget);
+      expect(find.byIcon(Icons.event_available), findsOneWidget);
+    });
+
     testWidgets('navigate button calls onNavigateToTask', (tester) async {
       await tester.runAsync(() async {
         await db.insertTask(Task(name: 'Navigate me'));
