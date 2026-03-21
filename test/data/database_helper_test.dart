@@ -2503,6 +2503,69 @@ void main() {
     });
   });
 
+  group('Deadline auto-pin suppression', () {
+    test('suppress and retrieve suppressed IDs', () async {
+      await db.suppressDeadlineAutoPin('2026-03-21', 10);
+      await db.suppressDeadlineAutoPin('2026-03-21', 20);
+      await db.suppressDeadlineAutoPin('2026-03-22', 30);
+
+      final ids = await db.getDeadlineSuppressedIds('2026-03-21');
+      expect(ids, {10, 20});
+    });
+
+    test('suppress is idempotent (ConflictAlgorithm.ignore)', () async {
+      await db.suppressDeadlineAutoPin('2026-03-21', 10);
+      await db.suppressDeadlineAutoPin('2026-03-21', 10); // duplicate
+      final ids = await db.getDeadlineSuppressedIds('2026-03-21');
+      expect(ids, {10});
+    });
+
+    test('unsuppress removes specific task for date', () async {
+      await db.suppressDeadlineAutoPin('2026-03-21', 10);
+      await db.suppressDeadlineAutoPin('2026-03-21', 20);
+      await db.unsuppressDeadlineAutoPin('2026-03-21', 10);
+
+      final ids = await db.getDeadlineSuppressedIds('2026-03-21');
+      expect(ids, {20});
+    });
+
+    test('unsuppress does not affect other dates', () async {
+      await db.suppressDeadlineAutoPin('2026-03-21', 10);
+      await db.suppressDeadlineAutoPin('2026-03-22', 10);
+      await db.unsuppressDeadlineAutoPin('2026-03-21', 10);
+
+      final ids21 = await db.getDeadlineSuppressedIds('2026-03-21');
+      final ids22 = await db.getDeadlineSuppressedIds('2026-03-22');
+      expect(ids21, isEmpty);
+      expect(ids22, {10});
+    });
+
+    test('getDeadlineSuppressedIds returns empty for unknown date', () async {
+      final ids = await db.getDeadlineSuppressedIds('2099-01-01');
+      expect(ids, isEmpty);
+    });
+
+    test('purgeOldDeadlineSuppressed removes rows before given date', () async {
+      await db.suppressDeadlineAutoPin('2026-03-19', 10);
+      await db.suppressDeadlineAutoPin('2026-03-20', 20);
+      await db.suppressDeadlineAutoPin('2026-03-21', 30);
+
+      await db.purgeOldDeadlineSuppressed('2026-03-21');
+
+      // Only today's row survives
+      expect(await db.getDeadlineSuppressedIds('2026-03-19'), isEmpty);
+      expect(await db.getDeadlineSuppressedIds('2026-03-20'), isEmpty);
+      expect(await db.getDeadlineSuppressedIds('2026-03-21'), {30});
+    });
+
+    test('deleteAllLocalData clears suppressed table', () async {
+      await db.suppressDeadlineAutoPin('2026-03-21', 10);
+      await db.deleteAllLocalData();
+      final ids = await db.getDeadlineSuppressedIds('2026-03-21');
+      expect(ids, isEmpty);
+    });
+  });
+
   group('getTodaysFiveTaskAndPinIds', () {
     test('returns both taskIds and pinnedIds', () async {
       final id1 = await db.insertTask(Task(name: 'Task 1'));
@@ -2693,23 +2756,23 @@ void main() {
       await db.importDatabase(v14DbPath);
     });
 
-    test('rejects version 23 as too high', () async {
+    test('rejects version 24 as too high', () async {
       DatabaseHelper.testDatabasePath = mainDbPath;
       await db.reset();
       await db.database;
 
-      final v23DbPath = '${tempDir.path}/v23.db';
-      final v23Db = await openDatabase(v23DbPath, version: 23,
+      final v24DbPath = '${tempDir.path}/v24.db';
+      final v24Db = await openDatabase(v24DbPath, version: 24,
         onCreate: (db, version) async {
           await db.execute('CREATE TABLE tasks (id INTEGER PRIMARY KEY, name TEXT)');
           await db.execute('CREATE TABLE task_relationships (parent_id INTEGER, child_id INTEGER)');
           await db.execute('CREATE TABLE task_dependencies (task_id INTEGER, depends_on_task_id INTEGER)');
         },
       );
-      await v23Db.close();
+      await v24Db.close();
 
       expect(
-        () => db.importDatabase(v23DbPath),
+        () => db.importDatabase(v24DbPath),
         throwsA(isA<FormatException>().having(
           (e) => e.message, 'message', contains('Incompatible backup version'),
         )),

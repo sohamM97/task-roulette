@@ -798,4 +798,108 @@ void main() {
       expect(find.byIcon(Icons.check_circle), findsOneWidget);
     });
   });
+
+  group('Deadline auto-pin override', () {
+    /// Helper: today's date as YYYY-MM-DD for deadline field.
+    String todayDeadline() {
+      final now = DateTime.now();
+      return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    }
+
+    testWidgets('reload: unpinned deadline task stays unpinned', (tester) async {
+      // A deadline task already in the set with is_pinned=0 should NOT be
+      // force-pinned on reload.
+      late int idDeadline, idOther;
+      await tester.runAsync(() async {
+        idDeadline = await db.insertTask(
+          Task(name: 'Deadline unpinned', deadline: todayDeadline()),
+        );
+        idOther = await db.insertTask(Task(name: 'Regular task'));
+        // Save state with deadline task NOT pinned
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [idDeadline, idOther],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {},  // explicitly unpinned
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Both tasks visible
+      expect(find.text('Deadline unpinned'), findsOneWidget);
+      expect(find.text('Regular task'), findsOneWidget);
+      // No pin icons — the deadline task should NOT be force-pinned
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+
+      // Verify DB state: pinnedIds should still be empty
+      final saved = await tester.runAsync(
+        () => db.loadTodaysFiveState(_todayKey()),
+      );
+      expect(saved!.pinnedIds, isEmpty);
+    });
+
+    testWidgets('reload: NEW deadline task not in set is NOT auto-pinned', (tester) async {
+      // Auto-pin only happens on first generation of the day.
+      // On reload with saved state, new deadline tasks should NOT be auto-pinned.
+      late int idExisting;
+      await tester.runAsync(() async {
+        idExisting = await db.insertTask(Task(name: 'Existing task'));
+        await db.insertTask(
+          Task(name: 'New deadline task', deadline: todayDeadline()),
+        );
+        // Save state with only the existing task
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [idExisting],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Only existing task should be visible — new deadline task NOT added
+      expect(find.text('Existing task'), findsOneWidget);
+      // No pins
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+    });
+
+    testWidgets('regeneration: no deadline auto-pin on New set', (tester) async {
+      // "New set" should not auto-pin deadline tasks. Pins are user-driven.
+      late int idOther1, idOther2;
+      await tester.runAsync(() async {
+        idOther1 = await db.insertTask(Task(name: 'Keep A'));
+        idOther2 = await db.insertTask(Task(name: 'Keep B'));
+        await db.insertTask(
+          Task(name: 'Fresh deadline', deadline: todayDeadline()),
+        );
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [idOther1, idOther2],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Trigger "New set"
+      await tester.tap(find.byIcon(Icons.refresh));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.tap(find.text('Replace'));
+      await pumpAsync(tester, rounds: 30);
+
+      // No deadline task should be auto-pinned
+      final saved = await tester.runAsync(
+        () => db.loadTodaysFiveState(_todayKey()),
+      );
+      expect(saved!.pinnedIds, isEmpty);
+    });
+  });
 }

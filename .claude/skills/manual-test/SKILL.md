@@ -34,6 +34,8 @@ Generate a checklist of manual tests the user should run for recent changes.
    - **Mark the key behavior changes** with ⚡ so the user can spot what's new vs regression checks.
    - Keep it scannable — if the user's eyes glaze over, it's too long.
    - **Each section must be self-contained.** Tests within a section can build on each other, but a new section/subheading must never assume state from a previous section. Include the exact steps to reach the required state.
+   - **One test = one flow.** Each test case should verify a single behavior. Don't combine multiple if-else outcomes into one test (e.g. "should show X if Y, otherwise Z"). Split into separate tests with clear preconditions.
+   - **State the expected starting state** before the first test. Tell the user whether their existing app data is fine, or if they need a clean slate. Example: "Your existing tasks/pins won't interfere — these tests create new tasks." or "Clear Today's 5 first (New set → Replace) to start fresh."
 
 5. Prioritize tests by risk:
    - Start with **happy path** tests that verify the core change works

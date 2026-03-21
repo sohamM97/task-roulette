@@ -67,6 +67,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   bool _otherDoneExpanded = false;
   /// Tracks manually pinned tasks — protected from refresh until explicitly swapped.
   final Set<int> _pinnedIds = {};
+  /// Deadline task IDs the user explicitly unpinned today. Persisted to DB
+  /// so auto-pin doesn't override user intent across reloads/regeneration.
+  final Set<int> _deadlineSuppressedIds = {};
   bool _loading = true;
   /// The date key that was last loaded, used to detect midnight rollover.
   String _loadedDateKey = '';
@@ -142,6 +145,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     // Migrate SharedPreferences → DB (idempotent, safe to call every time)
     await db.migrateTodaysFiveFromPrefs();
 
+    // Load suppressed deadline auto-pin IDs for today + purge old rows
+    _deadlineSuppressedIds.clear();
+    _deadlineSuppressedIds.addAll(await db.getDeadlineSuppressedIds(today));
+    db.purgeOldDeadlineSuppressed(today).catchError(
+        (e) => debugPrint('Failed to purge old suppression rows: $e'));
+
     // Try to restore from DB
     final saved = await db.loadTodaysFiveState(today);
     if (saved != null && saved.taskIds.isNotEmpty) {
@@ -193,23 +202,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           }
         }
       }
-      // Auto-pin deadline tasks that are due today but not already in the set
-      final deadlinePinIds = await provider.getDeadlinePinLeafIds();
-      final currentIdsPreDeadline = tasks.map((t) => t.id).toSet();
-      for (final leaf in allLeaves) {
-        if (deadlinePinIds.contains(leaf.id) &&
-            !currentIdsPreDeadline.contains(leaf.id)) {
-          tasks.add(leaf);
-          savedPinnedIds.add(leaf.id!);
-        }
-      }
-      // Also mark existing deadline tasks as pinned
-      for (final t in tasks) {
-        if (deadlinePinIds.contains(t.id)) {
-          savedPinnedIds.add(t.id!);
-        }
-      }
-
       // Backfill if some non-done tasks are no longer leaves
       if (tasks.length < 5) {
         final currentIds = tasks.map((t) => t.id).toSet();
@@ -356,23 +348,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       );
       refreshed.addAll(replacements);
     }
-    // Auto-pin deadline tasks not yet in the set
-    final deadlinePinIds = await provider.getDeadlinePinLeafIds();
-    final refreshedIds = refreshed.map((t) => t.id).toSet();
-    for (final leaf in allLeaves) {
-      if (deadlinePinIds.contains(leaf.id) &&
-          !refreshedIds.contains(leaf.id)) {
-        refreshed.add(leaf);
-        _pinnedIds.add(leaf.id!);
-      }
-    }
-    // Also mark existing deadline tasks as pinned
-    for (final t in refreshed) {
-      if (deadlinePinIds.contains(t.id)) {
-        _pinnedIds.add(t.id!);
-      }
-    }
-
     // Clean up completed IDs: remove if task left the list, or was
     // uncompleted externally (e.g. restored from archive)
     _completedIds.removeWhere((id) {
@@ -429,8 +404,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final provider = context.read<TaskProvider>();
     final ctx = await _fetchSelectionContext();
 
-    // Get deadline auto-pin IDs (separate from weight boost)
-    final deadlinePinIds = await provider.getDeadlinePinLeafIds();
+    // No deadline auto-pin here — auto-pin only happens when explicitly
+    // setting a deadline from All Tasks. Weight boost still applies via ctx.
 
     // Keep done + pinned tasks, only replace the rest
     final kept = _todaysTasks.where(
@@ -440,30 +415,17 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     _pinnedIds.removeWhere((id) => !kept.any((t) => t.id == id));
     final keptIds = kept.map((t) => t.id).toSet();
 
-    // Auto-pin deadline tasks that aren't already in the set
-    final deadlineAutoPins = <Task>[];
-    for (final leaf in ctx.allLeaves) {
-      if (deadlinePinIds.contains(leaf.id) &&
-          !keptIds.contains(leaf.id) &&
-          !ctx.blockedIds.contains(leaf.id)) {
-        deadlineAutoPins.add(leaf);
-        _pinnedIds.add(leaf.id!);
-      }
-    }
-    final allKept = [...kept, ...deadlineAutoPins];
-    final allKeptIds = allKept.map((t) => t.id).toSet();
-
     final eligible = ctx.allLeaves.where(
-      (t) => !ctx.blockedIds.contains(t.id) && !allKeptIds.contains(t.id),
+      (t) => !ctx.blockedIds.contains(t.id) && !keptIds.contains(t.id),
     ).toList();
 
-    final slotsToFill = (5 - allKept.length).clamp(0, 5);
+    final slotsToFill = (5 - kept.length).clamp(0, 5);
     final picked = provider.pickWeightedN(eligible, slotsToFill,
         scheduleBoostedIds: ctx.scheduleBoostedIds,
         deadlineDaysMap: ctx.deadlineDaysMap,
         normData: ctx.normData);
     if (!mounted) return;
-    _todaysTasks = [...allKept, ...picked];
+    _todaysTasks = [...kept, ...picked];
     await _loadOtherDoneToday();
     await _loadTaskPaths();
     if (!mounted) return;
@@ -653,6 +615,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   }
 
   void _togglePinFromSheet(Task task) {
+    final wasPinned = _pinnedIds.contains(task.id);
     final result = TodaysFivePinHelper.togglePinInPlace(
       _pinnedIds, task.id!,
     );
@@ -664,6 +627,17 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         _pinnedIds.clear();
         _pinnedIds.addAll(result);
       });
+      // Track deadline suppression: if user unpins a deadline task, suppress
+      // auto-pin so it doesn't get re-pinned on reload/regeneration.
+      if (wasPinned && _effectiveDeadlines.containsKey(task.id)) {
+        _deadlineSuppressedIds.add(task.id!);
+        DatabaseHelper().suppressDeadlineAutoPin(_todayKey(), task.id!).catchError(
+            (e) => debugPrint('Failed to suppress deadline auto-pin: $e'));
+      } else if (!wasPinned && _deadlineSuppressedIds.contains(task.id)) {
+        _deadlineSuppressedIds.remove(task.id!);
+        DatabaseHelper().unsuppressDeadlineAutoPin(_todayKey(), task.id!).catchError(
+            (e) => debugPrint('Failed to unsuppress deadline auto-pin: $e'));
+      }
       _persistAndTrim();
     }
   }
@@ -1458,21 +1432,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
               if (!isDone)
                 PinButton(
                   isPinned: _pinnedIds.contains(task.id),
-                  onToggle: () {
-                    final result = TodaysFivePinHelper.togglePinInPlace(
-                      _pinnedIds, task.id!,
-                    );
-                    if (result == null) {
-                      ScaffoldMessenger.of(context).clearSnackBars();
-                      showInfoSnackBar(context, 'Max 5 pinned tasks — unpin one first');
-                    } else {
-                      setState(() {
-                        _pinnedIds.clear();
-                        _pinnedIds.addAll(result);
-                      });
-                      _persistAndTrim();
-                    }
-                  },
+                  onToggle: () => _togglePinFromSheet(task),
                 ),
               if (isDone && _pinnedIds.contains(task.id))
                 Icon(Icons.push_pin, size: 18, color: colorScheme.tertiary),
