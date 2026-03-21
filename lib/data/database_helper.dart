@@ -1,5 +1,5 @@
 import 'dart:math' show sqrt;
-import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart' show kIsWeb, listEquals, setEquals, visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
@@ -2698,11 +2698,13 @@ class DatabaseHelper {
   /// - Both exist: use remote task list + sort order; OR-merge status bits
   ///   for tasks in both lists; append local-only pinned/completed tasks up
   ///   to max 5 slots.
-  Future<void> upsertTodaysFiveFromRemote(
+  /// Merges remote Today's 5 state into local DB.
+  /// Returns true if the local DB was actually changed, false if already equal.
+  Future<bool> upsertTodaysFiveFromRemote(
     String date,
     List<Map<String, dynamic>> remoteEntries,
   ) async {
-    if (remoteEntries.isEmpty) return;
+    if (remoteEntries.isEmpty) return false;
     final db = await database;
 
     // Resolve remote sync_ids to local task IDs
@@ -2720,7 +2722,7 @@ class DatabaseHelper {
         sortOrder: entry['sort_order'] as int,
       ));
     }
-    if (resolved.isEmpty) return;
+    if (resolved.isEmpty) return false;
 
     // Load existing local state
     final localState = await loadTodaysFiveState(date);
@@ -2741,7 +2743,7 @@ class DatabaseHelper {
           });
         }
       });
-      return;
+      return true;
     }
 
     // Both exist — merge
@@ -2790,6 +2792,18 @@ class DatabaseHelper {
       ));
     }
 
+    // Check if merged state is identical to local — skip write if so
+    final mergedTaskIds = mergedList.map((m) => m.taskId).toList();
+    final mergedCompletedIds = mergedList.where((m) => m.isCompleted).map((m) => m.taskId).toSet();
+    final mergedWorkedOnIds = mergedList.where((m) => m.isWorkedOn).map((m) => m.taskId).toSet();
+    final mergedPinnedIds = mergedList.where((m) => m.isPinned).map((m) => m.taskId).toSet();
+    if (listEquals(mergedTaskIds, localState.taskIds) &&
+        setEquals(mergedCompletedIds, localState.completedIds) &&
+        setEquals(mergedWorkedOnIds, localState.workedOnIds) &&
+        setEquals(mergedPinnedIds, localState.pinnedIds)) {
+      return false;
+    }
+
     await db.transaction((txn) async {
       await txn.delete('todays_five_state', where: 'date = ?', whereArgs: [date]);
       for (final m in mergedList) {
@@ -2803,6 +2817,7 @@ class DatabaseHelper {
         });
       }
     });
+    return true;
   }
 
   /// Migrates Today's 5 state from SharedPreferences to the DB (idempotent).

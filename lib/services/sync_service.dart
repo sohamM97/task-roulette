@@ -69,6 +69,17 @@ class SyncService {
     });
   }
 
+  /// Cancel any pending debounce timer and push immediately.
+  /// Called when the app goes to the background so unsaved changes
+  /// aren't lost if the OS kills the process.
+  void flushPush() {
+    if (_pushDebounceTimer?.isActive ?? false) {
+      _pushDebounceTimer!.cancel();
+      _pushDebounceTimer = null;
+      if (_canSync) push();
+    }
+  }
+
   /// Returns true if this is the first sign-in (migration not yet done).
   Future<bool> needsInitialMigration() async {
     if (!_canSync) return false;
@@ -501,8 +512,9 @@ class SyncService {
       final dateKey = _todayDateKey();
       final remote5 = await _firestore.pullTodaysFive(uid, idToken, dateKey);
       if (remote5 != null && remote5.entries.isNotEmpty) {
-        await _db.upsertTodaysFiveFromRemote(dateKey, remote5.entries);
-        anyChange = true;
+        final todaysFiveChanged =
+            await _db.upsertTodaysFiveFromRemote(dateKey, remote5.entries);
+        if (todaysFiveChanged) anyChange = true;
       }
 
       // Update last sync timestamp
