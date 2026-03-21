@@ -362,7 +362,8 @@ class TaskProvider extends ChangeNotifier {
   /// When [normData] is provided, applies root-size normalization and
   /// diversity penalty to spread picks across root categories.
   List<Task> pickWeightedN(List<Task> candidates, int n,
-      {Set<int>? scheduleBoostedIds, Map<int, int>? deadlineDaysMap, NormalizationData? normData}) {
+      {Set<int>? scheduleBoostedIds, Map<int, int>? deadlineDaysMap,
+       NormalizationData? normData, Map<int, int>? existingRootPickCounts}) {
     if (candidates.isEmpty) return [];
     final eligible = candidates.where((t) =>
       !t.isWorkedOnToday
@@ -371,8 +372,10 @@ class TaskProvider extends ChangeNotifier {
 
     final picked = <Task>[];
     final remaining = List<Task>.from(eligible);
-    // Track how many picks came from each root (for diversity penalty)
-    final rootPickCounts = <int, int>{};
+    // Track how many picks came from each root (for diversity penalty).
+    // Seed with existing picks (e.g. current Today's 5 tasks) so swap
+    // accounts for what's already showing.
+    final rootPickCounts = <int, int>{...?existingRootPickCounts};
 
     // Fill slots via weighted random
     while (picked.length < n && remaining.isNotEmpty) {
@@ -383,7 +386,7 @@ class TaskProvider extends ChangeNotifier {
             deadlineDaysMap: deadlineDaysMap, normFactor: nf);
 
         // Diversity penalty: penalize tasks sharing roots with already-picked
-        if (normData != null && picked.isNotEmpty) {
+        if (normData != null && rootPickCounts.isNotEmpty) {
           final roots = normData.leafToRoots[t.id] ?? <int>{};
           var maxPicks = 0;
           for (final r in roots) {

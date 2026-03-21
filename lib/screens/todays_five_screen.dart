@@ -14,6 +14,25 @@ import '../widgets/profile_icon.dart';
 import '../widgets/task_picker_dialog.dart';
 import 'completed_tasks_screen.dart';
 
+/// Data needed for weighted task selection, shared by generation and swap.
+class _SelectionContext {
+  final List<Task> allLeaves;
+  final List<int> leafIds;
+  final Set<int> blockedIds;
+  final Set<int> scheduleBoostedIds;
+  final Map<int, int> deadlineDaysMap;
+  final NormalizationData normData;
+
+  _SelectionContext({
+    required this.allLeaves,
+    required this.leafIds,
+    required this.blockedIds,
+    required this.scheduleBoostedIds,
+    required this.deadlineDaysMap,
+    required this.normData,
+  });
+}
+
 class TodaysFiveScreen extends StatefulWidget {
   final void Function(Task task)? onNavigateToTask;
 
@@ -380,6 +399,27 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     await _persistAndTrim();
   }
 
+  /// Fetches all data needed for weighted task selection (normalization,
+  /// schedule boosts, deadline data, blocked IDs). Shared by generation
+  /// and swap to keep selection logic consistent.
+  Future<_SelectionContext> _fetchSelectionContext() async {
+    final provider = context.read<TaskProvider>();
+    final allLeaves = await provider.getAllLeafTasks();
+    final leafIds = allLeaves.map((t) => t.id!).toList();
+    final blockedIds = await provider.getBlockedChildIds(leafIds);
+    final scheduleBoostedIds = await provider.getScheduleBoostedLeafIds();
+    final deadlineDaysMap = await provider.getDeadlineBoostedLeafData();
+    final normData = await provider.getNormalizationData(leafIds);
+    return _SelectionContext(
+      allLeaves: allLeaves,
+      leafIds: leafIds,
+      blockedIds: blockedIds,
+      scheduleBoostedIds: scheduleBoostedIds,
+      deadlineDaysMap: deadlineDaysMap,
+      normData: normData,
+    );
+  }
+
   Future<void> _generateNewSet() async {
     // Clear stale per-session tracking sets from previous day
     _workedOnIds.clear();
@@ -387,18 +427,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     _preWorkedOnLastWorkedAt.clear();
 
     final provider = context.read<TaskProvider>();
+    final ctx = await _fetchSelectionContext();
 
-    final allLeaves = await provider.getAllLeafTasks();
-
-    final leafIds = allLeaves.map((t) => t.id!).toList();
-    final blockedIds = await provider.getBlockedChildIds(leafIds);
-
-    // Get schedule-boosted leaf IDs for weight multiplier
-    final scheduleBoostedIds = await provider.getScheduleBoostedLeafIds();
-
-    // Get deadline data: auto-pin IDs + weight boost map
+    // Get deadline auto-pin IDs (separate from weight boost)
     final deadlinePinIds = await provider.getDeadlinePinLeafIds();
-    final deadlineDaysMap = await provider.getDeadlineBoostedLeafData();
 
     // Keep done + pinned tasks, only replace the rest
     final kept = _todaysTasks.where(
@@ -410,10 +442,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     // Auto-pin deadline tasks that aren't already in the set
     final deadlineAutoPins = <Task>[];
-    for (final leaf in allLeaves) {
+    for (final leaf in ctx.allLeaves) {
       if (deadlinePinIds.contains(leaf.id) &&
           !keptIds.contains(leaf.id) &&
-          !blockedIds.contains(leaf.id)) {
+          !ctx.blockedIds.contains(leaf.id)) {
         deadlineAutoPins.add(leaf);
         _pinnedIds.add(leaf.id!);
       }
@@ -421,17 +453,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final allKept = [...kept, ...deadlineAutoPins];
     final allKeptIds = allKept.map((t) => t.id).toSet();
 
-    final eligible = allLeaves.where(
-      (t) => !blockedIds.contains(t.id) && !allKeptIds.contains(t.id),
+    final eligible = ctx.allLeaves.where(
+      (t) => !ctx.blockedIds.contains(t.id) && !allKeptIds.contains(t.id),
     ).toList();
-
-    // Use all leafIds (not just eligible) so norm factors reflect true root sizes
-    final normData = await provider.getNormalizationData(leafIds);
 
     final slotsToFill = (5 - allKept.length).clamp(0, 5);
     final picked = provider.pickWeightedN(eligible, slotsToFill,
-        scheduleBoostedIds: scheduleBoostedIds, deadlineDaysMap: deadlineDaysMap,
-        normData: normData);
+        scheduleBoostedIds: ctx.scheduleBoostedIds,
+        deadlineDaysMap: ctx.deadlineDaysMap,
+        normData: ctx.normData);
     if (!mounted) return;
     _todaysTasks = [...allKept, ...picked];
     await _loadOtherDoneToday();
@@ -957,14 +987,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
   Future<void> _swapTask(int index) async {
     final provider = context.read<TaskProvider>();
-    final allLeaves = await provider.getAllLeafTasks();
-    final leafIds = allLeaves.map((t) => t.id!).toList();
-    final blockedIds = await provider.getBlockedChildIds(leafIds);
+    final ctx = await _fetchSelectionContext();
 
     final currentIds = _todaysTasks.map((t) => t.id).toSet();
-    final eligible = allLeaves.where(
+    final eligible = ctx.allLeaves.where(
       (t) => !currentIds.contains(t.id) &&
-             !blockedIds.contains(t.id) &&
+             !ctx.blockedIds.contains(t.id) &&
              !t.isWorkedOnToday,
     ).toList();
 
@@ -975,7 +1003,41 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       return;
     }
 
-    final picked = provider.pickWeightedN(eligible, 1);
+    // Seed diversity penalty from current Today's 5 (excluding the task
+    // being swapped out) so the replacement respects existing root spread.
+    // Completed tasks aren't in normData.leafToRoots (they're excluded from
+    // getAllLeafTasks), so look up their roots separately.
+    final missingIds = <int>[];
+    for (int i = 0; i < _todaysTasks.length; i++) {
+      if (i == index) continue;
+      final tid = _todaysTasks[i].id;
+      if (tid != null && !ctx.normData.leafToRoots.containsKey(tid)) {
+        missingIds.add(tid);
+      }
+    }
+    final extraRoots = missingIds.isEmpty
+        ? <int, Set<int>>{}
+        : await DatabaseHelper().getRootAncestorsForLeaves(missingIds);
+
+    final rootPickCounts = <int, int>{};
+    for (int i = 0; i < _todaysTasks.length; i++) {
+      if (i == index) continue; // skip the slot being replaced
+      final tid = _todaysTasks[i].id;
+      if (tid != null) {
+        final roots = ctx.normData.leafToRoots[tid]
+            ?? extraRoots[tid]
+            ?? <int>{};
+        for (final r in roots) {
+          rootPickCounts[r] = (rootPickCounts[r] ?? 0) + 1;
+        }
+      }
+    }
+
+    final picked = provider.pickWeightedN(eligible, 1,
+        scheduleBoostedIds: ctx.scheduleBoostedIds,
+        deadlineDaysMap: ctx.deadlineDaysMap,
+        normData: ctx.normData,
+        existingRootPickCounts: rootPickCounts);
     if (picked.isNotEmpty) {
       // Complete async work before mutating state
       final ancestors = await DatabaseHelper().getAncestorPath(picked.first.id!);
