@@ -63,6 +63,7 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 - When a bug is found and confirmed reproducible, always add a test case for it.
 - When writing tests in bulk, use `flutter test --coverage` to find gaps. Parse `coverage/lcov.info` directly (`genhtml` may not be installed).
 - Capture any user-mentioned future work items as todo tasks immediately.
+- **When changing weighting logic**, update `docs/TODAYS_FIVE_ALGORITHM.md` to keep the algorithm doc in sync.
 - When setup instructions change (new deps, build steps), ask user if they want to update README.
 - **Widget tests with sqflite_ffi**: `testWidgets` runs in `FakeAsync` — use `databaseFactoryFfiNoIsolate` in `setUpAll`. Use shared helpers from `test/helpers/async_pump.dart` (`pumpAndLoad`, `pumpAsync`) for async loading. Provide `AuthProvider` and `SyncService` in MultiProvider for screens that need them.
 
