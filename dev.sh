@@ -15,7 +15,9 @@ cleanup() {
   if [ -n "$FLUTTER_PID" ]; then
     kill "$FLUTTER_PID" 2>/dev/null
   fi
-  rm -f "$PID_FILE"
+  # Don't rm $PID_FILE here — Flutter's --pid-file flag deletes it on
+  # shutdown.  Removing it ourselves races with Flutter and causes
+  # "Failed to delete pid file" errors.
   exit 0
 }
 
