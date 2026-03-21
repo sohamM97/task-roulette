@@ -1005,12 +1005,28 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     // Seed diversity penalty from current Today's 5 (excluding the task
     // being swapped out) so the replacement respects existing root spread.
+    // Completed tasks aren't in normData.leafToRoots (they're excluded from
+    // getAllLeafTasks), so look up their roots separately.
+    final missingIds = <int>[];
+    for (int i = 0; i < _todaysTasks.length; i++) {
+      if (i == index) continue;
+      final tid = _todaysTasks[i].id;
+      if (tid != null && !ctx.normData.leafToRoots.containsKey(tid)) {
+        missingIds.add(tid);
+      }
+    }
+    final extraRoots = missingIds.isEmpty
+        ? <int, Set<int>>{}
+        : await DatabaseHelper().getRootAncestorsForLeaves(missingIds);
+
     final rootPickCounts = <int, int>{};
     for (int i = 0; i < _todaysTasks.length; i++) {
       if (i == index) continue; // skip the slot being replaced
       final tid = _todaysTasks[i].id;
       if (tid != null) {
-        final roots = ctx.normData.leafToRoots[tid] ?? <int>{};
+        final roots = ctx.normData.leafToRoots[tid]
+            ?? extraRoots[tid]
+            ?? <int>{};
         for (final r in roots) {
           rootPickCounts[r] = (rootPickCounts[r] ?? 0) + 1;
         }
