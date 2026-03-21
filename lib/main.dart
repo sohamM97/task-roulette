@@ -84,7 +84,7 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   // Tab indices for the bottom nav / PageView. Update both [_tabIndex] values
   // AND the order of children/destinations in [build] if you reorder tabs.
   static const _tabStarred = 0;
@@ -103,7 +103,18 @@ class _AppShellState extends State<AppShell> {
     super.initState();
     // Disabled — see notification_service.dart header.
     // NotificationService.onNotificationTap = _navigateToToday;
+    WidgetsBinding.instance.addObserver(this);
     _initAuth();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Flush any debounced push when the app is backgrounded so a mutation made
+    // within the 5s debounce window isn't lost if the app is killed.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      context.read<SyncService>().flushPush();
+    }
   }
 
   // Disabled with notification handling. Restore alongside the call sites
@@ -153,6 +164,7 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     // Disabled — see notification_service.dart header.
     // NotificationService.onNotificationTap = null;
     _pageController.dispose();
