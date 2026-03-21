@@ -67,6 +67,7 @@ class FirestoreService {
     if (relationships.isEmpty) return;
     for (var i = 0; i < relationships.length; i += 500) {
       final batch = relationships.skip(i).take(500).toList();
+      final now = DateTime.now().millisecondsSinceEpoch;
       final writes = batch.map((rel) {
         final docId = '${rel.parentSyncId}_${rel.childSyncId}';
         return {
@@ -75,6 +76,7 @@ class FirestoreService {
             'fields': {
               'parent_sync_id': {'stringValue': rel.parentSyncId},
               'child_sync_id': {'stringValue': rel.childSyncId},
+              'updated_at': {'integerValue': now.toString()},
             },
           },
         };
@@ -103,6 +105,7 @@ class FirestoreService {
     if (dependencies.isEmpty) return;
     for (var i = 0; i < dependencies.length; i += 500) {
       final batch = dependencies.skip(i).take(500).toList();
+      final now = DateTime.now().millisecondsSinceEpoch;
       final writes = batch.map((dep) {
         final docId = '${dep.taskSyncId}_${dep.dependsOnSyncId}';
         return {
@@ -111,6 +114,7 @@ class FirestoreService {
             'fields': {
               'task_sync_id': {'stringValue': dep.taskSyncId},
               'depends_on_sync_id': {'stringValue': dep.dependsOnSyncId},
+              'updated_at': {'integerValue': now.toString()},
             },
           },
         };
@@ -231,6 +235,51 @@ class FirestoreService {
     return results;
   }
 
+  /// Pulls relationships updated since [lastSyncAt] using a structured query.
+  Future<List<({String parentSyncId, String childSyncId})>> pullRelationshipsSince(
+    String uid,
+    String idToken,
+    int lastSyncAt,
+  ) async {
+    final queryUrl = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
+    );
+    final response = await http.post(
+      queryUrl,
+      headers: _headers(idToken),
+      body: json.encode({
+        'structuredQuery': {
+          'from': [{'collectionId': 'relationships'}],
+          'where': {
+            'fieldFilter': {
+              'field': {'fieldPath': 'updated_at'},
+              'op': 'GREATER_THAN',
+              'value': {'integerValue': lastSyncAt.toString()},
+            },
+          },
+        },
+      }),
+    ).timeout(_httpTimeout);
+    if (response.statusCode != 200) {
+      throw FirestoreException('Query relationships failed: ${response.statusCode}');
+    }
+    final decoded = json.decode(response.body);
+    if (decoded is! List) return [];
+    final results = <({String parentSyncId, String childSyncId})>[];
+    for (final result in decoded) {
+      final doc = (result as Map<String, dynamic>)['document'] as Map<String, dynamic>?;
+      if (doc == null) continue;
+      final fields = doc['fields'] as Map<String, dynamic>?;
+      if (fields == null) continue;
+      final parentSyncId = _stringField(fields, 'parent_sync_id');
+      final childSyncId = _stringField(fields, 'child_sync_id');
+      if (parentSyncId != null && childSyncId != null) {
+        results.add((parentSyncId: parentSyncId, childSyncId: childSyncId));
+      }
+    }
+    return results;
+  }
+
   /// Pulls all dependencies.
   Future<List<({String taskSyncId, String dependsOnSyncId})>> pullAllDependencies(
     String uid,
@@ -258,6 +307,51 @@ class FirestoreService {
       }
       pageToken = body['nextPageToken'] as String?;
     } while (pageToken != null);
+    return results;
+  }
+
+  /// Pulls dependencies updated since [lastSyncAt] using a structured query.
+  Future<List<({String taskSyncId, String dependsOnSyncId})>> pullDependenciesSince(
+    String uid,
+    String idToken,
+    int lastSyncAt,
+  ) async {
+    final queryUrl = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
+    );
+    final response = await http.post(
+      queryUrl,
+      headers: _headers(idToken),
+      body: json.encode({
+        'structuredQuery': {
+          'from': [{'collectionId': 'dependencies'}],
+          'where': {
+            'fieldFilter': {
+              'field': {'fieldPath': 'updated_at'},
+              'op': 'GREATER_THAN',
+              'value': {'integerValue': lastSyncAt.toString()},
+            },
+          },
+        },
+      }),
+    ).timeout(_httpTimeout);
+    if (response.statusCode != 200) {
+      throw FirestoreException('Query dependencies failed: ${response.statusCode}');
+    }
+    final decoded = json.decode(response.body);
+    if (decoded is! List) return [];
+    final results = <({String taskSyncId, String dependsOnSyncId})>[];
+    for (final result in decoded) {
+      final doc = (result as Map<String, dynamic>)['document'] as Map<String, dynamic>?;
+      if (doc == null) continue;
+      final fields = doc['fields'] as Map<String, dynamic>?;
+      if (fields == null) continue;
+      final taskSyncId = _stringField(fields, 'task_sync_id');
+      final dependsOnSyncId = _stringField(fields, 'depends_on_sync_id');
+      if (taskSyncId != null && dependsOnSyncId != null) {
+        results.add((taskSyncId: taskSyncId, dependsOnSyncId: dependsOnSyncId));
+      }
+    }
     return results;
   }
 
@@ -350,6 +444,55 @@ class FirestoreService {
       }
       pageToken = body['nextPageToken'] as String?;
     } while (pageToken != null);
+    return results;
+  }
+
+  /// Pulls schedules updated since [lastSyncAt] using a structured query.
+  Future<List<Map<String, dynamic>>> pullSchedulesSince(
+    String uid,
+    String idToken,
+    int lastSyncAt,
+  ) async {
+    final queryUrl = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
+    );
+    final response = await http.post(
+      queryUrl,
+      headers: _headers(idToken),
+      body: json.encode({
+        'structuredQuery': {
+          'from': [{'collectionId': 'schedules'}],
+          'where': {
+            'fieldFilter': {
+              'field': {'fieldPath': 'updated_at'},
+              'op': 'GREATER_THAN',
+              'value': {'integerValue': lastSyncAt.toString()},
+            },
+          },
+        },
+      }),
+    ).timeout(_httpTimeout);
+    if (response.statusCode != 200) {
+      throw FirestoreException('Query schedules failed: ${response.statusCode}');
+    }
+    final decoded = json.decode(response.body);
+    if (decoded is! List) return [];
+    final results = <Map<String, dynamic>>[];
+    for (final result in decoded) {
+      final doc = (result as Map<String, dynamic>)['document'] as Map<String, dynamic>?;
+      if (doc == null) continue;
+      final fields = doc['fields'] as Map<String, dynamic>?;
+      if (fields == null) continue;
+      final docName = doc['name'] as String;
+      final syncId = docName.split('/').last;
+      results.add({
+        'sync_id': syncId,
+        'task_sync_id': _stringField(fields, 'task_sync_id') ?? '',
+        'schedule_type': _stringField(fields, 'schedule_type') ?? 'weekly',
+        'day_of_week': _intFieldNullable(fields, 'day_of_week'),
+        'updated_at': _intFieldNullable(fields, 'updated_at'),
+      });
+    }
     return results;
   }
 

@@ -21,6 +21,7 @@ class SyncService {
   bool _syncing = false;
   bool _pushPending = false;
   bool _pullPending = false;
+  bool _skipNextPeriodicPull = false;
 
   static const _prefsKeyLastSyncAt = 'sync_last_sync_at';
   static const _prefsKeyInitialMigrationDone = 'sync_initial_migration_done';
@@ -44,7 +45,12 @@ class SyncService {
   void startPeriodicPull() {
     _periodicPullTimer?.cancel();
     _periodicPullTimer = Timer.periodic(_pullInterval, (_) {
-      if (_canSync) pull();
+      if (!_canSync) return;
+      if (_skipNextPeriodicPull) {
+        _skipNextPeriodicPull = false;
+        return;
+      }
+      pull();
     });
     // Immediate pull so we don't wait 5 minutes for the first sync.
     if (_canSync) pull();
@@ -406,6 +412,9 @@ class SyncService {
       }
 
       _authProvider.setSyncStatus(SyncStatus.synced);
+      // Skip the next periodic pull — we just pushed, so remote matches local.
+      // Explicit pull() calls (startup, manual sync) are not affected.
+      _skipNextPeriodicPull = true;
     } catch (e) {
       _authProvider.setSyncStatus(SyncStatus.error, error: _userFriendlyError(e));
     } finally {
@@ -455,76 +464,112 @@ class SyncService {
         if (changed) anyChange = true;
       }
 
-      // Pull all relationships and dependencies, then reconcile with local
-      final remoteRels = await _firestore.pullAllRelationships(uid, idToken);
-      for (final rel in remoteRels) {
-        // Check for DAG cycle before inserting
-        final wouldCycle = await _db.wouldRelationshipCreateCycle(
-            rel.parentSyncId, rel.childSyncId);
-        if (!wouldCycle) {
-          await _db.upsertRelationshipFromRemote(rel.parentSyncId, rel.childSyncId);
+      // Pull relationships: delta when possible, full on first sync
+      if (lastSyncAt != null) {
+        // Delta pull — only relationships added/modified since last sync.
+        // Deletions are handled by the sync_queue push mechanism:
+        // when a device deletes a relationship, it pushes a 'remove' entry
+        // that calls deleteRelationship on Firestore. The next full pull
+        // (on app restart) reconciles any missed deletions.
+        final recentRels = await _firestore.pullRelationshipsSince(
+            uid, idToken, lastSyncAt);
+        for (final rel in recentRels) {
+          final wouldCycle = await _db.wouldRelationshipCreateCycle(
+              rel.parentSyncId, rel.childSyncId);
+          if (!wouldCycle) {
+            await _db.upsertRelationshipFromRemote(
+                rel.parentSyncId, rel.childSyncId);
+            anyChange = true;
+          }
+        }
+      } else {
+        // Full pull — first sync after sign-in, reconcile deletions
+        final remoteRels = await _firestore.pullAllRelationships(uid, idToken);
+        for (final rel in remoteRels) {
+          final wouldCycle = await _db.wouldRelationshipCreateCycle(
+              rel.parentSyncId, rel.childSyncId);
+          if (!wouldCycle) {
+            await _db.upsertRelationshipFromRemote(
+                rel.parentSyncId, rel.childSyncId);
+          }
+        }
+        final remoteRelSet = remoteRels
+            .map((r) => '${r.parentSyncId}:${r.childSyncId}')
+            .toSet();
+        final pendingRelKeys = await _db.getPendingSyncAddKeys('relationship');
+        final localRels = await _db.getAllRelationshipsWithSyncIds();
+        for (final local in localRels) {
+          final key = '${local.parentSyncId}:${local.childSyncId}';
+          if (!remoteRelSet.contains(key) && !pendingRelKeys.contains(key)) {
+            await _db.removeRelationshipFromRemote(
+                local.parentSyncId, local.childSyncId);
+            anyChange = true;
+          }
         }
       }
 
-      // Remove local synced relationships that no longer exist remotely
-      // but skip any that are pending push (locally created, not yet synced)
-      final remoteRelSet = remoteRels
-          .map((r) => '${r.parentSyncId}:${r.childSyncId}')
-          .toSet();
-      final pendingRelKeys = await _db.getPendingSyncAddKeys('relationship');
-      final localRels = await _db.getAllRelationshipsWithSyncIds();
-      for (final local in localRels) {
-        final key = '${local.parentSyncId}:${local.childSyncId}';
-        if (!remoteRelSet.contains(key) && !pendingRelKeys.contains(key)) {
-          await _db.removeRelationshipFromRemote(
-              local.parentSyncId, local.childSyncId);
+      // Pull dependencies: delta when possible, full on first sync
+      if (lastSyncAt != null) {
+        final recentDeps = await _firestore.pullDependenciesSince(
+            uid, idToken, lastSyncAt);
+        for (final dep in recentDeps) {
+          final wouldCycle = await _db.wouldDependencyCreateCycle(
+              dep.taskSyncId, dep.dependsOnSyncId);
+          if (!wouldCycle) {
+            await _db.upsertDependencyFromRemote(
+                dep.taskSyncId, dep.dependsOnSyncId);
+            anyChange = true;
+          }
+        }
+      } else {
+        final remoteDeps = await _firestore.pullAllDependencies(uid, idToken);
+        for (final dep in remoteDeps) {
+          final wouldCycle = await _db.wouldDependencyCreateCycle(
+              dep.taskSyncId, dep.dependsOnSyncId);
+          if (!wouldCycle) {
+            await _db.upsertDependencyFromRemote(
+                dep.taskSyncId, dep.dependsOnSyncId);
+          }
+        }
+        final remoteDepSet = remoteDeps
+            .map((d) => '${d.taskSyncId}:${d.dependsOnSyncId}')
+            .toSet();
+        final pendingDepKeys = await _db.getPendingSyncAddKeys('dependency');
+        final localDeps = await _db.getAllDependenciesWithSyncIds();
+        for (final local in localDeps) {
+          final key = '${local.taskSyncId}:${local.dependsOnSyncId}';
+          if (!remoteDepSet.contains(key) && !pendingDepKeys.contains(key)) {
+            await _db.removeDependencyFromRemote(
+                local.taskSyncId, local.dependsOnSyncId);
+            anyChange = true;
+          }
+        }
+      }
+
+      // Pull schedules: delta when possible, full on first sync
+      if (lastSyncAt != null) {
+        final recentSchedules = await _firestore.pullSchedulesSince(
+            uid, idToken, lastSyncAt);
+        for (final schedule in recentSchedules) {
+          await _db.upsertScheduleFromRemote(schedule);
           anyChange = true;
         }
-      }
-
-      final remoteDeps = await _firestore.pullAllDependencies(uid, idToken);
-      for (final dep in remoteDeps) {
-        // Check for dependency cycle before inserting
-        final wouldCycle = await _db.wouldDependencyCreateCycle(
-            dep.taskSyncId, dep.dependsOnSyncId);
-        if (!wouldCycle) {
-          await _db.upsertDependencyFromRemote(dep.taskSyncId, dep.dependsOnSyncId);
+      } else {
+        final remoteSchedules = await _firestore.pullAllSchedules(uid, idToken);
+        for (final schedule in remoteSchedules) {
+          await _db.upsertScheduleFromRemote(schedule);
         }
-      }
-
-      // Remove local synced dependencies that no longer exist remotely
-      // but skip any that are pending push (locally created, not yet synced)
-      final remoteDepSet = remoteDeps
-          .map((d) => '${d.taskSyncId}:${d.dependsOnSyncId}')
-          .toSet();
-      final pendingDepKeys = await _db.getPendingSyncAddKeys('dependency');
-      final localDeps = await _db.getAllDependenciesWithSyncIds();
-      for (final local in localDeps) {
-        final key = '${local.taskSyncId}:${local.dependsOnSyncId}';
-        if (!remoteDepSet.contains(key) && !pendingDepKeys.contains(key)) {
-          await _db.removeDependencyFromRemote(
-              local.taskSyncId, local.dependsOnSyncId);
-          anyChange = true;
-        }
-      }
-
-      // Pull schedules
-      final remoteSchedules = await _firestore.pullAllSchedules(uid, idToken);
-      for (final schedule in remoteSchedules) {
-        await _db.upsertScheduleFromRemote(schedule);
-      }
-      // Remove local schedules not in remote
-      // but skip any that are pending push (locally created, not yet synced)
-      final remoteScheduleIds = remoteSchedules
-          .map((s) => s['sync_id'] as String)
-          .toSet();
-      final pendingScheduleKeys = await _db.getPendingSyncAddKeys('schedule');
-      final localScheduleIds = await _db.getAllScheduleSyncIds();
-      for (final localSyncId in localScheduleIds) {
-        if (!remoteScheduleIds.contains(localSyncId) &&
-            !pendingScheduleKeys.contains(localSyncId)) {
-          await _db.deleteScheduleBySyncId(localSyncId);
-          anyChange = true;
+        final remoteScheduleIds = remoteSchedules
+            .map((s) => s['sync_id'] as String)
+            .toSet();
+        final pendingScheduleKeys = await _db.getPendingSyncAddKeys('schedule');
+        final localScheduleIds = await _db.getAllScheduleSyncIds();
+        for (final localSyncId in localScheduleIds) {
+          if (!remoteScheduleIds.contains(localSyncId) &&
+              !pendingScheduleKeys.contains(localSyncId)) {
+            await _db.deleteScheduleBySyncId(localSyncId);
+            anyChange = true;
+          }
         }
       }
 
