@@ -2503,6 +2503,56 @@ void main() {
     });
   });
 
+  group('Deadline auto-pin suppression', () {
+    test('suppress and retrieve suppressed IDs', () async {
+      await db.suppressDeadlineAutoPin('2026-03-21', 10);
+      await db.suppressDeadlineAutoPin('2026-03-21', 20);
+      await db.suppressDeadlineAutoPin('2026-03-22', 30);
+
+      final ids = await db.getDeadlineSuppressedIds('2026-03-21');
+      expect(ids, {10, 20});
+    });
+
+    test('suppress is idempotent (ConflictAlgorithm.ignore)', () async {
+      await db.suppressDeadlineAutoPin('2026-03-21', 10);
+      await db.suppressDeadlineAutoPin('2026-03-21', 10); // duplicate
+      final ids = await db.getDeadlineSuppressedIds('2026-03-21');
+      expect(ids, {10});
+    });
+
+    test('unsuppress removes specific task for date', () async {
+      await db.suppressDeadlineAutoPin('2026-03-21', 10);
+      await db.suppressDeadlineAutoPin('2026-03-21', 20);
+      await db.unsuppressDeadlineAutoPin('2026-03-21', 10);
+
+      final ids = await db.getDeadlineSuppressedIds('2026-03-21');
+      expect(ids, {20});
+    });
+
+    test('unsuppress does not affect other dates', () async {
+      await db.suppressDeadlineAutoPin('2026-03-21', 10);
+      await db.suppressDeadlineAutoPin('2026-03-22', 10);
+      await db.unsuppressDeadlineAutoPin('2026-03-21', 10);
+
+      final ids21 = await db.getDeadlineSuppressedIds('2026-03-21');
+      final ids22 = await db.getDeadlineSuppressedIds('2026-03-22');
+      expect(ids21, isEmpty);
+      expect(ids22, {10});
+    });
+
+    test('getDeadlineSuppressedIds returns empty for unknown date', () async {
+      final ids = await db.getDeadlineSuppressedIds('2099-01-01');
+      expect(ids, isEmpty);
+    });
+
+    test('deleteAllLocalData clears suppressed table', () async {
+      await db.suppressDeadlineAutoPin('2026-03-21', 10);
+      await db.deleteAllLocalData();
+      final ids = await db.getDeadlineSuppressedIds('2026-03-21');
+      expect(ids, isEmpty);
+    });
+  });
+
   group('getTodaysFiveTaskAndPinIds', () {
     test('returns both taskIds and pinnedIds', () async {
       final id1 = await db.insertTask(Task(name: 'Task 1'));
