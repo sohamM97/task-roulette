@@ -2909,6 +2909,49 @@ void main() {
           reason: 'Should not over-pick from root A (avg=$avgFromA)');
     });
 
+    test('existingRootPickCounts seeds diversity penalty for swap', () async {
+      // 2 equal roots with 5 leaves each
+      final rootA = await db.insertTask(Task(name: 'A'));
+      final rootB = await db.insertTask(Task(name: 'B'));
+      final allLeaves = <Task>[];
+
+      for (var i = 0; i < 5; i++) {
+        final id = await db.insertTask(Task(name: 'A$i'));
+        await db.addRelationship(rootA, id);
+        final t = await db.getTaskById(id);
+        allLeaves.add(t!);
+      }
+      for (var i = 0; i < 5; i++) {
+        final id = await db.insertTask(Task(name: 'B$i'));
+        await db.addRelationship(rootB, id);
+        final t = await db.getTaskById(id);
+        allLeaves.add(t!);
+      }
+
+      final leafIds = allLeaves.map((t) => t.id!).toList();
+      final normData = await db.getNormalizationData(leafIds);
+
+      // Simulate: today's 5 already has 3 tasks from root A.
+      // When swapping, pre-seeded counts should penalize root A heavily.
+      final existingCounts = <int, int>{rootA: 3};
+
+      final rootBLeafIds = allLeaves.sublist(5).map((t) => t.id!).toSet();
+      var pickedFromB = 0;
+      const runs = 100;
+
+      for (var i = 0; i < runs; i++) {
+        final picked = provider.pickWeightedN(allLeaves, 1,
+            normData: normData, existingRootPickCounts: existingCounts);
+        if (rootBLeafIds.contains(picked.first.id)) pickedFromB++;
+      }
+
+      // With 3 existing picks from A, diversity penalty = 0.3^3 = 0.027x
+      // on root A. Root B should be picked the vast majority of the time.
+      expect(pickedFromB, greaterThan(70),
+          reason: 'Root B should dominate when A has 3 existing picks '
+                  '(got $pickedFromB/100)');
+    });
+
     test('backward compatible when normData is null', () async {
       final id = await db.insertTask(Task(name: 'Solo'));
       final t = await db.getTaskById(id);
