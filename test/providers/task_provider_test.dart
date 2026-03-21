@@ -1476,7 +1476,7 @@ void main() {
       expect(task!.isSomeday, isFalse);
     });
 
-    test('someday tasks get no staleness weight boost', () async {
+    test('someday tasks get no staleness, started, or novelty weight boost', () async {
       // Create a someday task that's been untouched for 30 days
       final old = DateTime.now().subtract(const Duration(days: 30)).millisecondsSinceEpoch;
       final somedayId = await db.insertTask(Task(name: 'Someday', isSomeday: true, createdAt: old));
@@ -1491,6 +1491,122 @@ void main() {
       // appear more often. Instead, just verify both are in the pool.
       final picked = provider.pickWeightedN(leaves, 2);
       expect(picked, hasLength(2));
+    });
+
+    test('someday tasks skip started boost', () async {
+      // Create a started someday task and a started normal task
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final somedayId = await db.insertTask(Task(
+        name: 'Someday Started',
+        isSomeday: true,
+        startedAt: now,
+        createdAt: now,
+      ));
+      final normalId = await db.insertTask(Task(
+        name: 'Normal Started',
+        startedAt: now,
+        createdAt: now,
+      ));
+
+      final leaves = await provider.getAllLeafTasks();
+
+      // Both are started, but someday should not get 2x boost.
+      // Run many single picks to verify statistical difference.
+      int somedayPicks = 0;
+      int normalPicks = 0;
+      for (int i = 0; i < 200; i++) {
+        final picked = provider.pickWeightedN(leaves, 1);
+        if (picked.first.id == somedayId) somedayPicks++;
+        if (picked.first.id == normalId) normalPicks++;
+      }
+      // Normal should be picked roughly 2x more often (started boost)
+      expect(normalPicks, greaterThan(somedayPicks));
+    });
+
+    test('someday tasks skip novelty boost', () async {
+      // Create a brand-new someday task and a brand-new normal task
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final somedayId = await db.insertTask(Task(
+        name: 'Someday New',
+        isSomeday: true,
+        createdAt: now,
+      ));
+      // Create a normal task that is NOT new (no novelty boost)
+      final oldTime = DateTime.now().subtract(const Duration(days: 10)).millisecondsSinceEpoch;
+      final normalId = await db.insertTask(Task(
+        name: 'Normal Old',
+        createdAt: oldTime,
+      ));
+
+      final leaves = await provider.getAllLeafTasks();
+
+      // Someday task is new but should NOT get novelty boost.
+      // Normal task is old so gets staleness boost instead.
+      int somedayPicks = 0;
+      int normalPicks = 0;
+      for (int i = 0; i < 200; i++) {
+        final picked = provider.pickWeightedN(leaves, 1);
+        if (picked.first.id == somedayId) somedayPicks++;
+        if (picked.first.id == normalId) normalPicks++;
+      }
+      expect(normalPicks, greaterThan(somedayPicks));
+    });
+
+    test('someday task with all boostable traits gets same weight as plain task', () async {
+      // A someday task that is started + new should have the same weight
+      // as a plain non-started, old task (both should be ~1.0 base).
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final oldTime = DateTime.now().subtract(const Duration(days: 30)).millisecondsSinceEpoch;
+
+      // Someday: started + new (all boosts skipped → weight ~1.0)
+      final somedayId = await db.insertTask(Task(
+        name: 'Someday All Boosts',
+        isSomeday: true,
+        startedAt: now,
+        createdAt: now,
+      ));
+      // Normal: not started + old (staleness applies → weight > 1.0)
+      final normalId = await db.insertTask(Task(
+        name: 'Normal Old',
+        createdAt: oldTime,
+      ));
+
+      final leaves = await provider.getAllLeafTasks();
+
+      // Normal old task gets staleness boost (~1.5x at 30 days),
+      // someday task gets nothing despite being started + new.
+      int somedayPicks = 0;
+      int normalPicks = 0;
+      for (int i = 0; i < 300; i++) {
+        final picked = provider.pickWeightedN(leaves, 1);
+        if (picked.first.id == somedayId) somedayPicks++;
+        if (picked.first.id == normalId) normalPicks++;
+      }
+      // Normal should dominate due to staleness boost
+      expect(normalPicks, greaterThan(somedayPicks));
+    });
+
+    test('toggling someday on clears high priority in weight selection', () async {
+      // Verify that marking a task someday clears its priority,
+      // so it can't have both someday + high priority boosts.
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final taskId = await db.insertTask(Task(
+        name: 'Priority Task',
+        priority: 1,
+        createdAt: now,
+      ));
+
+      await provider.loadRootTasks();
+      var task = provider.tasks.firstWhere((t) => t.id == taskId);
+      expect(task.isHighPriority, isTrue);
+      expect(task.isSomeday, isFalse);
+
+      // Toggle someday on — should clear priority
+      await provider.updateTaskSomeday(taskId, true);
+      task = provider.tasks.firstWhere((t) => t.id == taskId);
+      expect(task.isSomeday, isTrue);
+      expect(task.isHighPriority, isFalse);
+      expect(task.priority, 0);
     });
 
     test('field updates on non-currentParent task do not break currentParent', () async {

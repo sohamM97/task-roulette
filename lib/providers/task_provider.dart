@@ -285,8 +285,8 @@ class TaskProvider extends ChangeNotifier {
     // Priority: high = 3x
     if (t.isHighPriority) w *= 3.0;
 
-    // Started: committed tasks = 2x
-    if (t.isStarted) w *= 2.0;
+    // Started: committed tasks = 2x. Someday tasks skip this.
+    if (t.isStarted && !t.isSomeday) w *= 2.0;
 
     // Staleness: logarithmic curve, cap 2x. Someday tasks skip staleness.
     if (!t.isSomeday) {
@@ -298,11 +298,13 @@ class TaskProvider extends ChangeNotifier {
       w *= staleness.clamp(1.0, 2.0);
     }
 
-    // Novelty: added in last 3 days = 1.3x
-    final daysOld = DateTime.now()
-        .difference(DateTime.fromMillisecondsSinceEpoch(t.createdAt))
-        .inDays;
-    if (daysOld <= 3) w *= 1.3;
+    // Novelty: added in last 3 days = 1.3x. Someday tasks skip this.
+    if (!t.isSomeday) {
+      final daysOld = DateTime.now()
+          .difference(DateTime.fromMillisecondsSinceEpoch(t.createdAt))
+          .inDays;
+      if (daysOld <= 3) w *= 1.3;
+    }
 
     // Deadline proximity: hyperbolic boost within 14-day window.
     // Uses inherited deadline from deadlineDaysMap if available (for leaves

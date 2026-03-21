@@ -24,24 +24,26 @@ Each candidate gets a base weight of `1.0`, multiplied by several independent fa
 
 ```
 weight = 1.0
-       * priority_boost        (high priority: 3.0x)
-       * started_boost          (in progress: 2.0x)
-       * staleness_boost        (1.0 + 0.25 * ln(days + 1), clamped 1.0–2.0)
-       * novelty_boost          (created ≤ 3 days ago: 1.3x)
+       * priority_boost        (high priority: 3.0x — mutually exclusive with someday)
+       * started_boost          (in progress: 2.0x — someday tasks skip)
+       * staleness_boost        (1.0 + 0.25 * ln(days + 1), clamped 1.0–2.0 — someday tasks skip)
+       * novelty_boost          (created ≤ 3 days ago: 1.3x — someday tasks skip)
        * deadline_boost         (within 14 days: 1.0 + 7.0/(|days| + 1))
        * schedule_boost         (scheduled for today: 2.5x)
        * normalization_factor   (1/sqrt(N) where N = leaf count under root)
 ```
 
+> **Someday tasks** skip started, staleness, and novelty boosts — they stay at base weight `1.0` (plus deadline/schedule/normalization if applicable). High priority is mutually exclusive with someday (toggling one clears the other).
+
 ### Factor Details
 
 **Priority** — High-priority tasks get 3x weight. This is the strongest single factor.
 
-**Started** — Tasks the user has started working on get 2x, reflecting commitment.
+**Started** — Tasks the user has started working on get 2x, reflecting commitment. Someday tasks skip this.
 
 **Staleness** — Logarithmic curve based on days since last touched (`lastWorkedAt` → `startedAt` → `createdAt`). Ensures neglected tasks surface. Someday tasks skip this.
 
-**Novelty** — Newly created tasks (≤ 3 days) get a 1.3x bump so they appear soon after creation.
+**Novelty** — Newly created tasks (≤ 3 days) get a 1.3x bump so they appear soon after creation. Someday tasks skip this.
 
 **Deadline proximity** — Hyperbolic boost within 14 days of deadline:
 - Due today: 8.0x
