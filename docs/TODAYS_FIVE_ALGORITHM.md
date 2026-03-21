@@ -109,6 +109,7 @@ This strongly encourages spread across different root categories without making 
 2. Auto-pin deadline tasks (due today or overdue)
 3. Fetch `_SelectionContext` (all leaves, blocked IDs, schedule boosts, deadline data, normalization)
 4. Fill remaining slots via weighted roulette with full normalization + diversity penalty
+   - **Pinned tasks are bonus** — only completed tasks count against the 5 slots. Pinned-but-undone tasks are appended on top, so pinning never reduces the number of algorithm-picked tasks.
 
 ### Swap (`_swapTask`)
 

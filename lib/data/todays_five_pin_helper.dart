@@ -25,13 +25,11 @@ class TodaysFivePinHelper {
   /// Toggle pin status for [taskId].
   ///
   /// If the task is already pinned, it gets unpinned.
-  /// If unpinned and not yet in Today's 5, it replaces the last unpinned
-  /// undone slot, or gets appended if all slots are done/pinned (up to
-  /// [maxSlots]).
+  /// If unpinned and not yet in Today's 5, it is always appended as a
+  /// bonus task (never replaces an existing slot), up to [maxSlots].
   ///
   /// Returns a [PinResult] with the mutated state, or `null` if the
-  /// operation was blocked (max pins reached, or max slots reached with
-  /// no replaceable slot).
+  /// operation was blocked (max pins reached, or max slots reached).
   static PinResult? togglePin(TodaysFiveData saved, int taskId) {
     final taskIds = List<int>.from(saved.taskIds);
     final pinnedIds = Set<int>.from(saved.pinnedIds);
@@ -48,14 +46,9 @@ class TodaysFivePinHelper {
 
     pinnedIds.add(taskId);
 
-    // If task isn't already in Today's 5, add it
+    // If task isn't already in Today's 5, always append (never replace)
     if (!taskIds.contains(taskId)) {
-      final index = _findReplaceableSlot(
-        taskIds, saved.completedIds, pinnedIds,
-      );
-      if (index != null) {
-        taskIds[index] = taskId;
-      } else if (taskIds.length < maxSlots) {
+      if (taskIds.length < maxSlots) {
         taskIds.add(taskId);
       } else {
         // Can't fit — roll back
@@ -69,23 +62,17 @@ class TodaysFivePinHelper {
 
   /// Pin a newly created task into Today's 5.
   ///
-  /// Always pins the task (never toggles). Replaces the last unpinned
-  /// undone slot, or appends (up to [maxSlots]).
+  /// Always pins the task (never toggles). Appends as a bonus task
+  /// (up to [maxSlots]).
   ///
-  /// Returns a [PinResult], or `null` if blocked (max pins or max slots
-  /// with no replaceable slot).
+  /// Returns a [PinResult], or `null` if blocked (max pins or max slots).
   static PinResult? pinNewTask(TodaysFiveData saved, int taskId) {
     final taskIds = List<int>.from(saved.taskIds);
     final pinnedIds = Set<int>.from(saved.pinnedIds);
 
     if (pinnedIds.length >= maxPins) return null;
 
-    final index = _findReplaceableSlot(
-      taskIds, saved.completedIds, pinnedIds,
-    );
-    if (index != null) {
-      taskIds[index] = taskId;
-    } else if (taskIds.length < maxSlots) {
+    if (taskIds.length < maxSlots) {
       taskIds.add(taskId);
     } else {
       return null;
@@ -133,19 +120,4 @@ class TodaysFivePinHelper {
     return result;
   }
 
-  /// Find the last unpinned, undone slot index (searching from end).
-  /// Returns `null` if no such slot exists.
-  static int? _findReplaceableSlot(
-    List<int> taskIds,
-    Set<int> completedIds,
-    Set<int> pinnedIds,
-  ) {
-    for (int i = taskIds.length - 1; i >= 0; i--) {
-      final id = taskIds[i];
-      if (!completedIds.contains(id) && !pinnedIds.contains(id)) {
-        return i;
-      }
-    }
-    return null;
-  }
 }

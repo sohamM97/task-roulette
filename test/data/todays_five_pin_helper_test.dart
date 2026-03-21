@@ -39,20 +39,19 @@ void main() {
       expect(result.taskIds, [1, 2, 3]);
     });
 
-    test('pin external task replaces last unpinned undone slot', () {
+    test('pin external task always appends (never replaces)', () {
       final state = _state(
         taskIds: [1, 2, 3, 4, 5],
         pinnedIds: {1},
       );
       final result = TodaysFivePinHelper.togglePin(state, 99);
       expect(result, isNotNull);
-      // Replaces slot 4 (index 4, last unpinned undone)
-      expect(result!.taskIds, [1, 2, 3, 4, 99]);
-      expect(result.taskIds, isNot(contains(5)));
+      // All original tasks preserved, 99 appended
+      expect(result!.taskIds, [1, 2, 3, 4, 5, 99]);
       expect(result.pinnedIds, {1, 99});
     });
 
-    test('pin external task skips completed and pinned when finding slot', () {
+    test('pin external task appends regardless of slot states', () {
       // [1=pinned, 2=done, 3=unpinned, 4=unpinned, 5=done]
       final state = _state(
         taskIds: [1, 2, 3, 4, 5],
@@ -61,9 +60,9 @@ void main() {
       );
       final result = TodaysFivePinHelper.togglePin(state, 99);
       expect(result, isNotNull);
-      // Should replace 4 (last unpinned undone, searching from end)
-      expect(result!.taskIds[3], 99);
-      expect(result.taskIds, contains(3)); // 3 kept
+      // All original preserved, 99 appended at end
+      expect(result!.taskIds, [1, 2, 3, 4, 5, 99]);
+      expect(result.pinnedIds, {1, 99});
     });
 
     test('pin external task appends when all slots done or pinned', () {
@@ -277,15 +276,15 @@ void main() {
   });
 
   group('pinNewTask', () {
-    test('replaces last unpinned undone slot', () {
+    test('always appends new task (never replaces)', () {
       final state = _state(
         taskIds: [1, 2, 3, 4, 5],
         pinnedIds: {1},
       );
       final result = TodaysFivePinHelper.pinNewTask(state, 99);
       expect(result, isNotNull);
-      expect(result!.taskIds, contains(99));
-      expect(result.taskIds, isNot(contains(5))); // replaced
+      // All original tasks preserved, 99 appended
+      expect(result!.taskIds, [1, 2, 3, 4, 5, 99]);
       expect(result.pinnedIds, {1, 99});
     });
 
@@ -301,13 +300,13 @@ void main() {
       final resultTaskIdSet = result!.taskIds.toSet();
       // The new task must be in the set
       expect(resultTaskIdSet, contains(99));
-      // The replaced task must NOT be in the set
-      expect(resultTaskIdSet, isNot(contains(5)));
+      // All original tasks preserved (no replacement)
+      expect(resultTaskIdSet, containsAll([1, 2, 3, 4, 5]));
       // pinnedIds is a subset of taskIds
       expect(resultTaskIdSet.containsAll(result.pinnedIds), isTrue);
     });
 
-    test('appends when no replaceable slot', () {
+    test('appends regardless of slot states', () {
       final state = _state(
         taskIds: [1, 2, 3],
         completedIds: {2, 3},
@@ -357,11 +356,13 @@ void main() {
           pinnedIds: result.pinnedIds,
         );
       }
-      // All 5 original replaced, 5 new pinned
+      // Original 5 preserved + 5 new appended = 10 total
       expect(state.pinnedIds.length, 5);
-      expect(state.taskIds.toSet(), newIds.toSet());
+      expect(state.taskIds.length, 10);
+      expect(state.taskIds.toSet(), containsAll(newIds));
+      expect(state.taskIds.toSet(), containsAll([1, 2, 3, 4, 5]));
 
-      // 6th should fail
+      // 6th should fail (max pins)
       final result = TodaysFivePinHelper.pinNewTask(state, 60);
       expect(result, isNull);
     });

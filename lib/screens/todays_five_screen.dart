@@ -407,7 +407,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     // No deadline auto-pin here — auto-pin only happens when explicitly
     // setting a deadline from All Tasks. Weight boost still applies via ctx.
 
-    // Keep done + pinned tasks, only replace the rest
+    // Keep done + pinned tasks, only replace the rest.
+    // Pinned tasks are bonus — they don't consume the 5 random slots.
     final kept = _todaysTasks.where(
       (t) => _completedIds.contains(t.id) || _pinnedIds.contains(t.id),
     ).toList();
@@ -419,7 +420,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       (t) => !ctx.blockedIds.contains(t.id) && !keptIds.contains(t.id),
     ).toList();
 
-    final slotsToFill = (5 - kept.length).clamp(0, 5);
+    // Only completed tasks count against the 5 slots — pinned tasks are extra
+    final doneCount = kept.where((t) => _completedIds.contains(t.id)).length;
+    final slotsToFill = (5 - doneCount).clamp(0, 5);
     final picked = provider.pickWeightedN(eligible, slotsToFill,
         scheduleBoostedIds: ctx.scheduleBoostedIds,
         deadlineDaysMap: ctx.deadlineDaysMap,
