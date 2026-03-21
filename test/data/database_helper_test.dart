@@ -2545,6 +2545,19 @@ void main() {
       expect(ids, isEmpty);
     });
 
+    test('purgeOldDeadlineSuppressed removes rows before given date', () async {
+      await db.suppressDeadlineAutoPin('2026-03-19', 10);
+      await db.suppressDeadlineAutoPin('2026-03-20', 20);
+      await db.suppressDeadlineAutoPin('2026-03-21', 30);
+
+      await db.purgeOldDeadlineSuppressed('2026-03-21');
+
+      // Only today's row survives
+      expect(await db.getDeadlineSuppressedIds('2026-03-19'), isEmpty);
+      expect(await db.getDeadlineSuppressedIds('2026-03-20'), isEmpty);
+      expect(await db.getDeadlineSuppressedIds('2026-03-21'), {30});
+    });
+
     test('deleteAllLocalData clears suppressed table', () async {
       await db.suppressDeadlineAutoPin('2026-03-21', 10);
       await db.deleteAllLocalData();

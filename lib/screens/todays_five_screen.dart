@@ -145,9 +145,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     // Migrate SharedPreferences → DB (idempotent, safe to call every time)
     await db.migrateTodaysFiveFromPrefs();
 
-    // Load suppressed deadline auto-pin IDs for today
+    // Load suppressed deadline auto-pin IDs for today + purge old rows
     _deadlineSuppressedIds.clear();
     _deadlineSuppressedIds.addAll(await db.getDeadlineSuppressedIds(today));
+    db.purgeOldDeadlineSuppressed(today).catchError(
+        (e) => debugPrint('Failed to purge old suppression rows: $e'));
 
     // Try to restore from DB
     final saved = await db.loadTodaysFiveState(today);
@@ -629,10 +631,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       // auto-pin so it doesn't get re-pinned on reload/regeneration.
       if (wasPinned && _effectiveDeadlines.containsKey(task.id)) {
         _deadlineSuppressedIds.add(task.id!);
-        DatabaseHelper().suppressDeadlineAutoPin(_todayKey(), task.id!);
+        DatabaseHelper().suppressDeadlineAutoPin(_todayKey(), task.id!).catchError(
+            (e) => debugPrint('Failed to suppress deadline auto-pin: $e'));
       } else if (!wasPinned && _deadlineSuppressedIds.contains(task.id)) {
         _deadlineSuppressedIds.remove(task.id!);
-        DatabaseHelper().unsuppressDeadlineAutoPin(_todayKey(), task.id!);
+        DatabaseHelper().unsuppressDeadlineAutoPin(_todayKey(), task.id!).catchError(
+            (e) => debugPrint('Failed to unsuppress deadline auto-pin: $e'));
       }
       _persistAndTrim();
     }

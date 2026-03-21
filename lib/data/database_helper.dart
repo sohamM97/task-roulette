@@ -2505,6 +2505,13 @@ class DatabaseHelper {
     return rows.map((r) => r['task_id'] as int).toSet();
   }
 
+  /// Deletes suppression rows older than [today] to prevent unbounded growth.
+  Future<void> purgeOldDeadlineSuppressed(String today) async {
+    final db = await database;
+    await db.delete('todays_five_deadline_suppressed',
+        where: 'date < ?', whereArgs: [today]);
+  }
+
   /// Returns Today's 5 state for [date] with sync_ids instead of local IDs.
   /// Used by SyncService to push state to Firestore.
   Future<List<Map<String, dynamic>>> getTodaysFiveStateWithSyncIds(String date) async {
