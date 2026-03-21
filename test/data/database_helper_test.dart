@@ -3536,6 +3536,58 @@ void main() {
       expect(state.taskIds, isNot(contains(idC)));
     });
 
+    test('upsertTodaysFiveFromRemote: LWW propagates remote unpin when remote is newer', () async {
+      final id1 = await insertTaskWithSyncId('Task A', 'sync-a');
+      final id2 = await insertTaskWithSyncId('Task B', 'sync-b');
+
+      // Local: A pinned, B not — persisted at T=100
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [id1, id2],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {id1},
+      );
+
+      // Remote: A unpinned (user unpinned on another device) — updated at T=200
+      final changed = await db.upsertTodaysFiveFromRemote(date, [
+        {'task_sync_id': 'sync-a', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 0},
+        {'task_sync_id': 'sync-b', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 1},
+      ], remoteUpdatedAt: 200, localPersistedAt: 100);
+
+      expect(changed, true);
+      final state = await db.loadTodaysFiveState(date);
+      expect(state, isNotNull);
+      // A should be unpinned — remote unpin propagated via LWW
+      expect(state!.pinnedIds, isEmpty);
+    });
+
+    test('upsertTodaysFiveFromRemote: LWW preserves local pin when local is newer', () async {
+      final id1 = await insertTaskWithSyncId('Task A', 'sync-a');
+      final id2 = await insertTaskWithSyncId('Task B', 'sync-b');
+
+      // Local: A pinned — persisted at T=200
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [id1, id2],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {id1},
+      );
+
+      // Remote: A not pinned — but remote is older (T=100)
+      final changed = await db.upsertTodaysFiveFromRemote(date, [
+        {'task_sync_id': 'sync-a', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 0},
+        {'task_sync_id': 'sync-b', 'is_completed': false, 'is_worked_on': false, 'is_pinned': false, 'sort_order': 1},
+      ], remoteUpdatedAt: 100, localPersistedAt: 200);
+
+      expect(changed, false); // local pin preserved, no change
+      final state = await db.loadTodaysFiveState(date);
+      expect(state, isNotNull);
+      // A should still be pinned — local is newer
+      expect(state!.pinnedIds, {id1});
+    });
+
     test('deleteAllLocalData also deletes todays_five_state', () async {
       final id1 = await insertTaskWithSyncId('Task A', 'sync-a');
       await db.saveTodaysFiveState(
