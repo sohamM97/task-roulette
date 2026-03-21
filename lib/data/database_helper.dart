@@ -2700,10 +2700,18 @@ class DatabaseHelper {
   ///   to max 5 slots.
   /// Merges remote Today's 5 state into local DB.
   /// Returns true if the local DB was actually changed, false if already equal.
+  ///
+  /// [remoteUpdatedAt] — timestamp from the Firestore document.
+  /// [localPersistedAt] — timestamp of the last local Today's 5 persist.
+  /// When remote is newer, its values win for shared tasks (last-writer-wins).
+  /// When local is newer, local values are preserved (OR-merge only for
+  /// completion, which is monotonic).
   Future<bool> upsertTodaysFiveFromRemote(
     String date,
-    List<Map<String, dynamic>> remoteEntries,
-  ) async {
+    List<Map<String, dynamic>> remoteEntries, {
+    int remoteUpdatedAt = 0,
+    int localPersistedAt = 0,
+  }) async {
     if (remoteEntries.isEmpty) return false;
     final db = await database;
 
@@ -2746,8 +2754,8 @@ class DatabaseHelper {
       return true;
     }
 
-    // Both exist — merge
-    // Start with remote task list + sort order, OR-merge status bits
+    // Both exist — merge using last-writer-wins for toggleable state
+    final remoteIsNewer = remoteUpdatedAt >= localPersistedAt;
     final mergedList = <({int taskId, bool isCompleted, bool isWorkedOn, bool isPinned, int sortOrder})>[];
     for (final r in resolved) {
       final localCompleted = localState.completedIds.contains(r.taskId);
@@ -2755,9 +2763,12 @@ class DatabaseHelper {
       final localPinned = localState.pinnedIds.contains(r.taskId);
       mergedList.add((
         taskId: r.taskId,
+        // Completion/worked-on are OR-merged (monotonic — you don't un-complete
+        // via sync; undo is a local-only action).
         isCompleted: r.isCompleted || localCompleted,
         isWorkedOn: r.isWorkedOn || localWorkedOn,
-        isPinned: r.isPinned || localPinned,
+        // Pin state uses LWW — whoever wrote last wins, so unpins propagate.
+        isPinned: remoteIsNewer ? r.isPinned : (r.isPinned || localPinned),
         sortOrder: r.sortOrder,
       ));
     }

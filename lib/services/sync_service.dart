@@ -20,9 +20,11 @@ class SyncService {
   Timer? _periodicPullTimer;
   bool _syncing = false;
   bool _pushPending = false;
+  bool _pullPending = false;
 
   static const _prefsKeyLastSyncAt = 'sync_last_sync_at';
   static const _prefsKeyInitialMigrationDone = 'sync_initial_migration_done';
+  static const _prefsKeyTodaysFivePersistedAt = 'sync_todays_five_persisted_at';
 
   static const _pushDebounceDelay = Duration(seconds: 5);
   static const _pullInterval = Duration(minutes: 5);
@@ -67,6 +69,17 @@ class SyncService {
     _pushDebounceTimer = Timer(_pushDebounceDelay, () {
       if (_canSync) push();
     });
+  }
+
+  /// Records that Today's 5 was persisted locally, then schedules a push.
+  /// The timestamp is used during pull merge to determine whether remote
+  /// or local state is newer (last-writer-wins).
+  void onTodaysFivePersisted() {
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setInt(
+          _prefsKeyTodaysFivePersistedAt, DateTime.now().millisecondsSinceEpoch);
+    });
+    schedulePush();
   }
 
   /// Cancel any pending debounce timer and push immediately.
@@ -400,13 +413,20 @@ class SyncService {
       if (_pushPending) {
         _pushPending = false;
         schedulePush();
+      } else if (_pullPending) {
+        _pullPending = false;
+        pull();
       }
     }
   }
 
   /// Pull remote changes and merge into local DB.
   Future<void> pull() async {
-    if (!_canSync || _syncing) return;
+    if (!_canSync) return;
+    if (_syncing) {
+      _pullPending = true;
+      return;
+    }
     _syncing = true;
 
     _authProvider.setSyncStatus(SyncStatus.syncing);
@@ -512,8 +532,13 @@ class SyncService {
       final dateKey = _todayDateKey();
       final remote5 = await _firestore.pullTodaysFive(uid, idToken, dateKey);
       if (remote5 != null && remote5.entries.isNotEmpty) {
-        final todaysFiveChanged =
-            await _db.upsertTodaysFiveFromRemote(dateKey, remote5.entries);
+        final localPersistedAt = prefs.getInt(_prefsKeyTodaysFivePersistedAt) ?? 0;
+        final todaysFiveChanged = await _db.upsertTodaysFiveFromRemote(
+          dateKey,
+          remote5.entries,
+          remoteUpdatedAt: remote5.updatedAt,
+          localPersistedAt: localPersistedAt,
+        );
         if (todaysFiveChanged) anyChange = true;
       }
 
@@ -530,6 +555,13 @@ class SyncService {
       _authProvider.setSyncStatus(SyncStatus.error, error: _userFriendlyError(e));
     } finally {
       _syncing = false;
+      if (_pushPending) {
+        _pushPending = false;
+        schedulePush();
+      } else if (_pullPending) {
+        _pullPending = false;
+        pull();
+      }
     }
   }
 
