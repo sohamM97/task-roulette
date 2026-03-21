@@ -1,6 +1,6 @@
 ---
-name: add-tests
-description: Generate Tests. Use when the user asks to add tests, write tests, or after completing a feature.
+name: add-auto-tests
+description: Generate automated tests. Use when the user asks to add tests, write tests, or after completing a feature.
 ---
 
 # Generate Tests

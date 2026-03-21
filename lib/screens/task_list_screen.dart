@@ -1256,24 +1256,24 @@ class TaskListScreenState extends State<TaskListScreen>
       final newDeadline = result.deadline != null
           ? (result.deadline!.isEmpty ? null : result.deadline)
           : task.deadline;
-      await provider.updateTaskDeadline(task.id!, newDeadline, deadlineType: deadlineType);
-      // Auto-pin into Today's 5 when deadline is due today or overdue
-      if (mounted && newDeadline != null) {
+      // Pin into Today's 5 BEFORE updating the deadline on the provider,
+      // because updateTaskDeadline triggers notifyListeners → Today's 5
+      // refreshSnapshots → _persist, which would overwrite our DB changes.
+      String? deadlineSnackMessage;
+      if (newDeadline != null) {
         final parsed = DateTime.tryParse(newDeadline);
         if (parsed != null) {
           final now = DateTime.now();
           final today = DateTime(now.year, now.month, now.day);
           final deadlineDay = DateTime(parsed.year, parsed.month, parsed.day);
           if (!deadlineDay.isAfter(today)) {
-            // Pin leaf tasks into Today's 5
             final db = DatabaseHelper();
             final dateKey = todayDateKey();
             final saved = await db.loadTodaysFiveState(dateKey);
             final children = await db.getChildren(task.id!);
             final isLeaf = children.isEmpty;
-            String snackMessage = 'Due today';
+            deadlineSnackMessage = 'Due today';
             if (isLeaf && saved == null) {
-              // No Today's 5 state yet — create one with this task pinned
               await db.saveTodaysFiveState(
                 date: dateKey,
                 taskIds: [task.id!],
@@ -1282,7 +1282,7 @@ class TaskListScreenState extends State<TaskListScreen>
                 pinnedIds: {task.id!},
               );
               await db.unsuppressDeadlineAutoPin(dateKey, task.id!);
-              snackMessage = 'Due today — pinned to Today\'s 5!';
+              deadlineSnackMessage = 'Due today — pinned to Today\'s 5!';
             } else if (isLeaf && saved != null && !saved.taskIds.contains(task.id!)) {
               final pinResult = TodaysFivePinHelper.pinNewTask(saved, task.id!);
               if (pinResult != null) {
@@ -1293,22 +1293,23 @@ class TaskListScreenState extends State<TaskListScreen>
                   workedOnIds: saved.workedOnIds,
                   pinnedIds: pinResult.pinnedIds,
                 );
-                // Clear any existing suppression for this task
                 await db.unsuppressDeadlineAutoPin(dateKey, task.id!);
-                snackMessage = 'Due today — pinned to Today\'s 5!';
+                deadlineSnackMessage = 'Due today — pinned to Today\'s 5!';
               } else {
-                // Max pins — suppress so it doesn't retry on reload
                 await db.suppressDeadlineAutoPin(dateKey, task.id!);
-                snackMessage = 'Due today — couldn\'t pin, all 5 pin slots are taken';
+                deadlineSnackMessage = 'Due today — couldn\'t pin, all 5 pin slots are taken';
               }
             } else if (isLeaf && saved != null && saved.taskIds.contains(task.id!)) {
-              snackMessage = 'Due today — already in Today\'s 5';
-            }
-            if (mounted) {
-              showInfoSnackBar(context, snackMessage);
+              deadlineSnackMessage = 'Due today — already in Today\'s 5';
             }
           }
         }
+      }
+      // Now update the deadline — this triggers notifyListeners → refreshSnapshots,
+      // which will detect the DB mismatch and reload (picking up our pin).
+      await provider.updateTaskDeadline(task.id!, newDeadline, deadlineType: deadlineType);
+      if (mounted && deadlineSnackMessage != null) {
+        showInfoSnackBar(context, deadlineSnackMessage);
       }
     }
     // Refresh Today's 5 indicators (deadline may have triggered auto-pin)
