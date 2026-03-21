@@ -1434,8 +1434,10 @@ class TaskListScreenState extends State<TaskListScreen>
                     tooltip: 'Open link',
                     visualDensity: VisualDensity.compact,
                   ),
+                if (!(kIsWeb && provider.isRoot))
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert),
+                  position: PopupMenuPosition.under,
                   onSelected: (value) {
                     final task = provider.currentParent;
                     switch (value) {
@@ -1501,9 +1503,9 @@ class TaskListScreenState extends State<TaskListScreen>
                         value: 'delete',
                         child: Text('Delete'),
                       ),
-                      const PopupMenuDivider(),
                     ],
                     if (!kIsWeb) ...[
+                      const PopupMenuDivider(),
                       const PopupMenuItem(
                         value: 'export',
                         child: Text('Export backup'),
