@@ -34,8 +34,8 @@ Both agents MUST run in parallel (launched in a single message with two Agent to
 6. If there were unresolved Codex comments, ask the user what to do.
 7. If Codex only posted a **quota-exceeded** message (no actual review), treat it the same as "no actionable comments" — proceed to merge without asking.
 8. If **no comments arrived at all** after polling, tell the user and **wait for explicit confirmation** before merging. Do NOT run the merge command until the user says to proceed — they may want to check Codex manually first.
-9. **Merge:** Only after user confirms (or after quota-only Codex result). Run `gh pr merge --merge` (not squash, not rebase). The guard-pr-merge hook will ask the user for confirmation — that's expected.
-10. **Cleanup:** Switch back to `main` and pull latest.
+9. **Merge:** Only after user confirms (or after quota-only Codex result). Run `gh pr merge --merge --delete-branch` (not squash, not rebase). This deletes the remote branch after merge. The guard-pr-merge hook will ask the user for confirmation — that's expected.
+10. **Cleanup:** Switch back to `main`, pull latest, and delete the local branch (`git branch -d <branch>`).
 11. Report the merge result.
 
 ## Rules
