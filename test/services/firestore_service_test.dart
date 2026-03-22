@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:task_roulette/models/task.dart';
 import 'package:task_roulette/services/firestore_service.dart';
 
@@ -773,6 +777,688 @@ void main() {
       final task = service.taskFromFirestoreDoc(doc);
       expect(task!.isStarred, isFalse);
       expect(task.starOrder, isNull);
+    });
+  });
+
+  // --- HTTP-mocked tests for tombstone/delta pull logic ---
+
+  /// Helper to build a mock Firestore document JSON for relationships.
+  Map<String, dynamic> relDoc(String parent, String child, {int? deletedAt, int? updatedAt}) {
+    final fields = <String, dynamic>{
+      'parent_sync_id': {'stringValue': parent},
+      'child_sync_id': {'stringValue': child},
+    };
+    if (updatedAt != null) {
+      fields['updated_at'] = {'integerValue': updatedAt.toString()};
+    }
+    if (deletedAt != null) {
+      fields['deleted_at'] = {'integerValue': deletedAt.toString()};
+    }
+    return {
+      'name': 'projects/test/databases/(default)/documents/users/u/relationships/${parent}_$child',
+      'fields': fields,
+    };
+  }
+
+  /// Helper to build a mock Firestore document JSON for dependencies.
+  Map<String, dynamic> depDoc(String task, String dependsOn, {int? deletedAt, int? updatedAt}) {
+    final fields = <String, dynamic>{
+      'task_sync_id': {'stringValue': task},
+      'depends_on_sync_id': {'stringValue': dependsOn},
+    };
+    if (updatedAt != null) {
+      fields['updated_at'] = {'integerValue': updatedAt.toString()};
+    }
+    if (deletedAt != null) {
+      fields['deleted_at'] = {'integerValue': deletedAt.toString()};
+    }
+    return {
+      'name': 'projects/test/databases/(default)/documents/users/u/dependencies/${task}_$dependsOn',
+      'fields': fields,
+    };
+  }
+
+  /// Helper to build a mock Firestore schedule document.
+  Map<String, dynamic> schedDoc(String syncId, String taskSyncId,
+      {int? dayOfWeek, int? deletedAt, int? updatedAt}) {
+    final fields = <String, dynamic>{
+      'task_sync_id': {'stringValue': taskSyncId},
+      'schedule_type': {'stringValue': 'weekly'},
+    };
+    if (dayOfWeek != null) {
+      fields['day_of_week'] = {'integerValue': dayOfWeek.toString()};
+    }
+    if (updatedAt != null) {
+      fields['updated_at'] = {'integerValue': updatedAt.toString()};
+    }
+    if (deletedAt != null) {
+      fields['deleted_at'] = {'integerValue': deletedAt.toString()};
+    }
+    return {
+      'name': 'projects/test/databases/(default)/documents/users/u/schedules/$syncId',
+      'fields': fields,
+    };
+  }
+
+  group('pullAllRelationships — tombstone filtering', () {
+    test('skips documents with deleted_at set', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode({
+          'documents': [
+            relDoc('p1', 'c1'),
+            relDoc('p2', 'c2', deletedAt: 1000),
+            relDoc('p3', 'c3'),
+          ],
+        });
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullAllRelationships('u', 'token');
+
+      expect(results.length, 2);
+      expect(results[0].parentSyncId, 'p1');
+      expect(results[0].childSyncId, 'c1');
+      expect(results[1].parentSyncId, 'p3');
+      expect(results[1].childSyncId, 'c3');
+    });
+
+    test('returns empty when all docs are tombstoned', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode({
+          'documents': [
+            relDoc('p1', 'c1', deletedAt: 100),
+            relDoc('p2', 'c2', deletedAt: 200),
+          ],
+        });
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullAllRelationships('u', 'token');
+
+      expect(results, isEmpty);
+    });
+
+    test('returns all when no docs are tombstoned', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode({
+          'documents': [
+            relDoc('p1', 'c1'),
+            relDoc('p2', 'c2'),
+          ],
+        });
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullAllRelationships('u', 'token');
+
+      expect(results.length, 2);
+    });
+  });
+
+  group('pullAllDependencies — tombstone filtering', () {
+    test('skips documents with deleted_at set', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode({
+          'documents': [
+            depDoc('t1', 'd1'),
+            depDoc('t2', 'd2', deletedAt: 500),
+            depDoc('t3', 'd3'),
+          ],
+        });
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullAllDependencies('u', 'token');
+
+      expect(results.length, 2);
+      expect(results[0].taskSyncId, 't1');
+      expect(results[1].taskSyncId, 't3');
+    });
+
+    test('returns empty when all docs are tombstoned', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode({
+          'documents': [
+            depDoc('t1', 'd1', deletedAt: 100),
+          ],
+        });
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullAllDependencies('u', 'token');
+
+      expect(results, isEmpty);
+    });
+  });
+
+  group('pullAllSchedules — tombstone filtering', () {
+    test('skips documents with deleted_at set', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode({
+          'documents': [
+            schedDoc('s1', 'ts1', dayOfWeek: 1),
+            schedDoc('s2', 'ts2', dayOfWeek: 3, deletedAt: 999),
+            schedDoc('s3', 'ts3', dayOfWeek: 5),
+          ],
+        });
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullAllSchedules('u', 'token');
+
+      expect(results.length, 2);
+      expect(results[0]['sync_id'], 's1');
+      expect(results[0]['day_of_week'], 1);
+      expect(results[1]['sync_id'], 's3');
+      expect(results[1]['day_of_week'], 5);
+    });
+
+    test('returns empty when all schedules are tombstoned', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode({
+          'documents': [
+            schedDoc('s1', 'ts1', deletedAt: 100),
+          ],
+        });
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullAllSchedules('u', 'token');
+
+      expect(results, isEmpty);
+    });
+  });
+
+  group('pullRelationshipsSince — delta pull with deleted flag', () {
+    test('returns live and deleted relationships with correct deleted flag', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode([
+          {
+            'document': {
+              'name': 'projects/test/rel/p1_c1',
+              'fields': {
+                'parent_sync_id': {'stringValue': 'p1'},
+                'child_sync_id': {'stringValue': 'c1'},
+                'updated_at': {'integerValue': '2000'},
+              },
+            },
+          },
+          {
+            'document': {
+              'name': 'projects/test/rel/p2_c2',
+              'fields': {
+                'parent_sync_id': {'stringValue': 'p2'},
+                'child_sync_id': {'stringValue': 'c2'},
+                'updated_at': {'integerValue': '2000'},
+                'deleted_at': {'integerValue': '1500'},
+              },
+            },
+          },
+        ]);
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullRelationshipsSince('u', 'token', 1000);
+
+      expect(results.length, 2);
+      expect(results[0].parentSyncId, 'p1');
+      expect(results[0].childSyncId, 'c1');
+      expect(results[0].deleted, isFalse);
+      expect(results[1].parentSyncId, 'p2');
+      expect(results[1].childSyncId, 'c2');
+      expect(results[1].deleted, isTrue);
+    });
+
+    test('returns empty list when response has no documents', () async {
+      final mockClient = MockClient((request) async {
+        // Firestore returns [{"readTime": "..."}] when no results match
+        final body = json.encode([
+          {'readTime': '2026-03-22T00:00:00Z'},
+        ]);
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullRelationshipsSince('u', 'token', 1000);
+
+      expect(results, isEmpty);
+    });
+
+    test('sends structured query with updated_at filter', () async {
+      Uri? capturedUri;
+      String? capturedBody;
+      final mockClient = MockClient((request) async {
+        capturedUri = request.url;
+        capturedBody = request.body;
+        return http.Response(json.encode([]), 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      await svc.pullRelationshipsSince('u', 'token', 5000);
+
+      expect(capturedUri.toString(), contains(':runQuery'));
+      final decoded = json.decode(capturedBody!) as Map<String, dynamic>;
+      final query = decoded['structuredQuery'] as Map<String, dynamic>;
+      final from = (query['from'] as List).first as Map<String, dynamic>;
+      expect(from['collectionId'], 'relationships');
+      final filter = query['where']['fieldFilter'] as Map<String, dynamic>;
+      expect(filter['field']['fieldPath'], 'updated_at');
+      expect(filter['op'], 'GREATER_THAN');
+      expect(filter['value']['integerValue'], '5000');
+    });
+  });
+
+  group('pullDependenciesSince — delta pull with deleted flag', () {
+    test('returns live and deleted dependencies with correct deleted flag', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode([
+          {
+            'document': {
+              'name': 'projects/test/dep/t1_d1',
+              'fields': {
+                'task_sync_id': {'stringValue': 't1'},
+                'depends_on_sync_id': {'stringValue': 'd1'},
+                'updated_at': {'integerValue': '3000'},
+              },
+            },
+          },
+          {
+            'document': {
+              'name': 'projects/test/dep/t2_d2',
+              'fields': {
+                'task_sync_id': {'stringValue': 't2'},
+                'depends_on_sync_id': {'stringValue': 'd2'},
+                'updated_at': {'integerValue': '3000'},
+                'deleted_at': {'integerValue': '2500'},
+              },
+            },
+          },
+        ]);
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullDependenciesSince('u', 'token', 2000);
+
+      expect(results.length, 2);
+      expect(results[0].taskSyncId, 't1');
+      expect(results[0].dependsOnSyncId, 'd1');
+      expect(results[0].deleted, isFalse);
+      expect(results[1].taskSyncId, 't2');
+      expect(results[1].dependsOnSyncId, 'd2');
+      expect(results[1].deleted, isTrue);
+    });
+
+    test('skips entries with missing sync IDs', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode([
+          {
+            'document': {
+              'name': 'projects/test/dep/t1_d1',
+              'fields': {
+                'task_sync_id': {'stringValue': 't1'},
+                // depends_on_sync_id is missing
+              },
+            },
+          },
+          {
+            'document': {
+              'name': 'projects/test/dep/t2_d2',
+              'fields': {
+                'task_sync_id': {'stringValue': 't2'},
+                'depends_on_sync_id': {'stringValue': 'd2'},
+              },
+            },
+          },
+        ]);
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullDependenciesSince('u', 'token', 1000);
+
+      expect(results.length, 1);
+      expect(results[0].taskSyncId, 't2');
+    });
+
+    test('returns empty list for non-list response', () async {
+      final mockClient = MockClient((request) async {
+        return http.Response(json.encode({'not': 'a list'}), 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullDependenciesSince('u', 'token', 1000);
+
+      expect(results, isEmpty);
+    });
+  });
+
+  group('pullSchedulesSince — delta pull with deleted flag', () {
+    test('returns schedules with deleted flag from deleted_at', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode([
+          {
+            'document': {
+              'name': 'projects/test/databases/(default)/documents/users/u/schedules/sched1',
+              'fields': {
+                'task_sync_id': {'stringValue': 'ts1'},
+                'schedule_type': {'stringValue': 'weekly'},
+                'day_of_week': {'integerValue': '3'},
+                'updated_at': {'integerValue': '4000'},
+              },
+            },
+          },
+          {
+            'document': {
+              'name': 'projects/test/databases/(default)/documents/users/u/schedules/sched2',
+              'fields': {
+                'task_sync_id': {'stringValue': 'ts2'},
+                'schedule_type': {'stringValue': 'weekly'},
+                'day_of_week': {'integerValue': '5'},
+                'updated_at': {'integerValue': '4000'},
+                'deleted_at': {'integerValue': '3500'},
+              },
+            },
+          },
+        ]);
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullSchedulesSince('u', 'token', 3000);
+
+      expect(results.length, 2);
+      // Live schedule
+      expect(results[0]['sync_id'], 'sched1');
+      expect(results[0]['task_sync_id'], 'ts1');
+      expect(results[0]['schedule_type'], 'weekly');
+      expect(results[0]['day_of_week'], 3);
+      expect(results[0]['deleted'], isFalse);
+      // Tombstoned schedule
+      expect(results[1]['sync_id'], 'sched2');
+      expect(results[1]['task_sync_id'], 'ts2');
+      expect(results[1]['deleted'], isTrue);
+    });
+
+    test('extracts sync_id from document name', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode([
+          {
+            'document': {
+              'name': 'projects/p/databases/(default)/documents/users/u/schedules/my-sync-id-123',
+              'fields': {
+                'task_sync_id': {'stringValue': 'ts1'},
+                'schedule_type': {'stringValue': 'weekly'},
+              },
+            },
+          },
+        ]);
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullSchedulesSince('u', 'token', 0);
+
+      expect(results[0]['sync_id'], 'my-sync-id-123');
+    });
+
+    test('defaults schedule_type to weekly when missing', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode([
+          {
+            'document': {
+              'name': 'projects/p/databases/(default)/documents/users/u/schedules/s1',
+              'fields': {
+                'task_sync_id': {'stringValue': 'ts1'},
+                // schedule_type missing
+              },
+            },
+          },
+        ]);
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullSchedulesSince('u', 'token', 0);
+
+      expect(results[0]['schedule_type'], 'weekly');
+    });
+  });
+
+  group('deleteRelationship — soft-delete via commit API', () {
+    test('sends commit with deleted_at and updated_at fields', () async {
+      Map<String, dynamic>? capturedWrite;
+      final mockClient = MockClient((request) async {
+        if (request.url.toString().contains(':commit')) {
+          final body = json.decode(request.body) as Map<String, dynamic>;
+          final writes = body['writes'] as List;
+          capturedWrite = writes[0] as Map<String, dynamic>;
+        }
+        return http.Response('{}', 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      await svc.deleteRelationship('u', 'token', 'parent1', 'child1');
+
+      expect(capturedWrite, isNotNull);
+      final update = capturedWrite!['update'] as Map<String, dynamic>;
+      expect(update['name'], contains('parent1_child1'));
+      final fields = update['fields'] as Map<String, dynamic>;
+      expect(fields['parent_sync_id'], {'stringValue': 'parent1'});
+      expect(fields['child_sync_id'], {'stringValue': 'child1'});
+      expect(fields.containsKey('deleted_at'), isTrue);
+      expect(fields.containsKey('updated_at'), isTrue);
+      // Both timestamps should be the same
+      expect(fields['deleted_at']['integerValue'], fields['updated_at']['integerValue']);
+    });
+
+    test('does not use HTTP DELETE method', () async {
+      String? capturedMethod;
+      final mockClient = MockClient((request) async {
+        capturedMethod = request.method;
+        return http.Response('{}', 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      await svc.deleteRelationship('u', 'token', 'p', 'c');
+
+      expect(capturedMethod, 'POST'); // commit API uses POST, not DELETE
+    });
+  });
+
+  group('deleteDependency — soft-delete via commit API', () {
+    test('sends commit with deleted_at and updated_at fields', () async {
+      Map<String, dynamic>? capturedWrite;
+      final mockClient = MockClient((request) async {
+        if (request.url.toString().contains(':commit')) {
+          final body = json.decode(request.body) as Map<String, dynamic>;
+          final writes = body['writes'] as List;
+          capturedWrite = writes[0] as Map<String, dynamic>;
+        }
+        return http.Response('{}', 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      await svc.deleteDependency('u', 'token', 'task1', 'dep1');
+
+      expect(capturedWrite, isNotNull);
+      final update = capturedWrite!['update'] as Map<String, dynamic>;
+      expect(update['name'], contains('task1_dep1'));
+      final fields = update['fields'] as Map<String, dynamic>;
+      expect(fields['task_sync_id'], {'stringValue': 'task1'});
+      expect(fields['depends_on_sync_id'], {'stringValue': 'dep1'});
+      expect(fields.containsKey('deleted_at'), isTrue);
+      expect(fields.containsKey('updated_at'), isTrue);
+    });
+  });
+
+  group('deleteSchedule — soft-delete via commit API', () {
+    test('sends commit with deleted_at and updated_at fields', () async {
+      Map<String, dynamic>? capturedWrite;
+      final mockClient = MockClient((request) async {
+        if (request.url.toString().contains(':commit')) {
+          final body = json.decode(request.body) as Map<String, dynamic>;
+          final writes = body['writes'] as List;
+          capturedWrite = writes[0] as Map<String, dynamic>;
+        }
+        return http.Response('{}', 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      await svc.deleteSchedule('u', 'token', 'sched-abc');
+
+      expect(capturedWrite, isNotNull);
+      final update = capturedWrite!['update'] as Map<String, dynamic>;
+      expect(update['name'], contains('sched-abc'));
+      final fields = update['fields'] as Map<String, dynamic>;
+      expect(fields.containsKey('deleted_at'), isTrue);
+      expect(fields.containsKey('updated_at'), isTrue);
+    });
+  });
+
+  group('cleanupTombstones', () {
+    test('queries tombstones with composite filter and deletes them', () async {
+      final requests = <http.Request>[];
+      final mockClient = MockClient((request) async {
+        requests.add(request);
+        if (request.url.toString().contains(':runQuery')) {
+          final body = json.encode([
+            {
+              'document': {
+                'name': 'projects/test/databases/(default)/documents/users/u/relationships/old1',
+                'fields': {},
+              },
+            },
+            {
+              'document': {
+                'name': 'projects/test/databases/(default)/documents/users/u/relationships/old2',
+                'fields': {},
+              },
+            },
+          ]);
+          return http.Response(body, 200);
+        }
+        // commit for batch delete
+        return http.Response('{}', 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      await svc.cleanupTombstones('u', 'token', 'relationships', const Duration(days: 7));
+
+      // Should have 2 requests: query + commit
+      expect(requests.length, 2);
+
+      // Verify the query uses compositeFilter with deleted_at
+      final queryBody = json.decode(requests[0].body) as Map<String, dynamic>;
+      final query = queryBody['structuredQuery'] as Map<String, dynamic>;
+      final composite = query['where']['compositeFilter'] as Map<String, dynamic>;
+      expect(composite['op'], 'AND');
+      final filters = composite['filters'] as List;
+      expect(filters.length, 2);
+      // First filter: deleted_at > 0
+      final f1 = (filters[0] as Map<String, dynamic>)['fieldFilter'] as Map<String, dynamic>;
+      expect(f1['field']['fieldPath'], 'deleted_at');
+      expect(f1['op'], 'GREATER_THAN');
+      expect(f1['value']['integerValue'], '0');
+      // Second filter: deleted_at < cutoff
+      final f2 = (filters[1] as Map<String, dynamic>)['fieldFilter'] as Map<String, dynamic>;
+      expect(f2['field']['fieldPath'], 'deleted_at');
+      expect(f2['op'], 'LESS_THAN');
+
+      // Verify the commit sends delete writes
+      final commitBody = json.decode(requests[1].body) as Map<String, dynamic>;
+      final writes = commitBody['writes'] as List;
+      expect(writes.length, 2);
+      expect(writes[0]['delete'], contains('old1'));
+      expect(writes[1]['delete'], contains('old2'));
+    });
+
+    test('does nothing when no tombstones found', () async {
+      final requests = <http.Request>[];
+      final mockClient = MockClient((request) async {
+        requests.add(request);
+        if (request.url.toString().contains(':runQuery')) {
+          // Empty result — no tombstones
+          return http.Response(json.encode([
+            {'readTime': '2026-03-22T00:00:00Z'},
+          ]), 200);
+        }
+        return http.Response('{}', 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      await svc.cleanupTombstones('u', 'token', 'dependencies', const Duration(days: 7));
+
+      // Only the query request, no commit
+      expect(requests.length, 1);
+    });
+
+    test('gracefully handles query failure', () async {
+      final mockClient = MockClient((request) async {
+        return http.Response('error', 500);
+      });
+
+      // Should not throw — best-effort cleanup
+      final svc = FirestoreService(client: mockClient);
+      await svc.cleanupTombstones('u', 'token', 'schedules', const Duration(days: 7));
+    });
+  });
+
+  group('pushRelationships — includes updated_at', () {
+    test('sends updated_at field in relationship documents', () async {
+      Map<String, dynamic>? capturedWrite;
+      final mockClient = MockClient((request) async {
+        if (request.url.toString().contains(':commit')) {
+          final body = json.decode(request.body) as Map<String, dynamic>;
+          final writes = body['writes'] as List;
+          capturedWrite = writes[0] as Map<String, dynamic>;
+        }
+        return http.Response('{}', 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      await svc.pushRelationships('u', 'token', [
+        (parentSyncId: 'p1', childSyncId: 'c1'),
+      ]);
+
+      expect(capturedWrite, isNotNull);
+      final fields = (capturedWrite!['update'] as Map<String, dynamic>)['fields'] as Map<String, dynamic>;
+      expect(fields.containsKey('updated_at'), isTrue);
+      expect(fields['parent_sync_id'], {'stringValue': 'p1'});
+      expect(fields['child_sync_id'], {'stringValue': 'c1'});
+    });
+  });
+
+  group('pushDependencies — includes updated_at', () {
+    test('sends updated_at field in dependency documents', () async {
+      Map<String, dynamic>? capturedWrite;
+      final mockClient = MockClient((request) async {
+        if (request.url.toString().contains(':commit')) {
+          final body = json.decode(request.body) as Map<String, dynamic>;
+          final writes = body['writes'] as List;
+          capturedWrite = writes[0] as Map<String, dynamic>;
+        }
+        return http.Response('{}', 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      await svc.pushDependencies('u', 'token', [
+        (taskSyncId: 't1', dependsOnSyncId: 'd1'),
+      ]);
+
+      expect(capturedWrite, isNotNull);
+      final fields = (capturedWrite!['update'] as Map<String, dynamic>)['fields'] as Map<String, dynamic>;
+      expect(fields.containsKey('updated_at'), isTrue);
+      expect(fields['task_sync_id'], {'stringValue': 't1'});
+      expect(fields['depends_on_sync_id'], {'stringValue': 'd1'});
     });
   });
 }
