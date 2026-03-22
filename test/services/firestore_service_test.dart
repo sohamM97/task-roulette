@@ -664,6 +664,65 @@ void main() {
       final restored = service.taskFromFirestoreDoc(doc);
       expect(restored!.deadline, isNull);
     });
+
+    test('taskToFirestoreFields includes deadline_type when not due_by', () {
+      final task = Task(name: 'T', createdAt: 100, deadline: '2026-03-20', deadlineType: 'on');
+      final fields = service.taskToFirestoreFields(task);
+      expect(fields['deadline_type'], {'stringValue': 'on'});
+    });
+
+    test('taskToFirestoreFields omits deadline_type when due_by (default)', () {
+      final task = Task(name: 'T', createdAt: 100, deadline: '2026-03-20');
+      final fields = service.taskToFirestoreFields(task);
+      expect(fields.containsKey('deadline_type'), isFalse);
+    });
+
+    test('taskFromFirestoreDoc parses deadline_type', () {
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'T'},
+          'created_at': {'integerValue': '100'},
+          'deadline': {'stringValue': '2026-03-20'},
+          'deadline_type': {'stringValue': 'on'},
+        },
+      };
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.deadlineType, 'on');
+    });
+
+    test('taskFromFirestoreDoc defaults deadline_type to due_by when absent', () {
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'T'},
+          'created_at': {'integerValue': '100'},
+          'deadline': {'stringValue': '2026-03-20'},
+        },
+      };
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.deadlineType, 'due_by');
+    });
+
+    test('round-trip preserves deadline_type through Firestore serialization', () {
+      final original = Task(
+        name: 'On deadline',
+        createdAt: 1000,
+        updatedAt: 2000,
+        syncId: 'on-dl-rt',
+        deadline: '2026-03-20',
+        deadlineType: 'on',
+      );
+
+      final fields = service.taskToFirestoreFields(original);
+      final doc = {
+        'name': 'projects/p/databases/(default)/documents/users/u/tasks/${original.syncId}',
+        'fields': fields,
+      };
+
+      final restored = service.taskFromFirestoreDoc(doc);
+      expect(restored!.deadlineType, 'on');
+    });
   });
 
   group('Starred fields serialization', () {

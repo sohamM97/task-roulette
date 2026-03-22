@@ -45,12 +45,14 @@ weight = 1.0
 
 **Novelty** — Newly created tasks (≤ 3 days) get a 1.3x bump so they appear soon after creation. Someday tasks skip this.
 
-**Deadline proximity** — Hyperbolic boost within 14 days of deadline:
-- Due today: 8.0x
-- Due in 1 day: 4.5x
-- Due in 3 days: 2.75x
-- Due in 7 days: 1.875x
-- Due in 14 days: 1.47x
+**Deadline proximity** — Hyperbolic boost `1 + 7/(|days|+1)`. `due_by` deadlines ramp up over 14 days before; `on` deadlines are silent before the day. Both ramp down symmetrically when overdue:
+- Due today: 8.0x (both types)
+- Due in 1 day: 4.5x (ramp-up, `due_by` only)
+- Due in 3 days: 2.75x (ramp-up, `due_by` only)
+- Due in 7 days: 1.875x (ramp-up, `due_by` only)
+- Due in 14 days: 1.47x (ramp-up, `due_by` only)
+- 1 day overdue: 4.5x (ramp-down, both types)
+- 3 days overdue: 2.75x (ramp-down, both types)
 
 **Schedule boost** — Tasks scheduled for the current day of the week get 2.5x. Schedule propagates from ancestors (stops at schedule barriers — tasks with their own schedule or explicit override flag).
 
@@ -106,9 +108,11 @@ This strongly encourages spread across different root categories without making 
 ### Fresh Generation (`_generateNewSet`)
 
 1. Keep completed + pinned tasks from previous set
-2. Auto-pin deadline tasks (due today or overdue)
+2. On first generation of the day (`autoPin: true`): auto-pin deadline-due tasks (respects suppression list, max 5 pins)
 3. Fetch `_SelectionContext` (all leaves, blocked IDs, schedule boosts, deadline data, normalization)
 4. Fill remaining slots via weighted roulette with full normalization + diversity penalty
+
+> On rerolls ("New set" button), `autoPin` is false — no deadline auto-pinning. This prevents whack-a-mole where unpinning one deadline task causes another to be auto-pinned on reroll.
 
 ### Swap (`_swapTask`)
 
@@ -119,7 +123,29 @@ This strongly encourages spread across different root categories without making 
 
 ### Deadline Auto-Pinning
 
-Tasks with deadlines due today (or overdue) are automatically pinned into Today's 5. These are added before the weighted selection runs, consuming slots. They respect the user's manual unpin — if the user unpins a deadline task, `is_deadline_auto_unpin` is set and that task won't be auto-pinned again.
+Deadline auto-pinning happens in two contexts:
+
+1. **First generation of the day** — `_generateNewSet(autoPin: true)` queries `getDeadlinePinLeafIds()` for all leaf tasks with deadlines ≤ today (own or inherited). These are force-pinned before weighted selection runs, consuming slots. Respects the suppression list (`todays_five_deadline_suppressed`) and max 5 pins.
+
+2. **Setting a deadline from All Tasks** — `_editSchedule` in `task_list_screen.dart` directly pins leaf tasks via `TodaysFivePinHelper.pinNewTask()` when the deadline is today or overdue.
+
+Auto-pinning does **not** fire on reloads, refreshes, or rerolls ("New set"). This prevents whack-a-mole where unpinning one deadline task causes another to be auto-pinned. Suppression is tracked in the `todays_five_deadline_suppressed` DB table — if the user unpins a deadline task, it's suppressed for that day.
+
+### Deadline Types and Weight Boost
+
+| Type | Before deadline day | On the day | Overdue |
+|------|--------------------|-----------:|--------:|
+| `due_by` | Ramp-up: 14-day window | 8.0x | Ramp-down (symmetric) |
+| `on` | Silent — no boost | 8.0x | Ramp-down (symmetric) |
+
+Ramp-down applies to **both** `due_by` and `on` (unlike ramp-up which is `due_by` only). Same formula `1 + 7/(|days|+1)` using absolute days:
+- 1 day overdue: 4.5x
+- 3 days overdue: 2.75x
+- 7 days overdue: 1.875x
+- 14 days overdue: 1.47x
+- Beyond 14 days: no boost
+
+Both types get auto-pinned on first generation (via `getDeadlinePinLeafIds`). The only difference between `due_by` and `on` is the ramp-up behaviour for preceding days.
 
 ## Key Implementation Files
 

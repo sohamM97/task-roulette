@@ -24,3 +24,5 @@ The user may provide a short bugfix name (e.g. `stale-parent-data`). If not prov
 - Branch names must use `bugfix/` prefix with kebab-case (e.g. `bugfix/stale-parent-data`, not `bugfix/staleParentData`).
 - Always branch from an up-to-date `main`.
 - Do NOT automatically enter plan mode or start writing code. Wait for the user to describe what they want.
+- **Bug fix code comments**: When adding code changes for bug fixes, include a comment documenting the exact bug — behaviour before the fix vs after the fix.
+- **Confirm flow/functionality changes**: If the fix involves changing the flow or functionality itself (not just fixing broken code), always ask the user before implementing. Don't unilaterally make radical design decisions.

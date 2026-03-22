@@ -1300,7 +1300,25 @@ class TaskListScreenState extends State<TaskListScreen>
                 deadlineSnackMessage = 'Due today — couldn\'t pin, all 5 pin slots are taken';
               }
             } else if (isLeaf && saved != null && saved.taskIds.contains(task.id!)) {
-              deadlineSnackMessage = 'Due today — already in Today\'s 5';
+              // Bug fix: Previously just showed "already in Today's 5" without
+              // pinning. Now pins the task so it's protected from rerolls.
+              if (!saved.pinnedIds.contains(task.id!)) {
+                final newPins = TodaysFivePinHelper.togglePinInPlace(saved.pinnedIds, task.id!);
+                if (newPins != null) {
+                  await db.saveTodaysFiveState(
+                    date: dateKey,
+                    taskIds: saved.taskIds.toList(),
+                    completedIds: saved.completedIds,
+                    workedOnIds: saved.workedOnIds,
+                    pinnedIds: newPins,
+                  );
+                  deadlineSnackMessage = 'Due today — pinned in Today\'s 5!';
+                } else {
+                  deadlineSnackMessage = 'Due today — already in Today\'s 5 (max pins reached)';
+                }
+              } else {
+                deadlineSnackMessage = 'Due today — already pinned in Today\'s 5';
+              }
             }
           }
         }

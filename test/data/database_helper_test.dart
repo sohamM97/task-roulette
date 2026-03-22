@@ -4735,14 +4735,15 @@ void main() {
     });
 
     group('getDeadlinePinLeafIds', () {
-      test('returns leaf IDs with deadline <= today', () async {
+      test('returns leaf IDs with deadline exactly today', () async {
         final today = DateTime(2026, 3, 18);
         final id1 = await db.insertTask(Task(name: 'Due today', deadline: '2026-03-18'));
         final id2 = await db.insertTask(Task(name: 'Overdue', deadline: '2026-03-15'));
 
         final ids = await db.getDeadlinePinLeafIds(now: today);
         expect(ids, contains(id1));
-        expect(ids, contains(id2));
+        // Overdue tasks are NOT auto-pinned — weight boost handles them
+        expect(ids, isNot(contains(id2)));
       });
 
       test('excludes tasks with future deadlines', () async {
@@ -4820,9 +4821,10 @@ void main() {
         expect(ids, isNot(contains(parentId)));
       });
 
-      test('includes deep leaf descendants of grandparent with deadline', () async {
+      test('includes deep leaf descendants of grandparent with deadline today', () async {
         final today = DateTime(2026, 3, 18);
-        final grandparent = await db.insertTask(Task(name: 'Epic', deadline: '2026-03-17'));
+        // Grandparent deadline is exactly today (not overdue)
+        final grandparent = await db.insertTask(Task(name: 'Epic', deadline: '2026-03-18'));
         final parent = await db.insertTask(Task(name: 'Feature'));
         final leaf = await db.insertTask(Task(name: 'Task'));
         await db.addRelationship(grandparent, parent);
@@ -4832,6 +4834,19 @@ void main() {
         expect(ids, contains(leaf));
         expect(ids, isNot(contains(parent)));
         expect(ids, isNot(contains(grandparent)));
+      });
+
+      test('excludes deep leaf descendants of grandparent with overdue deadline', () async {
+        final today = DateTime(2026, 3, 18);
+        final grandparent = await db.insertTask(Task(name: 'Epic', deadline: '2026-03-17'));
+        final parent = await db.insertTask(Task(name: 'Feature'));
+        final leaf = await db.insertTask(Task(name: 'Task'));
+        await db.addRelationship(grandparent, parent);
+        await db.addRelationship(parent, leaf);
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        // Overdue tasks are NOT auto-pinned — weight boost handles them
+        expect(ids, isEmpty);
       });
 
       test('does not include descendants of parent with future deadline', () async {
@@ -4855,6 +4870,31 @@ void main() {
         // Parent becomes a leaf when all children are completed
         expect(ids, contains(parentId));
         expect(ids, isNot(contains(childId)));
+      });
+
+      test('on deadline: included on the day itself', () async {
+        final today = DateTime(2026, 3, 20);
+        final id = await db.insertTask(Task(name: 'On task', deadline: '2026-03-20', deadlineType: 'on'));
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        expect(ids, contains(id));
+      });
+
+      test('on deadline: NOT included when overdue', () async {
+        final today = DateTime(2026, 3, 22);
+        final id = await db.insertTask(Task(name: 'Overdue on', deadline: '2026-03-20', deadlineType: 'on'));
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        // Overdue tasks rely on weight boost, not auto-pin
+        expect(ids, isNot(contains(id)));
+      });
+
+      test('on deadline: NOT included before the day', () async {
+        final today = DateTime(2026, 3, 18);
+        final id = await db.insertTask(Task(name: 'Future on', deadline: '2026-03-20', deadlineType: 'on'));
+
+        final ids = await db.getDeadlinePinLeafIds(now: today);
+        expect(ids, isNot(contains(id)));
       });
     });
 
@@ -5002,6 +5042,70 @@ void main() {
 
         final result = await db.getDeadlineBoostedLeafData(now: today);
         expect(result[id], -3); // 3 days overdue
+      });
+
+      test('on deadline: no boost before the date', () async {
+        final today = DateTime(2026, 3, 18);
+        final id = await db.insertTask(Task(name: 'On task', deadline: '2026-03-20', deadlineType: 'on'));
+
+        final result = await db.getDeadlineBoostedLeafData(now: today);
+        expect(result.containsKey(id), isFalse);
+      });
+
+      test('on deadline: boosted on the day itself', () async {
+        final today = DateTime(2026, 3, 20);
+        final id = await db.insertTask(Task(name: 'On task', deadline: '2026-03-20', deadlineType: 'on'));
+
+        final result = await db.getDeadlineBoostedLeafData(now: today);
+        expect(result[id], 0);
+      });
+
+      test('on deadline: boosted when overdue', () async {
+        final today = DateTime(2026, 3, 22);
+        final id = await db.insertTask(Task(name: 'On task', deadline: '2026-03-20', deadlineType: 'on'));
+
+        final result = await db.getDeadlineBoostedLeafData(now: today);
+        expect(result[id], -2);
+      });
+
+      test('on deadline: no boost beyond 14 days overdue', () async {
+        final today = DateTime(2026, 4, 10);
+        final id = await db.insertTask(Task(name: 'On task', deadline: '2026-03-20', deadlineType: 'on'));
+
+        final result = await db.getDeadlineBoostedLeafData(now: today);
+        expect(result.containsKey(id), isFalse);
+      });
+
+      test('on deadline: inherited from parent, no boost before date', () async {
+        final today = DateTime(2026, 3, 18);
+        final parentId = await db.insertTask(Task(name: 'Project', deadline: '2026-03-20', deadlineType: 'on'));
+        final childId = await db.insertTask(Task(name: 'Task'));
+        await db.addRelationship(parentId, childId);
+
+        final result = await db.getDeadlineBoostedLeafData(now: today);
+        expect(result.containsKey(childId), isFalse);
+      });
+
+      test('on deadline: inherited from parent, boosted on the day', () async {
+        final today = DateTime(2026, 3, 20);
+        final parentId = await db.insertTask(Task(name: 'Project', deadline: '2026-03-20', deadlineType: 'on'));
+        final childId = await db.insertTask(Task(name: 'Task'));
+        await db.addRelationship(parentId, childId);
+
+        final result = await db.getDeadlineBoostedLeafData(now: today);
+        expect(result[childId], 0);
+      });
+
+      test('due_by and on deadlines coexist correctly', () async {
+        final today = DateTime(2026, 3, 20);
+        final dueById = await db.insertTask(Task(name: 'Due by', deadline: '2026-03-25'));
+        final onId = await db.insertTask(Task(name: 'On', deadline: '2026-03-25', deadlineType: 'on'));
+        final onTodayId = await db.insertTask(Task(name: 'On today', deadline: '2026-03-20', deadlineType: 'on'));
+
+        final result = await db.getDeadlineBoostedLeafData(now: today);
+        expect(result[dueById], 5); // due_by gets ramp-up
+        expect(result.containsKey(onId), isFalse); // on: 5 days away, no boost
+        expect(result[onTodayId], 0); // on: day of, boosted
       });
     });
   });
