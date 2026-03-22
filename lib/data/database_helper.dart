@@ -2433,8 +2433,9 @@ class DatabaseHelper {
     });
   }
 
-  /// Deletes Today's 5 state for [date]. Debug-only, used to simulate
+  /// Deletes Today's 5 state for [date]. Debug/test only — used to simulate
   /// midnight rollover (forces first-generation auto-pin on next load).
+  /// Only called from debug UI (kDebugMode guard) and tests.
   Future<void> deleteTodaysFiveState(String date) async {
     final db = await database;
     await db.delete('todays_five_state', where: 'date = ?', whereArgs: [date]);
