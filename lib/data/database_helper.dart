@@ -1024,8 +1024,12 @@ class DatabaseHelper {
   }
 
   /// Returns leaf task IDs that should be auto-pinned due to deadlines.
-  /// Includes both leaves with their own deadline <= today AND leaf
-  /// descendants of parent tasks with deadline <= today.
+  /// Only includes tasks whose deadline is exactly today (not overdue).
+  /// Overdue tasks rely on weight boost (ramp-down) instead of auto-pin.
+  ///
+  /// Bug fix: Previously used `deadline <= today` which auto-pinned all
+  /// overdue tasks too. Now uses `deadline = today` so only today's
+  /// deadlines get force-pinned. Overdue tasks still get weight boost.
   Future<Set<int>> getDeadlinePinLeafIds({DateTime? now}) async {
     final db = await database;
     final date = now ?? DateTime.now();
@@ -1034,7 +1038,7 @@ class DatabaseHelper {
       WITH
         deadline_due(task_id) AS (
           SELECT id FROM tasks
-          WHERE deadline IS NOT NULL AND deadline <= ?
+          WHERE deadline IS NOT NULL AND deadline = ?
           AND completed_at IS NULL AND skipped_at IS NULL
         ),
         all_descendants(id) AS (
@@ -1142,16 +1146,22 @@ class DatabaseHelper {
   /// Returns a map of leaf task ID -> days until the nearest deadline
   /// (from self or any ancestor). Used for weight boosting.
   /// Only includes leaves within the 14-day window (or overdue up to 14 days).
+  ///
+  /// Bug fix: Previously excluded 'on' deadlines entirely. Now includes them
+  /// on the day itself and when overdue. Before: 'on' tasks got no weight
+  /// boost ever, making them unlikely to appear in Today's 5 when due.
+  /// After: 'on' tasks get the same boost as 'due_by' on day 0 and overdue.
   Future<Map<int, int>> getDeadlineBoostedLeafData({DateTime? now}) async {
     final db = await database;
     final date = now ?? DateTime.now();
     final today = DateTime(date.year, date.month, date.day);
-    // Fetch all tasks with 'due_by' deadlines (active only).
-    // 'on' type deadlines don't get weight boost — only auto-pin.
+    // Fetch all tasks with deadlines (active only).
+    // 'due_by' deadlines get weight boost within 14-day window (ramp-up).
+    // 'on' deadlines get weight boost only on the day itself or when overdue
+    // (silent until the date, then boosted so they appear in Today's 5).
     final deadlineTasks = await db.rawQuery('''
-      SELECT id, deadline FROM tasks
+      SELECT id, deadline, deadline_type FROM tasks
       WHERE deadline IS NOT NULL
-      AND (deadline_type IS NULL OR deadline_type = 'due_by')
       AND completed_at IS NULL AND skipped_at IS NULL
     ''');
     if (deadlineTasks.isEmpty) return {};
@@ -1162,12 +1172,15 @@ class DatabaseHelper {
     for (final row in deadlineTasks) {
       final taskId = row['id'] as int;
       final deadlineStr = row['deadline'] as String;
+      final deadlineType = row['deadline_type'] as String? ?? 'due_by';
       final deadlineDate = DateTime.tryParse(deadlineStr);
       if (deadlineDate == null) continue;
       final daysUntil = DateTime(deadlineDate.year, deadlineDate.month, deadlineDate.day)
           .difference(today).inDays;
       // Only boost within 14-day window (approaching or overdue)
       if (daysUntil.abs() > 14) continue;
+      // 'on' deadlines: only boost on the day itself or when overdue
+      if (deadlineType == 'on' && daysUntil > 0) continue;
 
       // Get leaf descendants (includes self if it's a leaf)
       final leafRows = await db.rawQuery('''
@@ -2418,6 +2431,14 @@ class DatabaseHelper {
         });
       }
     });
+  }
+
+  /// Deletes Today's 5 state for [date]. Debug/test only — used to simulate
+  /// midnight rollover (forces first-generation auto-pin on next load).
+  /// Only called from debug UI (kDebugMode guard) and tests.
+  Future<void> deleteTodaysFiveState(String date) async {
+    final db = await database;
+    await db.delete('todays_five_state', where: 'date = ?', whereArgs: [date]);
   }
 
   /// Loads Today's 5 state from the DB for [date]. Returns null if no data.

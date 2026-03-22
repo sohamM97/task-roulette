@@ -22,8 +22,11 @@ If no argument is provided, ask the user which mode they want.
 ## Mode 1: Last Feature/Bug
 
 1. Read `docs/TEST_COVERAGE.md` to understand existing coverage landscape.
-2. Run `git log --oneline -10` to identify the most recent feature or bug fix commits.
-3. Read the changed files (`git diff main~N..main --name-only` or similar) to understand what was added/changed.
+2. Check the **current branch** with `git branch --show-current` and compare against `main`:
+   - `git diff main...HEAD --name-only` for committed changes on this branch
+   - `git diff --name-only` for uncommitted changes
+   - If both are empty, fall back to `git log --oneline -10` on the current branch
+3. Read the changed files to understand what was added/changed. **Always use the current branch** — do not look at other branches.
 4. Only read existing test files if `TEST_COVERAGE.md` doesn't have enough detail for the area being tested.
 5. Write tests for the new/changed code:
    - Unit tests for new model fields, DB methods, or service logic

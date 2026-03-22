@@ -867,6 +867,128 @@ void main() {
       expect(find.byIcon(Icons.push_pin), findsNothing);
     });
 
+    testWidgets('first generation: deadline task is auto-pinned', (tester) async {
+      // On first generation of the day (no saved state), deadline-due tasks
+      // should be auto-pinned into Today's 5.
+      late int deadlineId;
+      await tester.runAsync(() async {
+        deadlineId = await db.insertTask(
+          Task(name: 'Deadline task', deadline: todayDeadline()),
+        );
+        // Add filler tasks so there's a pool to pick from
+        for (int i = 0; i < 6; i++) {
+          await db.insertTask(Task(name: 'Filler $i'));
+        }
+        // NO saved state — this is first generation
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Deadline task should appear and be pinned
+      expect(find.text('Deadline task'), findsOneWidget);
+      final saved = await tester.runAsync(
+        () => db.loadTodaysFiveState(_todayKey()),
+      );
+      expect(saved!.pinnedIds, contains(deadlineId));
+    });
+
+    testWidgets('first generation: on deadline task is auto-pinned on the day', (tester) async {
+      // 'on' deadline tasks should be auto-pinned on first generation
+      // when the deadline date is today.
+      late int onDeadlineId;
+      await tester.runAsync(() async {
+        onDeadlineId = await db.insertTask(
+          Task(name: 'On deadline', deadline: todayDeadline(), deadlineType: 'on'),
+        );
+        for (int i = 0; i < 6; i++) {
+          await db.insertTask(Task(name: 'Filler $i'));
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('On deadline'), findsOneWidget);
+      final saved = await tester.runAsync(
+        () => db.loadTodaysFiveState(_todayKey()),
+      );
+      expect(saved!.pinnedIds, contains(onDeadlineId));
+    });
+
+    testWidgets('first generation: suppressed deadline task is NOT auto-pinned', (tester) async {
+      // If the user previously unpinned a deadline task (suppressed),
+      // it should not be auto-pinned even on first generation.
+      late int deadlineId;
+      await tester.runAsync(() async {
+        deadlineId = await db.insertTask(
+          Task(name: 'Suppressed deadline', deadline: todayDeadline()),
+        );
+        await db.suppressDeadlineAutoPin(_todayKey(), deadlineId);
+        for (int i = 0; i < 6; i++) {
+          await db.insertTask(Task(name: 'Filler $i'));
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      final saved = await tester.runAsync(
+        () => db.loadTodaysFiveState(_todayKey()),
+      );
+      expect(saved!.pinnedIds, isNot(contains(deadlineId)));
+    });
+
+    testWidgets('first generation: respects max 5 pins limit', (tester) async {
+      // Even on first generation, auto-pin should not exceed maxPins (5).
+      await tester.runAsync(() async {
+        for (int i = 0; i < 7; i++) {
+          await db.insertTask(
+            Task(name: 'Deadline $i', deadline: todayDeadline()),
+          );
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      final saved = await tester.runAsync(
+        () => db.loadTodaysFiveState(_todayKey()),
+      );
+      expect(saved!.pinnedIds.length, lessThanOrEqualTo(5));
+    });
+
+    testWidgets('midnight rollover: yesterday state exists, today does not — auto-pins', (tester) async {
+      // Simulates midnight rollover: saved state exists for yesterday's date
+      // but not for today. _loadTodaysTasksInner finds saved == null for
+      // today's key → _generateNewSet(autoPin: true).
+      late int deadlineId;
+      await tester.runAsync(() async {
+        deadlineId = await db.insertTask(
+          Task(name: 'Deadline task', deadline: todayDeadline()),
+        );
+        for (int i = 0; i < 6; i++) {
+          await db.insertTask(Task(name: 'Filler $i'));
+        }
+        // Save state for YESTERDAY — simulating stale data from previous day
+        final yesterday = DateTime.now().subtract(const Duration(days: 1));
+        final yesterdayKey = '${yesterday.year}-${yesterday.month.toString().padLeft(2, '0')}-${yesterday.day.toString().padLeft(2, '0')}';
+        await db.saveTodaysFiveState(
+          date: yesterdayKey,
+          taskIds: [deadlineId],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {},  // NOT pinned yesterday
+        );
+        // No state for today — first generation
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Deadline task should be auto-pinned for today
+      final saved = await tester.runAsync(
+        () => db.loadTodaysFiveState(_todayKey()),
+      );
+      expect(saved, isNotNull);
+      expect(saved!.pinnedIds, contains(deadlineId));
+    });
+
     testWidgets('regeneration: no deadline auto-pin on New set', (tester) async {
       // "New set" should not auto-pin deadline tasks. Pins are user-driven.
       late int idOther1, idOther2;

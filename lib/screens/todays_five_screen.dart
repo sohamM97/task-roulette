@@ -244,7 +244,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       return;
     }
 
-    await _generateNewSet();
+    await _generateNewSet(autoPin: true);
   }
 
   /// Re-fetches task snapshots from DB without regenerating the set.
@@ -259,7 +259,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       return;
     }
     if (_todaysTasks.isEmpty) {
-      await _generateNewSet();
+      await _generateNewSet(autoPin: true);
       return;
     }
 
@@ -395,7 +395,13 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     );
   }
 
-  Future<void> _generateNewSet() async {
+  /// Bug fix: Previously, deadline-due tasks were never auto-pinned during
+  /// generation — only when explicitly setting a deadline from All Tasks.
+  /// Before: 'on' deadline tasks got neither weight boost nor auto-pin when
+  /// Today's 5 was first generated, so they were unlikely to appear.
+  /// After: [autoPin] = true on first generation force-pins deadline-due
+  /// tasks. Rerolls ("New set") don't auto-pin to avoid whack-a-mole.
+  Future<void> _generateNewSet({bool autoPin = false}) async {
     // Clear stale per-session tracking sets from previous day
     _workedOnIds.clear();
     _autoStartedIds.clear();
@@ -404,9 +410,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final provider = context.read<TaskProvider>();
     final ctx = await _fetchSelectionContext();
 
-    // No deadline auto-pin here — auto-pin only happens when explicitly
-    // setting a deadline from All Tasks. Weight boost still applies via ctx.
-
     // Keep done + pinned tasks, only replace the rest
     final kept = _todaysTasks.where(
       (t) => _completedIds.contains(t.id) || _pinnedIds.contains(t.id),
@@ -414,6 +417,25 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     // Clean pinned IDs for tasks no longer in the kept set
     _pinnedIds.removeWhere((id) => !kept.any((t) => t.id == id));
     final keptIds = kept.map((t) => t.id).toSet();
+
+    // On first generation of the day, auto-pin deadline-due tasks.
+    // Not on rerolls ("New set") — that would cause whack-a-mole where
+    // unpinning one deadline task just pins another on next reroll.
+    if (autoPin) {
+      final deadlinePinIds = await provider.getDeadlinePinLeafIds();
+      final leafById = {for (final t in ctx.allLeaves) t.id!: t};
+      for (final id in deadlinePinIds) {
+        if (keptIds.contains(id)) continue;
+        if (_deadlineSuppressedIds.contains(id)) continue;
+        if (ctx.blockedIds.contains(id)) continue;
+        final task = leafById[id];
+        if (task == null) continue;
+        if (_pinnedIds.length >= maxPins) break;
+        kept.add(task);
+        keptIds.add(id);
+        _pinnedIds.add(id);
+      }
+    }
 
     final eligible = ctx.allLeaves.where(
       (t) => !ctx.blockedIds.contains(t.id) && !keptIds.contains(t.id),
@@ -1069,6 +1091,27 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         ),
         toolbarHeight: 72,
         actions: [
+          if (kDebugMode)
+            IconButton(
+              icon: const Icon(Icons.nightlight_round, size: 20),
+              onPressed: () async {
+                // Simulate midnight rollover: set _loadedDateKey to yesterday
+                // so refreshSnapshots detects a date mismatch and triggers
+                // _reloadFromDb → _loadTodaysTasksInner (same as real midnight).
+                final messenger = ScaffoldMessenger.of(context);
+                final yesterday = DateTime.now().subtract(const Duration(days: 1));
+                _loadedDateKey = '${yesterday.year}-${yesterday.month.toString().padLeft(2, '0')}-${yesterday.day.toString().padLeft(2, '0')}';
+                // Delete today's saved state so first-gen auto-pin fires
+                await DatabaseHelper().deleteTodaysFiveState(_todayKey());
+                await refreshSnapshots();
+                if (mounted) {
+                  messenger.showSnackBar(
+                    const SnackBar(content: Text('Simulated midnight rollover')),
+                  );
+                }
+              },
+              tooltip: 'Simulate midnight rollover',
+            ),
           const ProfileIcon(),
           Consumer<ThemeProvider>(
             builder: (context, themeProvider, _) {

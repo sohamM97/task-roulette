@@ -61,6 +61,8 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 - **Always ask for confirmation before committing.** Never run `/commit` or `git commit` without explicit user approval first.
 - Remind user about committing occasionally — don't wait until asked. Remind them to review changes and test on Linux (via `./dev.sh`) first.
 - When a bug is found and confirmed reproducible, always add a test case for it.
+- **Bug fix code comments**: When adding code changes for bug fixes, include a comment documenting the exact bug — behaviour before the fix vs after the fix.
+- **Confirm flow/functionality changes**: If a bug fix involves changing the flow or functionality itself (not just fixing broken code), always ask the user before implementing. Don't unilaterally make radical design decisions like removing auto-pin or changing weighting strategies.
 - When writing tests in bulk, use `flutter test --coverage` to find gaps. Parse `coverage/lcov.info` directly (`genhtml` may not be installed).
 - Capture any user-mentioned future work items as todo tasks immediately.
 - **When changing weighting logic**, update `docs/TODAYS_FIVE_ALGORITHM.md` to keep the algorithm doc in sync.

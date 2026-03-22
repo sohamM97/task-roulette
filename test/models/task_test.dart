@@ -698,6 +698,77 @@ void main() {
     });
   });
 
+  group('Deadline type', () {
+    test('defaults to due_by', () {
+      final task = Task(name: 'T', deadline: '2026-03-20');
+      expect(task.deadlineType, 'due_by');
+      expect(task.isDeadlineDueBy, isTrue);
+      expect(task.isDeadlineOn, isFalse);
+    });
+
+    test('can be set to on', () {
+      final task = Task(name: 'T', deadline: '2026-03-20', deadlineType: 'on');
+      expect(task.deadlineType, 'on');
+      expect(task.isDeadlineOn, isTrue);
+      expect(task.isDeadlineDueBy, isFalse);
+    });
+
+    test('toMap includes deadline_type', () {
+      final task = Task(id: 1, name: 'T', createdAt: 100, deadline: '2026-03-20', deadlineType: 'on');
+      final map = task.toMap();
+      expect(map['deadline_type'], 'on');
+    });
+
+    test('toMap includes default deadline_type', () {
+      final task = Task(id: 1, name: 'T', createdAt: 100, deadline: '2026-03-20');
+      final map = task.toMap();
+      expect(map['deadline_type'], 'due_by');
+    });
+
+    test('fromMap parses deadline_type', () {
+      final map = {
+        'id': 1,
+        'name': 'T',
+        'created_at': 100,
+        'deadline': '2026-03-20',
+        'deadline_type': 'on',
+      };
+      final task = Task.fromMap(map);
+      expect(task.deadlineType, 'on');
+      expect(task.isDeadlineOn, isTrue);
+    });
+
+    test('fromMap defaults deadline_type to due_by when absent', () {
+      final map = {
+        'id': 1,
+        'name': 'T',
+        'created_at': 100,
+        'deadline': '2026-03-20',
+      };
+      final task = Task.fromMap(map);
+      expect(task.deadlineType, 'due_by');
+      expect(task.isDeadlineDueBy, isTrue);
+    });
+
+    test('toMap/fromMap round-trip preserves deadline_type', () {
+      final original = Task(id: 1, name: 'T', createdAt: 100, deadline: '2026-03-20', deadlineType: 'on');
+      final restored = Task.fromMap(original.toMap());
+      expect(restored.deadlineType, 'on');
+    });
+
+    test('copyWith sets deadlineType', () {
+      final task = Task(name: 'T', deadline: '2026-03-20');
+      final updated = task.copyWith(deadlineType: 'on');
+      expect(updated.deadlineType, 'on');
+    });
+
+    test('copyWith preserves deadlineType when not specified', () {
+      final task = Task(name: 'T', deadline: '2026-03-20', deadlineType: 'on');
+      final updated = task.copyWith(name: 'New');
+      expect(updated.deadlineType, 'on');
+    });
+  });
+
   group('Starred fields', () {
     test('defaults isStarred to false and starOrder to null', () {
       final task = Task(name: 'T');

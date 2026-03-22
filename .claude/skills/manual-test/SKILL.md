@@ -27,9 +27,9 @@ Generate a checklist of manual tests the user should run for recent changes.
 3. **Before writing any test**, read the widget code for every screen/dialog touched by the changes. Note the exact button labels, icon names, menu item text, and how each interaction is triggered (tap, long press, swipe, overflow menu, etc.). Do NOT proceed to step 4 until you have read every relevant widget file.
 
 4. Generate a numbered checklist of manual tests. Every UI element referenced MUST come from step 3's reading — never from memory or assumption. Format rules:
+   - **Each entry is a concrete test case**, not a step. A test case has a clear action and expected outcome. Setup steps (creating tasks, navigating) go in a separate "Setup" section before the test cases, not as numbered test items.
    - **One line per test.** Action → expected result, joined by `→`. No multi-line explanations.
    - **No tables.** Tables add visual bulk. Use a flat numbered list.
-   - **No setup paragraphs.** If setup is needed, put it as the first 1-2 items in the list ("Create a task with deadline set to today, type On").
    - **Group by what changed**, not by screen. The user cares about "does the new behavior work?" not "let me exhaustively test every screen."
    - **Mark the key behavior changes** with ⚡ so the user can spot what's new vs regression checks.
    - Keep it scannable — if the user's eyes glaze over, it's too long.
@@ -49,9 +49,12 @@ Generate a checklist of manual tests the user should run for recent changes.
 ```
 ## Manual Test: [change name]
 
+### Setup
+Create [whatever state is needed for the tests below].
+
 ### [What changed]
-1. Do X → expect Y
-2. ⚡ Do A → expect B (was C before fix)
+1. ⚡ Do A → expect B (was C before fix)
+2. Do X → expect Y
 
 ### Regression
 3. Do X → still works as before
