@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show SocketException;
 import 'dart:ui' show VoidCallback;
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database_helper.dart';
 import '../providers/auth_provider.dart';
@@ -466,20 +467,23 @@ class SyncService {
 
       // Pull relationships: delta when possible, full on first sync
       if (lastSyncAt != null) {
-        // Delta pull — only relationships added/modified since last sync.
-        // Deletions are handled by the sync_queue push mechanism:
-        // when a device deletes a relationship, it pushes a 'remove' entry
-        // that calls deleteRelationship on Firestore. The next full pull
-        // (on app restart) reconciles any missed deletions.
+        // Delta pull — includes tombstoned docs (deleted_at set) so we
+        // can apply remote deletions without a full reconciliation.
         final recentRels = await _firestore.pullRelationshipsSince(
             uid, idToken, lastSyncAt);
         for (final rel in recentRels) {
-          final wouldCycle = await _db.wouldRelationshipCreateCycle(
-              rel.parentSyncId, rel.childSyncId);
-          if (!wouldCycle) {
-            await _db.upsertRelationshipFromRemote(
+          if (rel.deleted) {
+            await _db.removeRelationshipFromRemote(
                 rel.parentSyncId, rel.childSyncId);
             anyChange = true;
+          } else {
+            final wouldCycle = await _db.wouldRelationshipCreateCycle(
+                rel.parentSyncId, rel.childSyncId);
+            if (!wouldCycle) {
+              await _db.upsertRelationshipFromRemote(
+                  rel.parentSyncId, rel.childSyncId);
+              anyChange = true;
+            }
           }
         }
       } else {
@@ -513,12 +517,18 @@ class SyncService {
         final recentDeps = await _firestore.pullDependenciesSince(
             uid, idToken, lastSyncAt);
         for (final dep in recentDeps) {
-          final wouldCycle = await _db.wouldDependencyCreateCycle(
-              dep.taskSyncId, dep.dependsOnSyncId);
-          if (!wouldCycle) {
-            await _db.upsertDependencyFromRemote(
+          if (dep.deleted) {
+            await _db.removeDependencyFromRemote(
                 dep.taskSyncId, dep.dependsOnSyncId);
             anyChange = true;
+          } else {
+            final wouldCycle = await _db.wouldDependencyCreateCycle(
+                dep.taskSyncId, dep.dependsOnSyncId);
+            if (!wouldCycle) {
+              await _db.upsertDependencyFromRemote(
+                  dep.taskSyncId, dep.dependsOnSyncId);
+              anyChange = true;
+            }
           }
         }
       } else {
@@ -551,8 +561,16 @@ class SyncService {
         final recentSchedules = await _firestore.pullSchedulesSince(
             uid, idToken, lastSyncAt);
         for (final schedule in recentSchedules) {
-          await _db.upsertScheduleFromRemote(schedule);
-          anyChange = true;
+          if (schedule['deleted'] == true) {
+            final syncId = schedule['sync_id'] as String?;
+            if (syncId != null) {
+              await _db.deleteScheduleBySyncId(syncId);
+              anyChange = true;
+            }
+          } else {
+            await _db.upsertScheduleFromRemote(schedule);
+            anyChange = true;
+          }
         }
       } else {
         final remoteSchedules = await _firestore.pullAllSchedules(uid, idToken);
@@ -571,6 +589,17 @@ class SyncService {
             anyChange = true;
           }
         }
+
+        // Clean up old tombstones (fire-and-forget, best-effort).
+        // Only on full pull (app startup) — when all devices have had
+        // a chance to see the tombstones.
+        const tombstoneMaxAge = Duration(days: 7);
+        _firestore.cleanupTombstones(uid, idToken, 'relationships', tombstoneMaxAge).catchError(
+            (e) => debugPrint('Tombstone cleanup (relationships) failed: $e'));
+        _firestore.cleanupTombstones(uid, idToken, 'dependencies', tombstoneMaxAge).catchError(
+            (e) => debugPrint('Tombstone cleanup (dependencies) failed: $e'));
+        _firestore.cleanupTombstones(uid, idToken, 'schedules', tombstoneMaxAge).catchError(
+            (e) => debugPrint('Tombstone cleanup (schedules) failed: $e'));
       }
 
       // Pull Today's 5 state
