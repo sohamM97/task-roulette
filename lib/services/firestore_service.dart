@@ -16,12 +16,40 @@ class FirestoreService {
 
   static const _httpTimeout = Duration(seconds: 30);
 
+  /// Optional HTTP client for dependency injection (testing).
+  /// When null, uses the top-level http functions.
+  final http.Client? _client;
+
+  /// Creates a FirestoreService. Pass a [client] for testing.
+  FirestoreService({http.Client? client}) : _client = client;
+
   bool get isConfigured => _projectId.isNotEmpty;
 
   Map<String, String> _headers(String idToken) => {
         'Authorization': 'Bearer $idToken',
         'Content-Type': 'application/json',
       };
+
+  Future<http.Response> _get(Uri url, {required Map<String, String> headers}) {
+    final future = _client != null
+        ? _client.get(url, headers: headers)
+        : http.get(url, headers: headers);
+    return future.timeout(_httpTimeout);
+  }
+
+  Future<http.Response> _post(Uri url, {required Map<String, String> headers, Object? body}) {
+    final future = _client != null
+        ? _client.post(url, headers: headers, body: body)
+        : http.post(url, headers: headers, body: body);
+    return future.timeout(_httpTimeout);
+  }
+
+  Future<http.Response> _delete(Uri url, {required Map<String, String> headers}) {
+    final future = _client != null
+        ? _client.delete(url, headers: headers)
+        : http.delete(url, headers: headers);
+    return future.timeout(_httpTimeout);
+  }
 
   String _tasksPath(String uid) => '$_baseUrl/users/$uid/tasks';
   String _relationshipsPath(String uid) => '$_baseUrl/users/$uid/relationships';
@@ -47,11 +75,11 @@ class FirestoreService {
       final commitUrl = Uri.parse(
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
       );
-      final response = await http.post(
+      final response = await _post(
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': writes}),
-      ).timeout(_httpTimeout);
+      );
       if (response.statusCode != 200) {
         throw FirestoreException('Push tasks failed: ${response.statusCode} ${response.body}');
       }
@@ -85,11 +113,11 @@ class FirestoreService {
       final commitUrl = Uri.parse(
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
       );
-      final response = await http.post(
+      final response = await _post(
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': writes}),
-      ).timeout(_httpTimeout);
+      );
       if (response.statusCode != 200) {
         throw FirestoreException('Push relationships failed: ${response.statusCode} ${response.body}');
       }
@@ -123,11 +151,11 @@ class FirestoreService {
       final commitUrl = Uri.parse(
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
       );
-      final response = await http.post(
+      final response = await _post(
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': writes}),
-      ).timeout(_httpTimeout);
+      );
       if (response.statusCode != 200) {
         throw FirestoreException('Push dependencies failed: ${response.statusCode} ${response.body}');
       }
@@ -137,7 +165,7 @@ class FirestoreService {
   /// Deletes a task document from Firestore.
   Future<void> deleteTask(String uid, String idToken, String syncId) async {
     final url = Uri.parse('${_tasksPath(uid)}/$syncId');
-    final response = await http.delete(url, headers: _headers(idToken)).timeout(_httpTimeout);
+    final response = await _delete(url, headers: _headers(idToken));
     // 404 is OK — document may already be deleted
     if (response.statusCode != 200 && response.statusCode != 404) {
       throw FirestoreException('Delete task failed: ${response.statusCode} ${response.body}');
@@ -184,7 +212,7 @@ class FirestoreService {
   /// Returns true if the user has any task documents in Firestore.
   Future<bool> hasRemoteData(String uid, String idToken) async {
     final url = Uri.parse('${_tasksPath(uid)}?pageSize=1');
-    final response = await http.get(url, headers: _headers(idToken)).timeout(_httpTimeout);
+    final response = await _get(url, headers: _headers(idToken));
     if (response.statusCode != 200) {
       throw FirestoreException('Check remote data failed: ${response.statusCode}');
     }
@@ -220,7 +248,7 @@ class FirestoreService {
     do {
       var url = '${_relationshipsPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
-      final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
+      final response = await _get(Uri.parse(url), headers: _headers(idToken));
       if (response.statusCode != 200) {
         throw FirestoreException('Pull relationships failed: ${response.statusCode}');
       }
@@ -251,7 +279,7 @@ class FirestoreService {
     final queryUrl = Uri.parse(
       'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
     );
-    final response = await http.post(
+    final response = await _post(
       queryUrl,
       headers: _headers(idToken),
       body: json.encode({
@@ -266,7 +294,7 @@ class FirestoreService {
           },
         },
       }),
-    ).timeout(_httpTimeout);
+    );
     if (response.statusCode != 200) {
       throw FirestoreException('Query relationships failed: ${response.statusCode}');
     }
@@ -298,7 +326,7 @@ class FirestoreService {
     do {
       var url = '${_dependenciesPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
-      final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
+      final response = await _get(Uri.parse(url), headers: _headers(idToken));
       if (response.statusCode != 200) {
         throw FirestoreException('Pull dependencies failed: ${response.statusCode}');
       }
@@ -330,7 +358,7 @@ class FirestoreService {
     final queryUrl = Uri.parse(
       'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
     );
-    final response = await http.post(
+    final response = await _post(
       queryUrl,
       headers: _headers(idToken),
       body: json.encode({
@@ -345,7 +373,7 @@ class FirestoreService {
           },
         },
       }),
-    ).timeout(_httpTimeout);
+    );
     if (response.statusCode != 200) {
       throw FirestoreException('Query dependencies failed: ${response.statusCode}');
     }
@@ -401,11 +429,11 @@ class FirestoreService {
       final commitUrl = Uri.parse(
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
       );
-      final response = await http.post(
+      final response = await _post(
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': writes}),
-      ).timeout(_httpTimeout);
+      );
       if (response.statusCode != 200) {
         throw FirestoreException('Push schedules failed: ${response.statusCode} ${response.body}');
       }
@@ -435,7 +463,7 @@ class FirestoreService {
     do {
       var url = '${_schedulesPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
-      final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
+      final response = await _get(Uri.parse(url), headers: _headers(idToken));
       if (response.statusCode != 200) {
         throw FirestoreException('Pull schedules failed: ${response.statusCode}');
       }
@@ -470,7 +498,7 @@ class FirestoreService {
     final queryUrl = Uri.parse(
       'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
     );
-    final response = await http.post(
+    final response = await _post(
       queryUrl,
       headers: _headers(idToken),
       body: json.encode({
@@ -485,7 +513,7 @@ class FirestoreService {
           },
         },
       }),
-    ).timeout(_httpTimeout);
+    );
     if (response.statusCode != 200) {
       throw FirestoreException('Query schedules failed: ${response.statusCode}');
     }
@@ -539,7 +567,7 @@ class FirestoreService {
           },
         }).toList();
 
-    final response = await http.post(
+    final response = await _post(
       commitUrl,
       headers: _headers(idToken),
       body: json.encode({
@@ -557,7 +585,7 @@ class FirestoreService {
           },
         ],
       }),
-    ).timeout(_httpTimeout);
+    );
     if (response.statusCode != 200) {
       throw FirestoreException(
           'Push todays_five failed: ${response.statusCode} ${response.body}');
@@ -573,7 +601,7 @@ class FirestoreService {
   ) async {
     final url = Uri.parse('${_todaysFivePath(uid)}/$date');
     final response =
-        await http.get(url, headers: _headers(idToken)).timeout(_httpTimeout);
+        await _get(url, headers: _headers(idToken));
     if (response.statusCode == 404) return null;
     if (response.statusCode != 200) {
       throw FirestoreException(
@@ -615,7 +643,7 @@ class FirestoreService {
     do {
       var url = '${_tasksPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
-      final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
+      final response = await _get(Uri.parse(url), headers: _headers(idToken));
       if (response.statusCode != 200) {
         throw FirestoreException('List tasks failed: ${response.statusCode}');
       }
@@ -638,7 +666,7 @@ class FirestoreService {
     final queryUrl = Uri.parse(
       'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
     );
-    final response = await http.post(
+    final response = await _post(
       queryUrl,
       headers: _headers(idToken),
       body: json.encode({
@@ -655,7 +683,7 @@ class FirestoreService {
           },
         },
       }),
-    ).timeout(_httpTimeout);
+    );
     if (response.statusCode != 200) {
       throw FirestoreException('Query tasks failed: ${response.statusCode}');
     }
@@ -782,7 +810,7 @@ class FirestoreService {
     final commitUrl = Uri.parse(
       'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
     );
-    final response = await http.post(
+    final response = await _post(
       commitUrl,
       headers: _headers(idToken),
       body: json.encode({
@@ -795,7 +823,7 @@ class FirestoreService {
           },
         ],
       }),
-    ).timeout(_httpTimeout);
+    );
     if (response.statusCode != 200) {
       throw FirestoreException('Soft-delete failed ($docPath): ${response.statusCode} ${response.body}');
     }
@@ -816,7 +844,7 @@ class FirestoreService {
     final queryUrl = Uri.parse(
       'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
     );
-    final response = await http.post(
+    final response = await _post(
       queryUrl,
       headers: _headers(idToken),
       body: json.encode({
@@ -846,7 +874,7 @@ class FirestoreService {
           'select': {'fields': []}, // Only need doc names, not fields
         },
       }),
-    ).timeout(_httpTimeout);
+    );
     if (response.statusCode != 200) return; // Best-effort cleanup
     final decoded = json.decode(response.body);
     if (decoded is! List) return;
@@ -865,11 +893,11 @@ class FirestoreService {
     );
     for (var i = 0; i < writes.length; i += 500) {
       final batch = writes.skip(i).take(500).toList();
-      await http.post(
+      await _post(
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': batch}),
-      ).timeout(_httpTimeout);
+      );
     }
   }
 }

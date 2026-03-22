@@ -4,7 +4,7 @@ Last updated: 2026-03-22
 
 ## Summary
 
-~1035 tests across 27 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
+~1060 tests across 27 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps but firestore_service now has HTTP-mocked tests.
 
 ## Covered
 
@@ -32,7 +32,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 
 ### Services (minimal)
 - **test/services/notification_service_test.dart** (13 tests) — `nextEightAM` (before/after/at 8 AM, midnight, month/year rollover, DST spring-forward, timezone preservation), `onNotificationTap` callback (null default, set and invoke, pendingTap drain on register, no spurious invoke without pending).
-- **test/services/firestore_service_test.dart** (~34 tests) — `taskToFirestoreFields` (all fields), `taskFromFirestoreDoc` (parsing, sync_id extraction), relationship doc parsing, **deadline** (include/omit in Firestore fields, parse from doc, reject >10 chars, round-trip), **deadline type** (`deadline_type` include/omit, parse, default, round-trip), **starred fields** (is_starred/star_order serialization, omission when false/null, parsing, defaults).
+- **test/services/firestore_service_test.dart** (~74 tests) — `taskToFirestoreFields` (all fields), `taskFromFirestoreDoc` (parsing, sync_id extraction), relationship doc parsing, **deadline** (include/omit in Firestore fields, parse from doc, reject >10 chars, round-trip), **deadline type** (`deadline_type` include/omit, parse, default, round-trip), **starred fields** (is_starred/star_order serialization, omission when false/null, parsing, defaults), **tombstone filtering** (`pullAllRelationships`/`pullAllDependencies`/`pullAllSchedules` skip docs with `deleted_at`), **delta pull** (`pullRelationshipsSince`/`pullDependenciesSince`/`pullSchedulesSince` return `deleted` flag from `deleted_at`, structured query with `updated_at` filter, sync_id extraction, missing ID skipping, non-list response handling), **soft-delete** (`deleteRelationship`/`deleteDependency`/`deleteSchedule` send commit with `deleted_at`+`updated_at` instead of HTTP DELETE), **cleanupTombstones** (composite filter query, batch delete, no-op on empty, graceful failure), **push updated_at** (`pushRelationships`/`pushDependencies` include `updated_at` field). Uses `MockClient` with DI via `FirestoreService(client:)` constructor.
 
 ### Widgets (good)
 - **test/widgets/task_picker_dialog_test.dart** (~18 tests) — Priority sorting (tiers), preserved relative order, search filtering, parent context, search ranking (name matches before context-only matches, stable order within tiers, interaction with priority tiers), **headerAction** (shown when provided, hidden during search, absent when not provided).
@@ -64,7 +64,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 - **backup_service.dart** (130 lines) — NO TESTS. File I/O for import/export. Logic partially covered indirectly via `database_helper_test.dart` import/export tests.
 
 ### Services (partial)
-- **firestore_service.dart** (512 lines) — Only serialization helpers tested. REST API calls (create/update/delete docs, batch ops, error handling) NOT tested. Requires HTTP mocking.
+- **firestore_service.dart** (~900 lines) — Serialization helpers + HTTP-mocked tests for tombstone filtering, delta pulls, soft-delete, cleanup, and push updated_at. NOT tested: `pushTasks`, `deleteTask`, `pushSchedules`, `pushTodaysFive`, `pullTodaysFive`, `pullTasksSince`, `hasRemoteData`, error paths for non-200 responses on most endpoints.
 
 ### Widgets (incomplete)
 - **leaf_task_detail.dart** — 48 tests but 76.9% coverage. NOT tested: URL opening (requires url_launcher mock), editUrlDialog submit/remove flows.

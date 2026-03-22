@@ -34,6 +34,7 @@ Generate a checklist of manual tests the user should run for recent changes.
    - **Mark the key behavior changes** with ⚡ so the user can spot what's new vs regression checks.
    - Keep it scannable — if the user's eyes glaze over, it's too long.
    - **Each section must be self-contained.** Tests within a section can build on each other, but a new section/subheading must never assume state from a previous section. Include the exact steps to reach the required state.
+   - **Every test case must name the screen/tab** where the action starts (e.g. "On Today's 5 tab, tap..." not just "Tap..."). Never assume the user knows which screen you mean from context.
    - **One test = one flow.** Each test case should verify a single behavior. Don't combine multiple if-else outcomes into one test (e.g. "should show X if Y, otherwise Z"). Split into separate tests with clear preconditions.
    - **State the expected starting state** before the first test. Tell the user whether their existing app data is fine, or if they need a clean slate. Example: "Your existing tasks/pins won't interfere — these tests create new tasks." or "Clear Today's 5 first (New set → Replace) to start fresh."
 
@@ -64,6 +65,7 @@ Create [whatever state is needed for the tests below].
 
 - BLOCKING: You must read every relevant widget file in step 3 before generating any tests. If a test step mentions a UI element you haven't read the code for, delete the test and read the code first.
 - Never write instructions that contradict or omit app behavior. Use precise language that reflects how the app actually works. If the app does something automatically (e.g. deadline inheritance from parent to child), mention it explicitly so the user isn't confused when it happens. Don't say "no deadline" when the task inherits one — say "it will automatically inherit the parent's deadline".
+- Only reference UI elements that actually exist on the screen. If the widget code shows an icon, don't say "shows the deadline" — say "shows the deadline icon". If information isn't visually displayed, don't ask the user to verify it.
 - Don't suggest tests that duplicate what automated tests already cover — check the test files first.
 - If a change is purely algorithmic with no UI impact, say so and focus tests on observable outcomes.
 - Mention which platform to test on (Linux via `./dev.sh` unless the change is mobile-specific).
