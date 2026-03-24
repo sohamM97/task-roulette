@@ -723,7 +723,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       _preWorkedOnLastWorkedAt.remove(task.id);
       await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
       if (!wasStarted) await provider.unstartTask(task.id!);
+      if (removeDeadline) {
+        await provider.updateTaskDeadline(task.id!, task.deadline!, deadlineType: task.deadlineType);
+      }
       if (!mounted) return;
+      _explicitlyUncompletedIds.add(task.id!);
       await _unmarkDone(task.id!, workedOn: true, autoStarted: !wasStarted);
     });
   }

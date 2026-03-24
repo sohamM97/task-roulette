@@ -1049,13 +1049,12 @@ void main() {
 
       // The "Remove deadline?" dialog should appear
       expect(find.text('Remove deadline?'), findsOneWidget);
-      expect(find.textContaining('Due by'), findsOneWidget);
-      expect(find.textContaining('Apr 15, 2026'), findsOneWidget);
+      expect(find.textContaining('due by Apr 15, 2026'), findsOneWidget);
       expect(find.text('Keep'), findsOneWidget);
       expect(find.text('Remove'), findsOneWidget);
     });
 
-    testWidgets('shows Remove deadline dialog with On label for "on" type deadline', (tester) async {
+    testWidgets('shows Remove deadline dialog with "on" label for "on" type deadline', (tester) async {
       await tester.runAsync(() async {
         await db.insertTask(Task(
           name: 'Scheduled task',
@@ -1075,8 +1074,7 @@ void main() {
       await pumpAsync(tester, rounds: 10);
 
       expect(find.text('Remove deadline?'), findsOneWidget);
-      expect(find.textContaining('On'), findsOneWidget);
-      expect(find.textContaining('Jan 10, 2026'), findsOneWidget);
+      expect(find.textContaining('on Jan 10, 2026'), findsOneWidget);
     });
 
     testWidgets('tapping Keep preserves the deadline', (tester) async {

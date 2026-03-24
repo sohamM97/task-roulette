@@ -528,7 +528,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Remove deadline?'), findsOneWidget);
-      expect(find.textContaining('Due by'), findsOneWidget);
+      expect(find.textContaining('due by'), findsOneWidget);
       expect(find.textContaining('Apr 15, 2026'), findsOneWidget);
       expect(find.text('Keep'), findsOneWidget);
       expect(find.text('Remove'), findsOneWidget);
@@ -539,7 +539,7 @@ void main() {
       expect(result, isTrue);
     });
 
-    testWidgets('shows dialog with On label for "on" type', (tester) async {
+    testWidgets('shows dialog with "on" label for "on" type', (tester) async {
       bool? result;
       await tester.pumpWidget(MaterialApp(
         home: Builder(
@@ -555,8 +555,7 @@ void main() {
       await tester.tap(find.text('Trigger'));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('On'), findsOneWidget);
-      expect(find.textContaining('Jan 10, 2026'), findsOneWidget);
+      expect(find.textContaining('on Jan 10, 2026'), findsOneWidget);
 
       await tester.tap(find.text('Keep'));
       await tester.pumpAndSettle();

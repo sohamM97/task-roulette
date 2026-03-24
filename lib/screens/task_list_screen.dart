@@ -630,6 +630,9 @@ class TaskListScreenState extends State<TaskListScreen>
     showInfoSnackBar(context, '"${task.name}" — nice work!', onUndo: () async {
       await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
       if (!wasStarted) await provider.unstartTask(task.id!);
+      if (removeDeadline) {
+        await provider.updateTaskDeadline(task.id!, task.deadline!, deadlineType: task.deadlineType);
+      }
     });
   }
 
