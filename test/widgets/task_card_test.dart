@@ -574,8 +574,8 @@ void main() {
     });
 
     testWidgets('both deadline and scheduledToday icons shown together', (tester) async {
-      final tomorrow = DateTime.now().add(const Duration(days: 1));
-      final dl = '${tomorrow.year}-${tomorrow.month.toString().padLeft(2, '0')}-${tomorrow.day.toString().padLeft(2, '0')}';
+      final futureDate = DateTime.now().add(const Duration(days: 1));
+      final dl = '${futureDate.year}-${futureDate.month.toString().padLeft(2, '0')}-${futureDate.day.toString().padLeft(2, '0')}';
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
           body: SizedBox(

@@ -2875,9 +2875,8 @@ class DatabaseHelper {
           SELECT ta.target_id, tr.parent_id
           FROM target_ancestors ta
           INNER JOIN task_relationships tr ON tr.child_id = ta.ancestor_id
-          -- Stop climbing at schedule barriers (unless it's the task itself)
-          WHERE ta.ancestor_id = ta.target_id
-             OR ta.ancestor_id NOT IN (SELECT task_id FROM schedule_barrier)
+          -- Stop climbing when we hit a schedule barrier
+          WHERE ta.ancestor_id NOT IN (SELECT task_id FROM schedule_barrier)
         )
       SELECT DISTINCT ta.target_id AS id
       FROM target_ancestors ta

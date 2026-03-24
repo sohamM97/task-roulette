@@ -3866,6 +3866,58 @@ void main() {
       expect(monday, contains(child));
     });
 
+    // --- getEffectiveScheduledTodayIds tests ---
+
+    test('getEffectiveScheduledTodayIds returns directly scheduled task', () async {
+      final id = await db.insertTask(Task(name: 'Scheduled'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1), // Monday
+      ]);
+
+      final monday = await db.getEffectiveScheduledTodayIds(
+        [id], now: DateTime(2026, 3, 2)); // Monday
+      expect(monday, contains(id));
+
+      final tuesday = await db.getEffectiveScheduledTodayIds(
+        [id], now: DateTime(2026, 3, 3)); // Tuesday
+      expect(tuesday, isEmpty);
+    });
+
+    test('getEffectiveScheduledTodayIds includes parent with own schedule', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1), // Monday
+      ]);
+
+      // Both parent and child should be in the set (unlike leaf-only method)
+      final monday = await db.getEffectiveScheduledTodayIds(
+        [parent, child], now: DateTime(2026, 3, 2));
+      expect(monday, containsAll([parent, child]));
+    });
+
+    test('getEffectiveScheduledTodayIds respects schedule override barrier', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+      await db.replaceSchedules(parent, [
+        TaskSchedule(taskId: parent, dayOfWeek: 1), // Monday
+      ]);
+      // Child overrides with empty schedule → blocks inheritance
+      await db.replaceSchedules(child, [], isOverride: true);
+
+      final monday = await db.getEffectiveScheduledTodayIds(
+        [parent, child], now: DateTime(2026, 3, 2));
+      expect(monday, contains(parent));
+      expect(monday, isNot(contains(child)));
+    });
+
+    test('getEffectiveScheduledTodayIds with empty list returns empty', () async {
+      final result = await db.getEffectiveScheduledTodayIds([]);
+      expect(result, isEmpty);
+    });
+
     test('getEffectiveScheduleDays returns empty for empty override', () async {
       final parent = await db.insertTask(Task(name: 'Parent'));
       final child = await db.insertTask(Task(name: 'Child'));
