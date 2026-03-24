@@ -2299,6 +2299,27 @@ void main() {
       expect(task.completedAt, isNull);
     });
 
+    test('uncompleteTask preserves deadline through complete/uncomplete cycle', () async {
+      final id = await db.insertTask(Task(
+        name: 'Deadline task',
+        deadline: '2026-04-15',
+        deadlineType: 'due_by',
+      ));
+      // Complete the task ("Done for good!") — deadline stays untouched
+      await db.completeTask(id);
+      var task = await db.getTaskById(id);
+      expect(task!.isCompleted, isTrue);
+      expect(task.deadline, '2026-04-15');
+      expect(task.deadlineType, 'due_by');
+
+      // Uncomplete (e.g. from archive) — deadline should still be there
+      await provider.uncompleteTask(id);
+      task = await db.getTaskById(id);
+      expect(task!.isCompleted, isFalse);
+      expect(task.deadline, '2026-04-15');
+      expect(task.deadlineType, 'due_by');
+    });
+
     test('reCompleteTask re-archives without navigating back', () async {
       final parentId = await db.insertTask(Task(name: 'Parent'));
       final childId = await db.insertTask(Task(name: 'Child'));

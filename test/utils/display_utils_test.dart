@@ -474,4 +474,117 @@ void main() {
       );
     });
   });
+
+  group('formatDeadlineDate', () {
+    test('formats a valid date string as "Mon DD, YYYY"', () {
+      expect(formatDeadlineDate('2026-03-24'), 'Mar 24, 2026');
+    });
+
+    test('formats January date', () {
+      expect(formatDeadlineDate('2025-01-05'), 'Jan 5, 2025');
+    });
+
+    test('formats December date', () {
+      expect(formatDeadlineDate('2025-12-31'), 'Dec 31, 2025');
+    });
+
+    test('returns original string for unparseable input', () {
+      expect(formatDeadlineDate('not-a-date'), 'not-a-date');
+    });
+
+    test('returns original string for empty string', () {
+      expect(formatDeadlineDate(''), '');
+    });
+
+    test('handles ISO 8601 with time component', () {
+      expect(formatDeadlineDate('2026-06-15T10:30:00'), 'Jun 15, 2026');
+    });
+
+    test('formats all 12 months correctly', () {
+      final expected = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      for (var i = 1; i <= 12; i++) {
+        final month = i.toString().padLeft(2, '0');
+        expect(formatDeadlineDate('2025-$month-01'), '${expected[i - 1]} 1, 2025');
+      }
+    });
+  });
+
+  group('askRemoveDeadlineOnDone', () {
+    testWidgets('shows dialog with due_by label and returns true on Remove', (tester) async {
+      bool? result;
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () async {
+              result = await askRemoveDeadlineOnDone(context, '2026-04-15', 'due_by');
+            },
+            child: const Text('Trigger'),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Trigger'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Remove deadline?'), findsOneWidget);
+      expect(find.textContaining('Due by'), findsOneWidget);
+      expect(find.textContaining('Apr 15, 2026'), findsOneWidget);
+      expect(find.text('Keep'), findsOneWidget);
+      expect(find.text('Remove'), findsOneWidget);
+
+      await tester.tap(find.text('Remove'));
+      await tester.pumpAndSettle();
+
+      expect(result, isTrue);
+    });
+
+    testWidgets('shows dialog with On label for "on" type', (tester) async {
+      bool? result;
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () async {
+              result = await askRemoveDeadlineOnDone(context, '2026-01-10', 'on');
+            },
+            child: const Text('Trigger'),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Trigger'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('On'), findsOneWidget);
+      expect(find.textContaining('Jan 10, 2026'), findsOneWidget);
+
+      await tester.tap(find.text('Keep'));
+      await tester.pumpAndSettle();
+
+      expect(result, isFalse);
+    });
+
+    testWidgets('returns null when dialog is dismissed (barrier tap)', (tester) async {
+      bool? result;
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () async {
+              result = await askRemoveDeadlineOnDone(context, '2026-05-01', 'due_by');
+            },
+            child: const Text('Trigger'),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Trigger'));
+      await tester.pumpAndSettle();
+
+      // Tap the barrier to dismiss
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+
+      expect(result, isNull);
+    });
+  });
 }

@@ -606,12 +606,25 @@ class TaskListScreenState extends State<TaskListScreen>
     final previousLastWorkedAt = task.lastWorkedAt;
     final wasStarted = task.isStarted;
     _preWorkedOnTimestamps[task.id!] = previousLastWorkedAt;
+    // If the task has its own deadline, ask whether to remove it.
+    // null = cancelled (dismiss/back) → abort the whole "Done today" action.
+    final hadDeadline = task.hasDeadline;
+    bool removeDeadline = false;
+    if (hadDeadline) {
+      final result = await askRemoveDeadlineOnDone(context, task.deadline!, task.deadlineType);
+      if (!mounted) return;
+      if (result == null) return; // user cancelled — abort
+      removeDeadline = result;
+    }
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.markWorkedOnAndNavigateBack(
       task.id!,
       alsoStart: !task.isStarted,
     );
+    if (removeDeadline) {
+      await provider.updateTaskDeadline(task.id!, null);
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     showInfoSnackBar(context, '"${task.name}" — nice work!', onUndo: () async {
