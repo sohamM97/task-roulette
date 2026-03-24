@@ -87,6 +87,41 @@ bool isAllowedUrl(String url) {
   return scheme == 'http' || scheme == 'https';
 }
 
+/// Formats a deadline date string as "Mon DD, YYYY".
+String formatDeadlineDate(String deadlineStr) {
+  final parsed = DateTime.tryParse(deadlineStr);
+  if (parsed == null) return deadlineStr;
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return '${months[parsed.month - 1]} ${parsed.day}, ${parsed.year}';
+}
+
+/// Shows a dialog asking whether to remove a task's deadline after marking
+/// it "Done today". Returns true (remove), false (keep), or null (cancelled
+/// — user tapped outside or pressed back, meaning abort the whole action).
+Future<bool?> askRemoveDeadlineOnDone(BuildContext context, String deadline, String deadlineType) async {
+  final typeLabel = deadlineType == 'on' ? 'scheduled on' : 'due by';
+  return showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Remove deadline?'),
+      content: Text(
+        'This task is $typeLabel ${formatDeadlineDate(deadline)}.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Keep'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Remove'),
+        ),
+      ],
+    ),
+  );
+}
+
 /// Validates and launches a URL, showing a snackbar on failure.
 /// Centralizes the scheme check, try-catch, and mounted guard so callers
 /// don't duplicate the same error-handling boilerplate.

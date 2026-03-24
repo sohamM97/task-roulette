@@ -1024,4 +1024,251 @@ void main() {
       expect(saved!.pinnedIds, isEmpty);
     });
   });
+
+  group('deadline removal on Done today', () {
+    testWidgets('shows Remove deadline dialog when task has a due_by deadline', (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(
+          name: 'Deadline task',
+          deadline: '2026-04-15',
+          deadlineType: 'due_by',
+        ));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Tap task to open bottom sheet
+      await tester.tap(find.text('Deadline task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      // Tap "Done today"
+      await tester.tap(find.text('Done today'));
+      await pumpAsync(tester, rounds: 10);
+
+      // The "Remove deadline?" dialog should appear
+      expect(find.text('Remove deadline?'), findsOneWidget);
+      expect(find.textContaining('due by Apr 15, 2026'), findsOneWidget);
+      expect(find.text('Keep'), findsOneWidget);
+      expect(find.text('Remove'), findsOneWidget);
+    });
+
+    testWidgets('shows Remove deadline dialog with "on" label for "on" type deadline', (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(
+          name: 'Scheduled task',
+          deadline: '2026-01-10',
+          deadlineType: 'on',
+        ));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Scheduled task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      await tester.tap(find.text('Done today'));
+      await pumpAsync(tester, rounds: 10);
+
+      expect(find.text('Remove deadline?'), findsOneWidget);
+      expect(find.textContaining('scheduled on Jan 10, 2026'), findsOneWidget);
+    });
+
+    testWidgets('tapping Keep preserves the deadline', (tester) async {
+      late int taskId;
+      await tester.runAsync(() async {
+        taskId = await db.insertTask(Task(
+          name: 'Keep deadline task',
+          deadline: '2026-04-15',
+          deadlineType: 'due_by',
+        ));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Keep deadline task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      await tester.tap(find.text('Done today'));
+      await pumpAsync(tester, rounds: 10);
+
+      // Tap Keep
+      await tester.tap(find.text('Keep'));
+      // Pump through completion animation timer (700ms) and async work
+      await tester.pump(const Duration(milliseconds: 800));
+      await pumpAsync(tester, rounds: 40);
+
+      // Verify deadline is preserved in DB
+      final task = await tester.runAsync(() => db.getTaskById(taskId));
+      expect(task!.deadline, '2026-04-15');
+      expect(task.deadlineType, 'due_by');
+    });
+
+    testWidgets('tapping Remove clears the deadline', (tester) async {
+      late int taskId;
+      await tester.runAsync(() async {
+        taskId = await db.insertTask(Task(
+          name: 'Remove deadline task',
+          deadline: '2026-04-15',
+          deadlineType: 'due_by',
+        ));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Remove deadline task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      await tester.tap(find.text('Done today'));
+      await pumpAsync(tester, rounds: 10);
+
+      // Tap Remove
+      await tester.tap(find.text('Remove'));
+      // Pump through completion animation timer (700ms) and async work
+      await tester.pump(const Duration(milliseconds: 800));
+      await pumpAsync(tester, rounds: 40);
+
+      // Verify deadline is removed in DB
+      final task = await tester.runAsync(() => db.getTaskById(taskId));
+      expect(task!.deadline, isNull);
+    });
+
+    testWidgets('snackbar undo after Remove restores the deadline', (tester) async {
+      late int taskId;
+      await tester.runAsync(() async {
+        taskId = await db.insertTask(Task(
+          name: 'Undo remove task',
+          deadline: '2026-04-15',
+          deadlineType: 'due_by',
+        ));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Undo remove task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      await tester.tap(find.text('Done today'));
+      await pumpAsync(tester, rounds: 10);
+
+      // Tap Remove
+      await tester.tap(find.text('Remove'));
+      await tester.pump(const Duration(milliseconds: 800));
+      await pumpAsync(tester, rounds: 40);
+
+      // Deadline should be gone
+      var task = await tester.runAsync(() => db.getTaskById(taskId));
+      expect(task!.deadline, isNull);
+
+      // Invoke the SnackBarAction's onPressed directly — snackbar overlay
+      // doesn't pass hit-test in FakeAsync widget tests.
+      final action = tester.widget<SnackBarAction>(
+        find.widgetWithText(SnackBarAction, 'Undo'),
+      );
+      action.onPressed();
+      await pumpAsync(tester, rounds: 40);
+
+      // Deadline should be restored
+      task = await tester.runAsync(() => db.getTaskById(taskId));
+      expect(task!.deadline, '2026-04-15');
+      expect(task.deadlineType, 'due_by');
+    });
+
+    testWidgets('no dialog shown for task without deadline', (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'No deadline task'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('No deadline task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      await tester.tap(find.text('Done today'));
+      // Pump enough to see if dialog appears, but also advance the
+      // completion animation timer (700ms) so it doesn't remain pending.
+      await tester.pump(const Duration(milliseconds: 800));
+      await pumpAsync(tester, rounds: 20);
+
+      // No deadline dialog should appear — should go straight to animation
+      expect(find.text('Remove deadline?'), findsNothing);
+    });
+
+    testWidgets('dismissing dialog cancels the Done today action', (tester) async {
+      late int taskId;
+      await tester.runAsync(() async {
+        taskId = await db.insertTask(Task(
+          name: 'Cancel task',
+          deadline: '2026-04-15',
+          deadlineType: 'due_by',
+        ));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Cancel task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      await tester.tap(find.text('Done today'));
+      await pumpAsync(tester, rounds: 10);
+
+      expect(find.text('Remove deadline?'), findsOneWidget);
+
+      // Dismiss by tapping the barrier (outside the dialog)
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pump(const Duration(milliseconds: 800));
+      await pumpAsync(tester, rounds: 20);
+
+      // Task should NOT be marked done — deadline preserved, no completion
+      final task = await tester.runAsync(() => db.getTaskById(taskId));
+      expect(task!.deadline, '2026-04-15');
+      expect(task.isWorkedOnToday, isFalse);
+    });
+
+    testWidgets('Done for good does not show deadline dialog and preserves deadline', (tester) async {
+      late int taskId;
+      await tester.runAsync(() async {
+        taskId = await db.insertTask(Task(
+          name: 'Complete task',
+          deadline: '2026-04-15',
+          deadlineType: 'due_by',
+        ));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Complete task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      // Tap "Done for good!" instead of "Done today"
+      await tester.tap(find.text('Done for good!'));
+      // Pump through completion animation
+      await tester.pump(const Duration(milliseconds: 800));
+      await pumpAsync(tester, rounds: 40);
+
+      // No deadline dialog should have appeared
+      expect(find.text('Remove deadline?'), findsNothing);
+
+      // Task is completed but deadline is still in DB (untouched)
+      final task = await tester.runAsync(() => db.getTaskById(taskId));
+      expect(task!.isCompleted, isTrue);
+      expect(task.deadline, '2026-04-15');
+      expect(task.deadlineType, 'due_by');
+    });
+  });
 }

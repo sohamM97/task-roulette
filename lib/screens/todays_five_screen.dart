@@ -58,6 +58,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   /// Tracks pre-mutation lastWorkedAt values for "Done today" tasks,
   /// so _handleUncomplete can restore the original value.
   final Map<int, int?> _preWorkedOnLastWorkedAt = {};
+  /// Task IDs explicitly uncompleted this session — prevents refreshSnapshots
+  /// from re-adding them to _completedIds via isWorkedOnToday auto-detection.
+  /// Bug fix: provider.unmarkWorkedOn triggers an unawaited refreshSnapshots()
+  /// that races with _unmarkDone, re-reading isWorkedOnToday before DB settles.
+  final Set<int> _explicitlyUncompletedIds = {};
   /// Cached ancestor-path strings keyed by task ID (e.g. "Work > Project X").
   Map<int, String> _taskPaths = {};
   /// Task ID → effective deadline info for icon display.
@@ -122,6 +127,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     _pinnedIds.clear();
     _autoStartedIds.clear();
     _preWorkedOnLastWorkedAt.clear();
+    _explicitlyUncompletedIds.clear();
     await _loadTodaysTasks();
   }
 
@@ -295,8 +301,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         final fresh = await db.getTaskById(t.id!);
         if (fresh != null) {
           refreshed.add(fresh);
-          // Detect "worked on today" done externally (e.g. from All Tasks leaf detail)
-          if (fresh.isWorkedOnToday && !_completedIds.contains(fresh.id)) {
+          // Detect "worked on today" done externally (e.g. from All Tasks leaf detail).
+          // Skip tasks explicitly uncompleted this session to prevent race
+          // condition: unawaited refreshSnapshots re-adding tasks mid-uncomplete.
+          if (fresh.isWorkedOnToday && !_completedIds.contains(fresh.id) &&
+              !_explicitlyUncompletedIds.contains(fresh.id)) {
             _completedIds.add(fresh.id!);
           }
         }
@@ -536,6 +545,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   /// [autoStarted] — true if the task was auto-started by "Done today"
   Future<void> _markDone(int taskId, {required bool workedOn, required bool autoStarted}) async {
     _completedIds.add(taskId);
+    _explicitlyUncompletedIds.remove(taskId);
     if (workedOn) _workedOnIds.add(taskId);
     if (autoStarted) _autoStartedIds.add(taskId);
     await _refreshTaskSnapshot(taskId);
@@ -689,10 +699,23 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final wasStarted = task.isStarted;
     final previousLastWorkedAt = task.lastWorkedAt;
     _preWorkedOnLastWorkedAt[task.id!] = previousLastWorkedAt;
+    // If the task has its own deadline, ask whether to remove it.
+    // null = cancelled (dismiss/back) → abort the whole "Done today" action.
+    final hadDeadline = task.hasDeadline;
+    bool removeDeadline = false;
+    if (hadDeadline) {
+      final result = await askRemoveDeadlineOnDone(context, task.deadline!, task.deadlineType);
+      if (!mounted) return;
+      if (result == null) return; // user cancelled — abort
+      removeDeadline = result;
+    }
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.markWorkedOn(task.id!);
     if (!wasStarted) await provider.startTask(task.id!);
+    if (removeDeadline) {
+      await provider.updateTaskDeadline(task.id!, null);
+    }
     await _markDone(task.id!, workedOn: true, autoStarted: !wasStarted);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
@@ -700,7 +723,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       _preWorkedOnLastWorkedAt.remove(task.id);
       await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
       if (!wasStarted) await provider.unstartTask(task.id!);
+      if (removeDeadline) {
+        await provider.updateTaskDeadline(task.id!, task.deadline!, deadlineType: task.deadlineType);
+      }
       if (!mounted) return;
+      _explicitlyUncompletedIds.add(task.id!);
       await _unmarkDone(task.id!, workedOn: true, autoStarted: !wasStarted);
     });
   }
@@ -762,6 +789,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   /// swaps it out immediately.
   Future<void> _handleUncomplete(Task task) async {
     final provider = context.read<TaskProvider>();
+
     // Check actual DB state — task may have been completed externally
     // (e.g. via "Go to task" → All Tasks) even if _workedOnIds has it.
     final wasWorkedOn = _workedOnIds.contains(task.id);
@@ -779,13 +807,14 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         await provider.unmarkWorkedOn(task.id!, restoreTo: restoreTo);
       }
     }
-    if (!mounted) return;
 
+    if (!mounted) return;
+    _explicitlyUncompletedIds.add(task.id!);
     await _unmarkDone(task.id!, workedOn: wasWorkedOn, autoStarted: wasAutoStarted);
     if (!mounted) return;
     await _replaceIfNoLongerLeaf(task);
-    if (!mounted) return;
 
+    if (!mounted) return;
     final wasRemoved = !_todaysTasks.any((t) => t.id == task.id);
     ScaffoldMessenger.of(context).clearSnackBars();
     showInfoSnackBar(context, wasRemoved

@@ -59,7 +59,7 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 - **When asked what's pending in a branch**, always check memory (TODO.md and other memory files) for previously discussed next steps — not just the git diff.
 - **Before exiting plan mode**, ask the user if they want to create a feature branch first (via `/feature`).
 - **Always ask for confirmation before committing.** Never run `/commit` or `git commit` without explicit user approval first.
-- Remind user about committing occasionally — don't wait until asked. Remind them to review changes and test on Linux (via `./dev.sh`) first.
+- Remind user about committing occasionally — don't wait until asked. Remind them to run `/test-suite` first, then review changes before committing.
 - When a bug is found and confirmed reproducible, always add a test case for it.
 - **Bug fix code comments**: When adding code changes for bug fixes, include a comment documenting the exact bug — behaviour before the fix vs after the fix.
 - **Confirm flow/functionality changes**: If a bug fix involves changing the flow or functionality itself (not just fixing broken code), always ask the user before implementing. Don't unilaterally make radical design decisions like removing auto-pin or changing weighting strategies.

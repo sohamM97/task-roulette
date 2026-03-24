@@ -24,17 +24,20 @@ Generate a checklist of manual tests the user should run for recent changes.
    - **Data/DB changes** — schema migrations, new queries
    - **Edge cases** — boundary conditions, empty states, error paths
 
-3. **Before writing any test**, read the widget code for every screen/dialog touched by the changes. Note the exact button labels, icon names, menu item text, and how each interaction is triggered (tap, long press, swipe, overflow menu, etc.). Do NOT proceed to step 4 until you have read every relevant widget file.
+3. **Before writing any test**, read `UI_VIEWS.md` (in this skill's directory) for canonical view names, then read the widget code for every screen/dialog touched by the changes. Note the exact button labels, icon names, menu item text, and how each interaction is triggered (tap, long press, swipe, overflow menu, etc.). Use view names from `UI_VIEWS.md` consistently. Do NOT proceed to step 4 until you have read every relevant widget file.
 
 4. Generate a numbered checklist of manual tests. Every UI element referenced MUST come from step 3's reading — never from memory or assumption. Format rules:
-   - **Each entry is a concrete test case**, not a step. A test case has a clear action and expected outcome. Setup steps (creating tasks, navigating) go in a separate "Setup" section before the test cases, not as numbered test items.
-   - **One line per test.** Action → expected result, joined by `→`. No multi-line explanations.
+   - **Each entry is a concrete test case**, not a step. A test case has a clear action and expected outcome. Setup steps (creating tasks, navigating) go in a separate "Setup" section before the test cases, not as numbered test items. A test case that ends with "dialog appears" or "screen shows X" without verifying the final outcome is incomplete — it's a step, not a test.
+   - **One line per test.** Full navigation path + action + expected result, joined by `→`. No multi-line explanations. Include how to get to the screen if it requires navigation (e.g. "On All Tasks tab, tap 'My task' to open leaf detail → tap 'Done today' → expect X").
    - **No tables.** Tables add visual bulk. Use a flat numbered list.
    - **Group by what changed**, not by screen. The user cares about "does the new behavior work?" not "let me exhaustively test every screen."
    - **Mark the key behavior changes** with ⚡ so the user can spot what's new vs regression checks.
    - Keep it scannable — if the user's eyes glaze over, it's too long.
    - **Each section must be self-contained.** Tests within a section can build on each other, but a new section/subheading must never assume state from a previous section. Include the exact steps to reach the required state.
+   - **Every test case must name the screen/tab** where the action starts (e.g. "On Today's 5 tab, tap..." not just "Tap..."). Never assume the user knows which screen you mean from context.
    - **One test = one flow.** Each test case should verify a single behavior. Don't combine multiple if-else outcomes into one test (e.g. "should show X if Y, otherwise Z"). Split into separate tests with clear preconditions.
+   - **Account for state consumed by prior tests.** If test 1 uses a task with a deadline and removes it, test 2 can't reuse that same task for a "keep deadline" test. Either specify separate tasks in the setup, or tell the user to undo/re-add state between tests.
+   - **Specify the variant under test.** When a feature has distinct subtypes or modes (e.g. "due by" vs "scheduled on" deadlines, pinned vs unpinned tasks), each test case must state which variant it uses. Don't just say "a task with a deadline" — say "a task with a 'Due by' deadline".
    - **State the expected starting state** before the first test. Tell the user whether their existing app data is fine, or if they need a clean slate. Example: "Your existing tasks/pins won't interfere — these tests create new tasks." or "Clear Today's 5 first (New set → Replace) to start fresh."
 
 5. Prioritize tests by risk:
@@ -64,7 +67,9 @@ Create [whatever state is needed for the tests below].
 
 - BLOCKING: You must read every relevant widget file in step 3 before generating any tests. If a test step mentions a UI element you haven't read the code for, delete the test and read the code first.
 - Never write instructions that contradict or omit app behavior. Use precise language that reflects how the app actually works. If the app does something automatically (e.g. deadline inheritance from parent to child), mention it explicitly so the user isn't confused when it happens. Don't say "no deadline" when the task inherits one — say "it will automatically inherit the parent's deadline".
+- Only reference UI elements that actually exist on the screen. If the widget code shows an icon, don't say "shows the deadline" — say "shows the deadline icon". If information isn't visually displayed, don't ask the user to verify it.
 - Don't suggest tests that duplicate what automated tests already cover — check the test files first.
 - If a change is purely algorithmic with no UI impact, say so and focus tests on observable outcomes.
 - Mention which platform to test on (Linux via `./dev.sh` unless the change is mobile-specific).
+- **Present tests in batches by section.** Don't dump all test cases at once — show one section at a time (e.g. "Today's 5" tests first, then "All Tasks" after the user reports results). This prevents the list from feeling overwhelming and lets the user focus.
 - The user reports results like "1. works / 2. works". If their list is incomplete (doesn't cover all test cases), don't assume they're skipping the rest. Ask (via AskUserQuestion, with "continue" as the default) whether they want to carry on or skip. If they want to carry on, re-display the remaining test cases so they don't have to scroll up.
