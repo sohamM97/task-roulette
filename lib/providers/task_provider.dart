@@ -40,6 +40,10 @@ class TaskProvider extends ChangeNotifier {
   Map<int, ({String deadline, String type})> _effectiveDeadlines = {};
   Map<int, ({String deadline, String type})> get effectiveDeadlines => _effectiveDeadlines;
 
+  /// Leaf task IDs scheduled for today (own or inherited from ancestor).
+  Set<int> _scheduledTodayIds = {};
+  Set<int> get scheduledTodayIds => _scheduledTodayIds;
+
   /// null means we're at the root level
   Task? _currentParent;
   Task? get currentParent => _currentParent;
@@ -747,11 +751,13 @@ class TaskProvider extends ChangeNotifier {
     late Map<int, int> siblingDeps;
     late Map<int, List<String>> parentNames;
     late Map<int, ({String deadline, String type})> effectiveDeadlines;
+    late Set<int> scheduledTodayIds;
     await Future.wait([
       _db.getBlockedTaskInfo(taskIds).then((v) => blockedInfo = v),
       _db.getSiblingDependencyPairs(taskIds).then((v) => siblingDeps = v),
       _db.getParentNamesForTaskIds(parentNameIds).then((v) => parentNames = v),
       _db.getEffectiveDeadlines(taskIds).then((v) => effectiveDeadlines = v),
+      _db.getEffectiveScheduledTodayIds(taskIds).then((v) => scheduledTodayIds = v),
     ]);
     // Derive the simple name map for UI display
     _blockedByNames = {
@@ -761,6 +767,7 @@ class TaskProvider extends ChangeNotifier {
     _blockedByTaskId = siblingDeps;
     _parentNamesMap = parentNames;
     _effectiveDeadlines = effectiveDeadlines;
+    _scheduledTodayIds = scheduledTodayIds;
   }
 
   /// Reorders _tasks so that dependent tasks appear immediately after their
@@ -862,7 +869,7 @@ class TaskProvider extends ChangeNotifier {
 
   Future<void> updateSchedules(int taskId, List<TaskSchedule> schedules, {bool? isOverride}) async {
     await _db.replaceSchedules(taskId, schedules, isOverride: isOverride);
-    onMutation?.call();
+    await _refreshAfterMutation();
   }
 
   Future<bool> hasSchedule(int taskId) async {

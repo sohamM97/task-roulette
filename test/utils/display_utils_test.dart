@@ -109,6 +109,18 @@ void main() {
     });
   });
 
+  group('deadlineIcon', () {
+    test('is Icons.schedule', () {
+      expect(deadlineIcon, Icons.schedule);
+    });
+  });
+
+  group('scheduledTodayIcon', () {
+    test('is Icons.event_available', () {
+      expect(scheduledTodayIcon, Icons.event_available);
+    });
+  });
+
   group('displayUrl', () {
     test('strips https:// prefix', () {
       expect(displayUrl('https://example.com'), 'example.com');

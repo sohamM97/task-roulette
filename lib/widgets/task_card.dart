@@ -24,6 +24,7 @@ class TaskCard extends StatelessWidget {
   final ({String deadline, String type})? effectiveDeadline;
   final VoidCallback? onToggleStar;
   final bool isStarred;
+  final bool isScheduledToday;
 
   const TaskCard({
     super.key,
@@ -46,6 +47,7 @@ class TaskCard extends StatelessWidget {
     this.effectiveDeadline,
     this.onToggleStar,
     this.isStarred = false,
+    this.isScheduledToday = false,
   });
 
   void _showDeleteBottomSheet(BuildContext context) {
@@ -303,7 +305,7 @@ class TaskCard extends StatelessWidget {
                 ),
               ),
               // Top-left icons: today's 5, in-progress, priority flag, worked-on-today, someday, deadline, starred
-              if (task.isHighPriority || task.isSomeday || showIndicator || task.isWorkedOnToday || isInTodaysFive || _hasEffectiveDeadline || isStarred)
+              if (task.isHighPriority || task.isSomeday || showIndicator || task.isWorkedOnToday || isInTodaysFive || _hasEffectiveDeadline || isScheduledToday || isStarred)
                 Positioned(
                   left: 6,
                   top: 6,
@@ -342,9 +344,15 @@ class TaskCard extends StatelessWidget {
                         ),
                       if (_hasEffectiveDeadline)
                         Icon(
-                          Icons.event_available,
+                          deadlineIcon,
                           size: 16,
                           color: _deadlineColor(context),
+                        ),
+                      if (isScheduledToday)
+                        Icon(
+                          scheduledTodayIcon,
+                          size: 16,
+                          color: Theme.of(context).colorScheme.tertiary,
                         ),
                       if (isStarred)
                         const Icon(
