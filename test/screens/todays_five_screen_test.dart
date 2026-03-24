@@ -10,7 +10,9 @@ import 'package:task_roulette/providers/auth_provider.dart';
 import 'package:task_roulette/providers/task_provider.dart';
 import 'package:task_roulette/providers/theme_provider.dart';
 import 'package:task_roulette/screens/todays_five_screen.dart';
+import 'package:task_roulette/models/task_schedule.dart';
 import 'package:task_roulette/services/sync_service.dart';
+import 'package:task_roulette/utils/display_utils.dart';
 
 String _todayKey() {
   final now = DateTime.now();
@@ -1269,6 +1271,74 @@ void main() {
       expect(task!.isCompleted, isTrue);
       expect(task.deadline, '2026-04-15');
       expect(task.deadlineType, 'due_by');
+    });
+  });
+
+  group('scheduled-today icon in card subtitle', () {
+    testWidgets('shows scheduledTodayIcon for task scheduled today', (tester) async {
+      await tester.runAsync(() async {
+        final id = await db.insertTask(Task(name: 'Weekly standup'));
+        // Schedule for today's day of the week
+        final todayDow = DateTime.now().weekday; // 1=Mon..7=Sun
+        await db.replaceSchedules(id, [
+          TaskSchedule(taskId: id, dayOfWeek: todayDow),
+        ]);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Weekly standup'), findsOneWidget);
+      expect(find.byIcon(scheduledTodayIcon), findsOneWidget);
+    });
+
+    testWidgets('no scheduledTodayIcon for task not scheduled today', (tester) async {
+      await tester.runAsync(() async {
+        final id = await db.insertTask(Task(name: 'Other day task'));
+        // Schedule for a different day of the week
+        final todayDow = DateTime.now().weekday;
+        final otherDow = (todayDow % 7) + 1; // next day
+        await db.replaceSchedules(id, [
+          TaskSchedule(taskId: id, dayOfWeek: otherDow),
+        ]);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Other day task'), findsOneWidget);
+      expect(find.byIcon(scheduledTodayIcon), findsNothing);
+    });
+
+    testWidgets('no scheduledTodayIcon for task with no schedule', (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Unscheduled task'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Unscheduled task'), findsOneWidget);
+      expect(find.byIcon(scheduledTodayIcon), findsNothing);
+    });
+
+    testWidgets('shows both deadline and scheduledToday icons', (tester) async {
+      await tester.runAsync(() async {
+        final tomorrow = DateTime.now().add(const Duration(days: 3));
+        final dl = '${tomorrow.year}-${tomorrow.month.toString().padLeft(2, '0')}-${tomorrow.day.toString().padLeft(2, '0')}';
+        final id = await db.insertTask(Task(
+          name: 'Scheduled with deadline',
+          deadline: dl,
+          deadlineType: 'due_by',
+        ));
+        final todayDow = DateTime.now().weekday;
+        await db.replaceSchedules(id, [
+          TaskSchedule(taskId: id, dayOfWeek: todayDow),
+        ]);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Scheduled with deadline'), findsOneWidget);
+      expect(find.byIcon(deadlineIcon), findsOneWidget);
+      expect(find.byIcon(scheduledTodayIcon), findsOneWidget);
     });
   });
 }

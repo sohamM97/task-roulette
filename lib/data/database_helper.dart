@@ -2850,6 +2850,44 @@ class DatabaseHelper {
     return rows.map((r) => r['id'] as int).toSet();
   }
 
+  /// Returns the subset of [taskIds] that are effectively scheduled today —
+  /// either directly or via inheritance from an ancestor. Unlike
+  /// getScheduleBoostedLeafIds, this works for any task (parent or leaf).
+  Future<Set<int>> getEffectiveScheduledTodayIds(List<int> taskIds, {DateTime? now}) async {
+    if (taskIds.isEmpty) return {};
+    final db = await database;
+    final date = now ?? DateTime.now();
+    final dayOfWeek = date.weekday;
+    final placeholders = List.filled(taskIds.length, '?').join(',');
+
+    final rows = await db.rawQuery('''
+      WITH RECURSIVE
+        schedule_barrier(task_id) AS (
+          SELECT DISTINCT task_id FROM task_schedules
+          UNION
+          SELECT id FROM tasks WHERE is_schedule_override = 1
+        ),
+        -- Walk up ancestor chain from each target task, stopping at schedule barriers
+        target_ancestors(target_id, ancestor_id) AS (
+          -- Base: each task is its own ancestor
+          SELECT id, id FROM tasks WHERE id IN ($placeholders)
+          UNION
+          SELECT ta.target_id, tr.parent_id
+          FROM target_ancestors ta
+          INNER JOIN task_relationships tr ON tr.child_id = ta.ancestor_id
+          -- Stop climbing at schedule barriers (unless it's the task itself)
+          WHERE ta.ancestor_id = ta.target_id
+             OR ta.ancestor_id NOT IN (SELECT task_id FROM schedule_barrier)
+        )
+      SELECT DISTINCT ta.target_id AS id
+      FROM target_ancestors ta
+      INNER JOIN task_schedules ts ON ts.task_id = ta.ancestor_id
+      WHERE ts.day_of_week = ?
+    ''', [...taskIds, dayOfWeek]);
+
+    return rows.map((r) => r['id'] as int).toSet();
+  }
+
   /// Returns which ancestors contribute schedules to this task, with their
   /// names and days. Used by the UI to show "Inherited from: X, Y".
   Future<List<({int id, String name, Set<int> days})>> getScheduleSources(int taskId) async {

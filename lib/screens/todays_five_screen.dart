@@ -67,6 +67,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   Map<int, String> _taskPaths = {};
   /// Task ID → effective deadline info for icon display.
   Map<int, ({String deadline, String type})> _effectiveDeadlines = {};
+  /// Leaf task IDs scheduled for today (for icon display).
+  Set<int> _scheduledTodayIds = {};
   /// Other tasks completed/worked-on today, outside the Today's 5 set.
   List<Task> _otherDoneToday = [];
   bool _otherDoneExpanded = false;
@@ -509,6 +511,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     _taskPaths = paths;
     final taskIds = allTasks.map((t) => t.id!).toList();
     _effectiveDeadlines = await db.getEffectiveDeadlines(taskIds);
+    _scheduledTodayIds = await db.getEffectiveScheduledTodayIds(taskIds);
   }
 
   /// Loads tasks completed/worked-on today that aren't in Today's 5.
@@ -1399,7 +1402,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   Widget? _buildCardSubtitle(Task task, bool isDone, ColorScheme colorScheme, TextTheme textTheme) {
     final hasPath = _taskPaths.containsKey(task.id);
     final hasDeadline = _effectiveDeadlines.containsKey(task.id);
-    final hasIcons = task.isHighPriority || task.isSomeday || hasDeadline || (task.isStarted && !isDone);
+    final isScheduled = _scheduledTodayIds.contains(task.id);
+    final hasIcons = task.isHighPriority || task.isSomeday || hasDeadline || isScheduled || (task.isStarted && !isDone);
     if (!hasPath && !hasIcons) return const SizedBox.shrink();
 
     final children = <Widget>[];
@@ -1441,10 +1445,16 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
             if (hasDeadline)
               Padding(
                 padding: const EdgeInsets.only(right: 4),
-                child: Icon(Icons.event_available, size: 14,
+                child: Icon(deadlineIcon, size: 14,
                     color: _deadlineIconColor(
                       _effectiveDeadlines[task.id]!, colorScheme),
                 ),
+              ),
+            if (isScheduled)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Icon(scheduledTodayIcon, size: 14,
+                    color: colorScheme.tertiary),
               ),
             if (task.isStarted && !isDone)
               Padding(

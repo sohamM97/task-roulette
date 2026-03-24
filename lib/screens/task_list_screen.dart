@@ -1617,6 +1617,7 @@ class TaskListScreenState extends State<TaskListScreen>
                                     .where((name) => name != provider.currentParent?.name)
                                     .toList(),
                                 effectiveDeadline: provider.effectiveDeadlines[task.id],
+                                isScheduledToday: provider.scheduledTodayIds.contains(task.id),
                                 isStarred: task.isStarred,
                                 onToggleStar: () => _updateStarred(task, !task.isStarred),
                               );

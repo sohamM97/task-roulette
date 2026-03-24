@@ -9,8 +9,8 @@ Reference for manual test instructions. Use these names consistently.
 ## Tabs
 
 ### Today tab (Today's 5)
-- **Task card** — each task in the Today's 5 list. Shows task name, subtitle icons (priority, deadline, started, someday). Done tasks are faded with strikethrough.
-- **Bottom sheet** — appears when tapping an undone task card. Options: "Done today", "Done for good!", "In progress"/"Stop working", "Pin"/"Unpin".
+- **Task card** — each task in the Today's 5 list. Shows task name, subtitle icons (priority, deadline, scheduled today, started, someday). Done tasks are faded with strikethrough. Trailing icons: pin button, swap button, "Go to task" link.
+- **Bottom sheet** — appears when **tapping** an undone task card. Options: "Done today", "Done for good!", "In progress"/"Stop working". Note: Pin/Unpin is NOT in the bottom sheet — it's a separate pin icon button on the card itself.
 - **Completion animation** — brief celebration overlay after marking done.
 - **"Also done today" section** — expandable area below the main list showing tasks worked on today outside the Today's 5 set.
 - **Progress ring** — circular progress indicator at top showing done/total.
@@ -19,6 +19,7 @@ Reference for manual test instructions. Use these names consistently.
 - **Starred task list** — flat list of starred tasks.
 
 ### All Tasks tab
+- **Task card** — grid card for each task. Shows task name, top-left indicator icons (Today's 5, worked-on, started, priority, someday, deadline, scheduled today, starred). **Tap** navigates into the task. **Long-press** opens a context menu (delete, rename, move, schedule, etc.).
 - **Task list** — hierarchical list. Shows children of the current parent. Root level shows top-level tasks + Inbox.
 - **Inbox section** — collapsible section at top showing unorganized tasks.
 - **Leaf detail view** — appears when navigating into a leaf task (a task with no children). Shows task name, "Done today" button, "Done for good!" button, "Start"/"Started" toggle, priority selector, schedule/deadline info, dependencies, parent breadcrumbs. This is NOT the same as the Today's 5 bottom sheet.

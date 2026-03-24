@@ -5,6 +5,12 @@ import 'package:url_launcher/url_launcher.dart';
 /// Icon used for the archive/completed-tasks screen.
 const IconData archiveIcon = Icons.inventory_2_outlined;
 
+/// Icon for deadline indicators (task cards, schedule dialog, Today's 5).
+const IconData deadlineIcon = Icons.schedule;
+
+/// Icon for "scheduled today" indicators on task cards.
+const IconData scheduledTodayIcon = Icons.event_available;
+
 /// Returns the deadline icon color based on days until deadline.
 /// Used by task cards, Today's 5, and schedule dialog.
 Color deadlineProximityColor(int daysUntil, ColorScheme colorScheme) {

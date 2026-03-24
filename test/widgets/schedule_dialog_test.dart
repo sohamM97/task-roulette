@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:task_roulette/models/task_schedule.dart';
+import 'package:task_roulette/utils/display_utils.dart';
 import 'package:task_roulette/widgets/schedule_dialog.dart';
 
 void main() {
@@ -244,7 +245,7 @@ void main() {
       ));
 
       expect(find.text('Set deadline'), findsOneWidget);
-      expect(find.byIcon(Icons.event_available), findsOneWidget);
+      expect(find.byIcon(deadlineIcon), findsOneWidget);
     });
 
     testWidgets('shows formatted date when deadline is set', (tester) async {

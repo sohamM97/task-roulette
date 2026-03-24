@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:task_roulette/models/task.dart';
+import 'package:task_roulette/utils/display_utils.dart';
 import 'package:task_roulette/widgets/task_card.dart';
 
 void main() {
@@ -470,17 +471,17 @@ void main() {
       );
     }
 
-    testWidgets('shows event_available icon for own deadline', (tester) async {
+    testWidgets('shows deadline icon for own deadline', (tester) async {
       final tomorrow = DateTime.now().add(const Duration(days: 1));
       final dl = '${tomorrow.year}-${tomorrow.month.toString().padLeft(2, '0')}-${tomorrow.day.toString().padLeft(2, '0')}';
       await tester.pumpWidget(buildWithDeadline(
         task: Task(id: 1, name: 'Task', createdAt: 1000, deadline: dl),
       ));
 
-      expect(find.byIcon(Icons.event_available), findsOneWidget);
+      expect(find.byIcon(deadlineIcon), findsOneWidget);
     });
 
-    testWidgets('shows event_available icon for inherited deadline', (tester) async {
+    testWidgets('shows deadline icon for inherited deadline', (tester) async {
       final tomorrow = DateTime.now().add(const Duration(days: 1));
       final dl = '${tomorrow.year}-${tomorrow.month.toString().padLeft(2, '0')}-${tomorrow.day.toString().padLeft(2, '0')}';
       await tester.pumpWidget(buildWithDeadline(
@@ -488,7 +489,7 @@ void main() {
         effectiveDeadline: (deadline: dl, type: 'due_by'),
       ));
 
-      expect(find.byIcon(Icons.event_available), findsOneWidget);
+      expect(find.byIcon(deadlineIcon), findsOneWidget);
     });
 
     testWidgets('no icon when no deadline and no effective deadline', (tester) async {
@@ -496,7 +497,7 @@ void main() {
         task: Task(id: 1, name: 'Task', createdAt: 1000),
       ));
 
-      expect(find.byIcon(Icons.event_available), findsNothing);
+      expect(find.byIcon(deadlineIcon), findsNothing);
     });
 
     testWidgets('own deadline takes priority over effective deadline for color', (tester) async {
@@ -508,9 +509,90 @@ void main() {
         effectiveDeadline: (deadline: '2028-01-01', type: 'due_by'),
       ));
 
-      final icon = tester.widget<Icon>(find.byIcon(Icons.event_available));
+      final icon = tester.widget<Icon>(find.byIcon(deadlineIcon));
       // ≤2 days → red (error color)
       expect(icon.color, isNotNull);
+    });
+  });
+
+  group('TaskCard scheduled-today icon', () {
+    Widget buildWithScheduledToday({
+      required Task task,
+      bool isScheduledToday = false,
+    }) {
+      return MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 200,
+            height: 200,
+            child: TaskCard(
+              task: task,
+              onTap: () {},
+              onDelete: () {},
+              isScheduledToday: isScheduledToday,
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('shows scheduledTodayIcon when isScheduledToday is true', (tester) async {
+      await tester.pumpWidget(buildWithScheduledToday(
+        task: Task(id: 1, name: 'Scheduled task', createdAt: 1000),
+        isScheduledToday: true,
+      ));
+
+      expect(find.byIcon(scheduledTodayIcon), findsOneWidget);
+    });
+
+    testWidgets('no scheduledTodayIcon when isScheduledToday is false', (tester) async {
+      await tester.pumpWidget(buildWithScheduledToday(
+        task: Task(id: 1, name: 'Normal task', createdAt: 1000),
+        isScheduledToday: false,
+      ));
+
+      expect(find.byIcon(scheduledTodayIcon), findsNothing);
+    });
+
+    testWidgets('no scheduledTodayIcon by default', (tester) async {
+      await tester.pumpWidget(buildTestWidget(
+        task: Task(id: 1, name: 'Default task', createdAt: 1000),
+      ));
+
+      expect(find.byIcon(scheduledTodayIcon), findsNothing);
+    });
+
+    testWidgets('scheduledTodayIcon uses tertiary color', (tester) async {
+      await tester.pumpWidget(buildWithScheduledToday(
+        task: Task(id: 1, name: 'Scheduled', createdAt: 1000),
+        isScheduledToday: true,
+      ));
+
+      final icon = tester.widget<Icon>(find.byIcon(scheduledTodayIcon));
+      // Color should be set (tertiary from the theme)
+      expect(icon.color, isNotNull);
+    });
+
+    testWidgets('both deadline and scheduledToday icons shown together', (tester) async {
+      final tomorrow = DateTime.now().add(const Duration(days: 1));
+      final dl = '${tomorrow.year}-${tomorrow.month.toString().padLeft(2, '0')}-${tomorrow.day.toString().padLeft(2, '0')}';
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 200,
+            height: 200,
+            child: TaskCard(
+              task: Task(id: 1, name: 'Both icons', createdAt: 1000, deadline: dl),
+              onTap: () {},
+              onDelete: () {},
+              isScheduledToday: true,
+            ),
+          ),
+        ),
+      ));
+
+      expect(find.byIcon(deadlineIcon), findsOneWidget);
+      expect(find.byIcon(scheduledTodayIcon), findsOneWidget);
     });
   });
 

@@ -292,7 +292,7 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
           children: [
             Row(
               children: [
-                Icon(Icons.event_available, color: inheritedColor, size: 20),
+                Icon(deadlineIcon, color: inheritedColor, size: 20),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -332,7 +332,7 @@ class _ScheduleDialogState extends State<ScheduleDialog> {
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
-            Icon(Icons.event_available, color: color, size: 20),
+            Icon(deadlineIcon, color: color, size: 20),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
