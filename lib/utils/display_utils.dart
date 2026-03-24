@@ -100,7 +100,7 @@ String formatDeadlineDate(String deadlineStr) {
 /// it "Done today". Returns true (remove), false (keep), or null (cancelled
 /// — user tapped outside or pressed back, meaning abort the whole action).
 Future<bool?> askRemoveDeadlineOnDone(BuildContext context, String deadline, String deadlineType) async {
-  final typeLabel = deadlineType == 'on' ? 'on' : 'due by';
+  final typeLabel = deadlineType == 'on' ? 'scheduled on' : 'due by';
   return showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(

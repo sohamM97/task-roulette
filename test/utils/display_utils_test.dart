@@ -555,7 +555,7 @@ void main() {
       await tester.tap(find.text('Trigger'));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('on Jan 10, 2026'), findsOneWidget);
+      expect(find.textContaining('scheduled on Jan 10, 2026'), findsOneWidget);
 
       await tester.tap(find.text('Keep'));
       await tester.pumpAndSettle();

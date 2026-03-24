@@ -1074,7 +1074,7 @@ void main() {
       await pumpAsync(tester, rounds: 10);
 
       expect(find.text('Remove deadline?'), findsOneWidget);
-      expect(find.textContaining('on Jan 10, 2026'), findsOneWidget);
+      expect(find.textContaining('scheduled on Jan 10, 2026'), findsOneWidget);
     });
 
     testWidgets('tapping Keep preserves the deadline', (tester) async {
@@ -1138,6 +1138,49 @@ void main() {
       // Verify deadline is removed in DB
       final task = await tester.runAsync(() => db.getTaskById(taskId));
       expect(task!.deadline, isNull);
+    });
+
+    testWidgets('snackbar undo after Remove restores the deadline', (tester) async {
+      late int taskId;
+      await tester.runAsync(() async {
+        taskId = await db.insertTask(Task(
+          name: 'Undo remove task',
+          deadline: '2026-04-15',
+          deadlineType: 'due_by',
+        ));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Undo remove task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      await tester.tap(find.text('Done today'));
+      await pumpAsync(tester, rounds: 10);
+
+      // Tap Remove
+      await tester.tap(find.text('Remove'));
+      await tester.pump(const Duration(milliseconds: 800));
+      await pumpAsync(tester, rounds: 40);
+
+      // Deadline should be gone
+      var task = await tester.runAsync(() => db.getTaskById(taskId));
+      expect(task!.deadline, isNull);
+
+      // Invoke the SnackBarAction's onPressed directly — snackbar overlay
+      // doesn't pass hit-test in FakeAsync widget tests.
+      final action = tester.widget<SnackBarAction>(
+        find.widgetWithText(SnackBarAction, 'Undo'),
+      );
+      action.onPressed();
+      await pumpAsync(tester, rounds: 40);
+
+      // Deadline should be restored
+      task = await tester.runAsync(() => db.getTaskById(taskId));
+      expect(task!.deadline, '2026-04-15');
+      expect(task.deadlineType, 'due_by');
     });
 
     testWidgets('no dialog shown for task without deadline', (tester) async {
