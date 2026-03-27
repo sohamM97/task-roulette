@@ -301,11 +301,14 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     if (!mounted) return;
     final provider = context.read<TaskProvider>();
-    final ctx = await _fetchSelectionContext();
-    final allLeaves = ctx.allLeaves;
+    // Fetch only leaf list upfront — needed to determine which tasks are still
+    // valid leaves. Full selection context (schedule boost, deadline boost,
+    // norm, blocked) is fetched lazily below, only if pickWeightedN is needed.
+    final allLeaves = await provider.getAllLeafTasks();
     final leafIdSet = allLeaves.map((t) => t.id!).toSet();
     final db = DatabaseHelper();
     final refreshed = <Task>[];
+    _SelectionContext? ctx; // fetched lazily when pickWeightedN is needed
     for (final t in _todaysTasks) {
       if (leafIdSet.contains(t.id)) {
         // Still a leaf — re-fetch fresh data
@@ -341,6 +344,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
               // Bug fix: previously called pickWeightedN without schedule/
               // deadline/norm params, silently dropping 2.5x schedule boost
               // and up to 8x deadline boost during pinned-descendant replacement.
+              ctx ??= await _fetchSelectionContext();
               final picked = provider.pickWeightedN(eligibleDesc, 1,
                   scheduleBoostedIds: ctx.scheduleBoostedIds,
                   deadlineDaysMap: ctx.deadlineDaysMap,
@@ -361,9 +365,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     }
     // Backfill replacements for non-done tasks that became non-leaf/deleted
     if (refreshed.length < _todaysTasks.length) {
+      ctx ??= await _fetchSelectionContext();
       final currentIds = refreshed.map((t) => t.id).toSet();
-      final eligible = allLeaves.where(
-        (t) => !currentIds.contains(t.id) && !ctx.blockedIds.contains(t.id),
+      final eligible = ctx.allLeaves.where(
+        (t) => !currentIds.contains(t.id) && !ctx!.blockedIds.contains(t.id),
       ).toList();
       // Bug fix: previously only passed normData, silently dropping
       // 2.5x schedule boost and up to 8x deadline boost during backfill.

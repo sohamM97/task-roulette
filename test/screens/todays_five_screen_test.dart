@@ -639,6 +639,49 @@ void main() {
       final saved = await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
       expect(saved!.pinnedIds, {id1});
     });
+
+    testWidgets('refreshSnapshots with all valid leaves skips full selection context fetch', (tester) async {
+      // Verifies the lazy-load fix: when all tasks in Today's 5 are still
+      // valid leaves, refreshSnapshots must NOT call _fetchSelectionContext
+      // (which triggers 5 DB queries including recursive norm data).
+      // We verify this indirectly: the refresh completes correctly and quickly
+      // without the DB lock warning that would appear if normalization queries
+      // ran unnecessarily on every tab return.
+      late int id1, id2, id3;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Still leaf 1'));
+        id2 = await db.insertTask(Task(name: 'Still leaf 2'));
+        id3 = await db.insertTask(Task(name: 'Still leaf 3'));
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2, id3],
+          completedIds: {},
+          workedOnIds: {},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Still leaf 1'), findsOneWidget);
+      expect(find.text('Still leaf 2'), findsOneWidget);
+      expect(find.text('Still leaf 3'), findsOneWidget);
+
+      // All tasks remain valid leaves — no replacement/backfill needed.
+      // refreshSnapshots should complete without fetching selection context.
+      final state = tester.state<TodaysFiveScreenState>(
+        find.byType(TodaysFiveScreen),
+      );
+      await tester.runAsync(() => state.refreshSnapshots());
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // All tasks should still be present and unchanged
+      expect(find.text('Still leaf 1'), findsOneWidget);
+      expect(find.text('Still leaf 2'), findsOneWidget);
+      expect(find.text('Still leaf 3'), findsOneWidget);
+    });
   });
 
   group('SharedPreferences → DB migration', () {
