@@ -3918,6 +3918,101 @@ void main() {
       expect(result, isEmpty);
     });
 
+    // --- getScheduledSourceToLeafMap tests ---
+
+    test('getScheduledSourceToLeafMap returns single source mapping to itself when it is a leaf', () async {
+      final id = await db.insertTask(Task(name: 'Leaf task'));
+      await db.replaceSchedules(id, [TaskSchedule(taskId: id, dayOfWeek: 1)]);
+
+      final monday = DateTime(2026, 1, 5); // Monday
+      final map = await db.getScheduledSourceToLeafMap(now: monday);
+      expect(map.keys, contains(id));
+      expect(map[id], contains(id));
+
+      final tuesday = DateTime(2026, 1, 6);
+      final notScheduled = await db.getScheduledSourceToLeafMap(now: tuesday);
+      expect(notScheduled, isEmpty);
+    });
+
+    test('getScheduledSourceToLeafMap propagates source to leaf descendants', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final leaf1 = await db.insertTask(Task(name: 'Leaf 1'));
+      final leaf2 = await db.insertTask(Task(name: 'Leaf 2'));
+      await db.addRelationship(parent, leaf1);
+      await db.addRelationship(parent, leaf2);
+      await db.replaceSchedules(parent, [TaskSchedule(taskId: parent, dayOfWeek: 1)]);
+
+      final monday = DateTime(2026, 1, 5);
+      final map = await db.getScheduledSourceToLeafMap(now: monday);
+      expect(map.keys, contains(parent));
+      expect(map[parent], containsAll([leaf1, leaf2]));
+      // Parent itself is not a leaf — should not appear as a leaf
+      expect(map[parent], isNot(contains(parent)));
+    });
+
+    test('getScheduledSourceToLeafMap returns separate entries for distinct sources', () async {
+      final src1 = await db.insertTask(Task(name: 'Source 1'));
+      final src2 = await db.insertTask(Task(name: 'Source 2'));
+      final leaf1 = await db.insertTask(Task(name: 'Leaf of 1'));
+      final leaf2 = await db.insertTask(Task(name: 'Leaf of 2'));
+      await db.addRelationship(src1, leaf1);
+      await db.addRelationship(src2, leaf2);
+      await db.replaceSchedules(src1, [TaskSchedule(taskId: src1, dayOfWeek: 1)]);
+      await db.replaceSchedules(src2, [TaskSchedule(taskId: src2, dayOfWeek: 1)]);
+
+      final monday = DateTime(2026, 1, 5);
+      final map = await db.getScheduledSourceToLeafMap(now: monday);
+      expect(map.keys, containsAll([src1, src2]));
+      expect(map[src1], contains(leaf1));
+      expect(map[src1], isNot(contains(leaf2)));
+      expect(map[src2], contains(leaf2));
+      expect(map[src2], isNot(contains(leaf1)));
+    });
+
+    test('getScheduledSourceToLeafMap excludes completed and skipped leaves', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final activeLeaf = await db.insertTask(Task(name: 'Active'));
+      final completedLeaf = await db.insertTask(Task(name: 'Completed'));
+      final skippedLeaf = await db.insertTask(Task(name: 'Skipped'));
+      await db.completeTask(completedLeaf);
+      await db.skipTask(skippedLeaf);
+      await db.addRelationship(parent, activeLeaf);
+      await db.addRelationship(parent, completedLeaf);
+      await db.addRelationship(parent, skippedLeaf);
+      await db.replaceSchedules(parent, [TaskSchedule(taskId: parent, dayOfWeek: 1)]);
+
+      final monday = DateTime(2026, 1, 5);
+      final map = await db.getScheduledSourceToLeafMap(now: monday);
+      expect(map[parent], contains(activeLeaf));
+      expect(map[parent], isNot(contains(completedLeaf)));
+      expect(map[parent], isNot(contains(skippedLeaf)));
+    });
+
+    test('getScheduledSourceToLeafMap respects schedule barrier (override)', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      final grandchild = await db.insertTask(Task(name: 'Grandchild'));
+      await db.addRelationship(parent, child);
+      await db.addRelationship(child, grandchild);
+      await db.replaceSchedules(parent, [TaskSchedule(taskId: parent, dayOfWeek: 1)]);
+      // Child overrides schedule — acts as a barrier, stops propagation
+      await db.replaceSchedules(child, [], isOverride: true);
+
+      final monday = DateTime(2026, 1, 5);
+      final map = await db.getScheduledSourceToLeafMap(now: monday);
+      // Propagation stops at child (override barrier), grandchild not included
+      expect(map[parent], isNot(contains(grandchild)));
+    });
+
+    test('getScheduledSourceToLeafMap returns empty when nothing scheduled today', () async {
+      final id = await db.insertTask(Task(name: 'Task'));
+      await db.replaceSchedules(id, [TaskSchedule(taskId: id, dayOfWeek: 1)]);
+
+      final tuesday = DateTime(2026, 1, 6);
+      final map = await db.getScheduledSourceToLeafMap(now: tuesday);
+      expect(map, isEmpty);
+    });
+
     test('getEffectiveScheduleDays returns empty for empty override', () async {
       final parent = await db.insertTask(Task(name: 'Parent'));
       final child = await db.insertTask(Task(name: 'Child'));

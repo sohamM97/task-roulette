@@ -22,6 +22,9 @@ class _SelectionContext {
   final Set<int> scheduleBoostedIds;
   final Map<int, int> deadlineDaysMap;
   final NormalizationData normData;
+  /// Maps scheduled-source task ID → list of its leaf descendants active today.
+  /// Used by the reserved-slot algorithm in _generateNewSet.
+  final Map<int, List<int>> scheduledSourceToLeafMap;
 
   _SelectionContext({
     required this.allLeaves,
@@ -30,6 +33,7 @@ class _SelectionContext {
     required this.scheduleBoostedIds,
     required this.deadlineDaysMap,
     required this.normData,
+    required this.scheduledSourceToLeafMap,
   });
 }
 
@@ -417,6 +421,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final scheduleBoostedIds = await provider.getScheduleBoostedLeafIds();
     final deadlineDaysMap = await provider.getDeadlineBoostedLeafData();
     final normData = await provider.getNormalizationData(leafIds);
+    final scheduledSourceToLeafMap = await provider.getScheduledSourceToLeafMap();
     return _SelectionContext(
       allLeaves: allLeaves,
       leafIds: leafIds,
@@ -424,6 +429,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       scheduleBoostedIds: scheduleBoostedIds,
       deadlineDaysMap: deadlineDaysMap,
       normData: normData,
+      scheduledSourceToLeafMap: scheduledSourceToLeafMap,
     );
   }
 
@@ -469,17 +475,63 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       }
     }
 
+    final leafById = {for (final t in ctx.allLeaves) t.id!: t};
+
+    // --- Reserved slots: guarantee representation for scheduled sources ---
+    // For each distinct source with a schedule for today, reserve 1 slot by
+    // picking a leaf from that source. This ensures scheduled tasks appear
+    // regardless of how many descendants they have (probabilistic boosts are
+    // unreliable when normalization penalizes large hierarchies).
+    //
+    // Rules:
+    //  - Cap at min(sources, 4) reserved — always leave ≥1 general-pool slot
+    //    when 2+ sources are available (variety matters per ADHD research).
+    //  - If only 1 slot remains, give it to a scheduled source (user scheduled it).
+    //  - Sources are shuffled so no source always gets first pick.
+    //  - Reserved picks are NOT pinned — user can swap them freely.
+    //  - Reserved picks' roots are seeded into existingRootPickCounts so the
+    //    general pool penalises picking the same root again.
+    final reserved = <Task>[];
+    final slotsAvailable = (5 - kept.length).clamp(0, 5);
+    if (slotsAvailable > 0 && ctx.scheduledSourceToLeafMap.isNotEmpty) {
+      final sources = ctx.scheduledSourceToLeafMap.keys.toList()..shuffle();
+      // Reserve up to min(sources, 4), but never consume all slots unless
+      // there's only 1 slot left (in which case still reserve it).
+      final maxReserved = slotsAvailable == 1
+          ? 1
+          : sources.length.clamp(0, (slotsAvailable - 1).clamp(0, 4));
+      for (final sourceId in sources) {
+        if (reserved.length >= maxReserved) break;
+        final candidateIds = ctx.scheduledSourceToLeafMap[sourceId]!;
+        final candidates = candidateIds
+            .where((id) => !ctx.blockedIds.contains(id) && !keptIds.contains(id) &&
+                !reserved.any((r) => r.id == id))
+            .map((id) => leafById[id])
+            .whereType<Task>()
+            .toList();
+        if (candidates.isEmpty) continue;
+        final pick = provider.pickWeightedN(candidates, 1,
+            scheduleBoostedIds: ctx.scheduleBoostedIds,
+            deadlineDaysMap: ctx.deadlineDaysMap,
+            normData: ctx.normData);
+        if (pick.isNotEmpty) reserved.add(pick.first);
+      }
+    }
+    final reservedIds = reserved.map((t) => t.id).toSet();
+
     final eligible = ctx.allLeaves.where(
-      (t) => !ctx.blockedIds.contains(t.id) && !keptIds.contains(t.id),
+      (t) => !ctx.blockedIds.contains(t.id) &&
+          !keptIds.contains(t.id) &&
+          !reservedIds.contains(t.id),
     ).toList();
 
-    final slotsToFill = (5 - kept.length).clamp(0, 5);
+    final slotsToFill = (5 - kept.length - reserved.length).clamp(0, 5);
     final picked = provider.pickWeightedN(eligible, slotsToFill,
         scheduleBoostedIds: ctx.scheduleBoostedIds,
         deadlineDaysMap: ctx.deadlineDaysMap,
         normData: ctx.normData);
     if (!mounted) return;
-    _todaysTasks = [...kept, ...picked];
+    _todaysTasks = [...kept, ...reserved, ...picked];
     await _loadOtherDoneToday();
     await _loadTaskPaths();
     if (!mounted) return;

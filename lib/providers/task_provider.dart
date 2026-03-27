@@ -896,6 +896,10 @@ class TaskProvider extends ChangeNotifier {
     return _db.getScheduleBoostedLeafIds();
   }
 
+  Future<Map<int, List<int>>> getScheduledSourceToLeafMap() async {
+    return _db.getScheduledSourceToLeafMap();
+  }
+
   // --- Inbox methods ---
 
   Future<int> getInboxCount() => _db.getInboxCount();
