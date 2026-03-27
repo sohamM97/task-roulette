@@ -2810,6 +2810,58 @@ class DatabaseHelper {
     });
   }
 
+  /// Returns a map from scheduled-source task ID → list of leaf task IDs
+  /// reachable from that source today. Each source is a task that has a
+  /// schedule entry for today (directly scheduled). Leaf descendants are
+  /// propagated through the same barrier logic as getScheduleBoostedLeafIds.
+  ///
+  /// Used by the reserved-slot algorithm to ensure equal representation
+  /// across distinct scheduled sources regardless of descendant count.
+  Future<Map<int, List<int>>> getScheduledSourceToLeafMap({DateTime? now}) async {
+    final db = await database;
+    final date = now ?? DateTime.now();
+    final dayOfWeek = date.weekday;
+
+    final rows = await db.rawQuery('''
+      WITH
+        schedule_barrier(task_id) AS (
+          SELECT DISTINCT task_id FROM task_schedules
+          UNION
+          SELECT id FROM tasks WHERE is_schedule_override = 1
+        ),
+        scheduled_today(source_id) AS (
+          SELECT task_id FROM task_schedules
+          WHERE day_of_week = ?
+        ),
+        source_descendants(source_id, id) AS (
+          SELECT source_id, source_id FROM scheduled_today
+          UNION
+          SELECT sd.source_id, tr.child_id
+          FROM task_relationships tr
+          INNER JOIN source_descendants sd ON tr.parent_id = sd.id
+          WHERE tr.child_id NOT IN (SELECT task_id FROM schedule_barrier)
+        )
+      SELECT DISTINCT sd.source_id, sd.id AS leaf_id
+      FROM source_descendants sd
+      INNER JOIN tasks t ON sd.id = t.id
+      WHERE t.completed_at IS NULL
+      AND t.skipped_at IS NULL
+      AND t.id NOT IN (
+        SELECT DISTINCT tr2.parent_id FROM task_relationships tr2
+        INNER JOIN tasks c ON tr2.child_id = c.id
+        WHERE c.completed_at IS NULL AND c.skipped_at IS NULL
+      )
+    ''', [dayOfWeek]);
+
+    final map = <int, List<int>>{};
+    for (final row in rows) {
+      final source = row['source_id'] as int;
+      final leaf = row['leaf_id'] as int;
+      map.putIfAbsent(source, () => []).add(leaf);
+    }
+    return map;
+  }
+
   /// Returns the set of leaf task IDs that are schedule-boosted today.
   /// Includes both directly scheduled leaves and leaf descendants of
   /// scheduled non-leaf tasks (ancestor propagation).

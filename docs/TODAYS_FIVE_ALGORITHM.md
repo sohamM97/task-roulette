@@ -109,8 +109,9 @@ This strongly encourages spread across different root categories without making 
 
 1. Keep completed + pinned tasks from previous set
 2. On first generation of the day (`autoPin: true`): auto-pin deadline-due tasks (respects suppression list, max 5 pins)
-3. Fetch `_SelectionContext` (all leaves, blocked IDs, schedule boosts, deadline data, normalization)
-4. Fill remaining slots via weighted roulette with full normalization + diversity penalty
+3. Fetch `_SelectionContext` (all leaves, blocked IDs, schedule boosts, deadline data, normalization, scheduled source map)
+4. **Reserve slots for scheduled tasks** (see [Reserved Slots](#reserved-slots-for-scheduled-tasks) below)
+5. Fill remaining slots via weighted roulette with full normalization + diversity penalty
 
 > On rerolls ("New set" button), `autoPin` is false — no deadline auto-pinning. This prevents whack-a-mole where unpinning one deadline task causes another to be auto-pinned on reroll.
 
@@ -147,6 +148,22 @@ Ramp-down applies to **both** `due_by` and `on` (unlike ramp-up which is `due_by
 
 Both types get auto-pinned on first generation (via `getDeadlinePinLeafIds`). The only difference between `due_by` and `on` is the ramp-up behaviour for preceding days.
 
+### Reserved Slots for Scheduled Tasks
+
+Before the general-pool weighted draw runs, Today's 5 carves out **reserved slots** for scheduled tasks:
+
+1. **Source map** — `getScheduledSourceToLeafMap()` returns a `Map<sourceId, [leafIds]>` using a recursive CTE that carries each scheduled source through the DAG, stopping at schedule barriers (tasks with their own schedule or `is_schedule_override=1`).
+
+2. **Slot calculation** — Given `slotsAvailable = 5 - kept.length`:
+   - If `slotsAvailable == 1`: at most 1 reserved slot (can't leave 0 general slots)
+   - Otherwise: `maxReserved = min(sources.length, slotsAvailable - 1)` — always leaves ≥1 general-pool slot
+
+3. **Per-source pick** — For each source (shuffled), pick 1 leaf via weighted roulette using the full `_SelectionContext` (schedule boost, deadline boost, normalization). Skip sources with no eligible candidates.
+
+4. **General pool** — After reserved slots are filled, `slotsToFill = 5 - kept.length - reserved.length` slots are drawn from the remaining eligible leaves (reserved and kept IDs are excluded).
+
+**Why reserved slots instead of boost-only?** Schedule boosts (2.5x) are probabilistic and can be overwhelmed by stacking other multipliers (e.g., a high-priority task with a deadline is 3x × 8x = 24x vs scheduled 2.5x). A reserved slot guarantees the user's scheduling intent is respected regardless of how competitive the general pool is.
+
 ## Key Implementation Files
 
 | Component | File | Key Function |
@@ -157,6 +174,7 @@ Both types get auto-pinned on first generation (via `getDeadlinePinLeafIds`). Th
 | Root ancestor lookup | `lib/data/database_helper.dart` | `getRootAncestorsForLeaves()` |
 | Leaf count per root | `lib/data/database_helper.dart` | `getLeafCountPerRoot()` |
 | Schedule boost | `lib/data/database_helper.dart` | `getScheduleBoostedLeafIds()` |
+| Scheduled source map | `lib/data/database_helper.dart` | `getScheduledSourceToLeafMap()` |
 | Deadline boost | `lib/data/database_helper.dart` | `getDeadlineBoostedLeafData()` |
 | Selection context | `lib/screens/todays_five_screen.dart` | `_fetchSelectionContext()` |
 | Fresh generation | `lib/screens/todays_five_screen.dart` | `_generateNewSet()` |
@@ -164,10 +182,6 @@ Both types get auto-pinned on first generation (via `getDeadlinePinLeafIds`). Th
 | Pin management | `lib/data/todays_five_pin_helper.dart` | `TodaysFivePinHelper` |
 
 ## Future Considerations
-
-### Reserved Slots for Scheduled Tasks
-
-Research (stratified sampling, Reclaim.ai, ADHD literature) suggests **reserving 1 slot** for scheduled-for-today tasks rather than relying solely on weight boosting. Weight boosts are probabilistic and can be overwhelmed by stacking other multipliers. A reserved slot guarantees the user's scheduling intent is respected. See `memory/research_scheduled_task_fairness.md` for full analysis.
 
 ### Inferred Task Cadence
 

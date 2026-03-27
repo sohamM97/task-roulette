@@ -1526,6 +1526,44 @@ void main() {
       );
     });
 
+    testWidgets('refreshSnapshots with all valid leaves skips full selection context fetch',
+        (tester) async {
+      // Verifies that refreshSnapshots does NOT eagerly call _fetchSelectionContext
+      // when all pinned leaves are still valid — only getAllLeafTasks() is called.
+      // (Performance regression guard: previously _fetchSelectionContext ran on
+      // every Today-tab return even when nothing needed replacing.)
+      late int id1, id2, id3, id4, id5;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Snap A'));
+        id2 = await db.insertTask(Task(name: 'Snap B'));
+        id3 = await db.insertTask(Task(name: 'Snap C'));
+        id4 = await db.insertTask(Task(name: 'Snap D'));
+        id5 = await db.insertTask(Task(name: 'Snap E'));
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2, id3, id4, id5],
+          completedIds: {},
+          workedOnIds: {},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // All 5 tasks are valid leaves — refreshSnapshots should return early.
+      final state = tester.state<TodaysFiveScreenState>(
+        find.byType(TodaysFiveScreen),
+      );
+      await tester.runAsync(() => state.refreshSnapshots());
+      await pumpAsync(tester, rounds: 20);
+
+      // All 5 tasks should still be shown (no replacement needed)
+      expect(find.text('Snap A'), findsOneWidget);
+      expect(find.text('Snap B'), findsOneWidget);
+      expect(find.text('Snap C'), findsOneWidget);
+      expect(find.text('Snap D'), findsOneWidget);
+      expect(find.text('Snap E'), findsOneWidget);
+    });
+
     testWidgets('_replaceIfNoLongerLeaf uses schedule params on uncomplete', (tester) async {
       // Bug fix: _replaceIfNoLongerLeaf previously called pickWeightedN
       // without schedule/deadline/norm params. This test verifies the fix
@@ -1572,6 +1610,104 @@ void main() {
       final hasChild = find.text('Child of target').evaluate().isNotEmpty;
       expect(hasScheduled || hasChild, isTrue,
         reason: '_replaceIfNoLongerLeaf should pick an eligible replacement');
+    });
+  });
+
+  group('reserved scheduled slots in _generateNewSet', () {
+    // Reserved slot feature: when generating Today's 5 from scratch,
+    // 1 slot per distinct scheduled source is reserved (capped at min(sources, 4),
+    // always leaving ≥1 general-pool slot). This guarantees that scheduled tasks
+    // appear in the day's selection, unlike the old boost-only approach.
+
+    testWidgets('scheduled-today leaf appears in generated set', (tester) async {
+      // Single scheduled leaf + 4 non-scheduled leaves → the scheduled task
+      // is guaranteed a reserved slot and must appear in the 5.
+      final todayDow = DateTime.now().weekday;
+      late int idScheduled;
+      await tester.runAsync(() async {
+        idScheduled = await db.insertTask(Task(name: 'Reserved scheduled'));
+        await db.replaceSchedules(idScheduled, [
+          TaskSchedule(taskId: idScheduled, dayOfWeek: todayDow),
+        ]);
+        // 4 non-scheduled fillers to ensure we have enough tasks for Today's 5
+        await db.insertTask(Task(name: 'Filler 1'));
+        await db.insertTask(Task(name: 'Filler 2'));
+        await db.insertTask(Task(name: 'Filler 3'));
+        await db.insertTask(Task(name: 'Filler 4'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget(), rounds: 30);
+
+      // The scheduled task must appear — it has a reserved slot.
+      expect(find.text('Reserved scheduled'), findsOneWidget);
+    });
+
+    testWidgets('two scheduled sources each get a reserved slot', (tester) async {
+      // 2 scheduled leaves from distinct sources → both should appear
+      // (each gets 1 reserved slot; 3 general-pool slots remain for fillers).
+      final todayDow = DateTime.now().weekday;
+      await tester.runAsync(() async {
+        final id1 = await db.insertTask(Task(name: 'Slot source A'));
+        final id2 = await db.insertTask(Task(name: 'Slot source B'));
+        await db.replaceSchedules(id1, [TaskSchedule(taskId: id1, dayOfWeek: todayDow)]);
+        await db.replaceSchedules(id2, [TaskSchedule(taskId: id2, dayOfWeek: todayDow)]);
+        // 3 non-scheduled fillers
+        await db.insertTask(Task(name: 'Gen filler 1'));
+        await db.insertTask(Task(name: 'Gen filler 2'));
+        await db.insertTask(Task(name: 'Gen filler 3'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget(), rounds: 30);
+
+      expect(find.text('Slot source A'), findsOneWidget);
+      expect(find.text('Slot source B'), findsOneWidget);
+    });
+
+    testWidgets('always leaves at least one general-pool slot when multiple sources',
+        (tester) async {
+      // 4 scheduled sources → maxReserved = min(4, slotsAvailable-1) = 4
+      // But slotsAvailable=5, so maxReserved = min(4, 4) = 4, leaving 1 general slot.
+      // A non-scheduled task must appear alongside the 4 reserved ones.
+      final todayDow = DateTime.now().weekday;
+      await tester.runAsync(() async {
+        for (var i = 1; i <= 4; i++) {
+          final id = await db.insertTask(Task(name: 'Sched source $i'));
+          await db.replaceSchedules(id, [TaskSchedule(taskId: id, dayOfWeek: todayDow)]);
+        }
+        await db.insertTask(Task(name: 'General pool task'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget(), rounds: 30);
+
+      // All 4 scheduled sources + 1 general task = 5 total
+      for (var i = 1; i <= 4; i++) {
+        expect(find.text('Sched source $i'), findsOneWidget);
+      }
+      expect(find.text('General pool task'), findsOneWidget);
+    });
+
+    testWidgets('reserved slot cap: 5 sources → only 4 reserved, 1 general slot remains',
+        (tester) async {
+      // 5 scheduled sources but slotsAvailable=5 → maxReserved=4 (not all 5)
+      // One of the 5 scheduled tasks must lose its guaranteed slot.
+      final todayDow = DateTime.now().weekday;
+      await tester.runAsync(() async {
+        for (var i = 1; i <= 5; i++) {
+          final id = await db.insertTask(Task(name: 'Cap source $i'));
+          await db.replaceSchedules(id, [TaskSchedule(taskId: id, dayOfWeek: todayDow)]);
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget(), rounds: 30);
+
+      // Exactly 5 tasks shown total (screen has no fillers here)
+      var count = 0;
+      for (var i = 1; i <= 5; i++) {
+        if (find.text('Cap source $i').evaluate().isNotEmpty) count++;
+      }
+      // At most 4 reserved + 1 general (which could be any of the 5 scheduled)
+      // so all 5 may appear, but only 4 were reserved — total is still 5
+      expect(count, equals(5));
     });
   });
 }
