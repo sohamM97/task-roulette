@@ -2260,7 +2260,7 @@ void main() {
       await provider.navigateInto(child);
 
       final result = await provider.skipTask(childId);
-      expect(result.id, childId);
+      expect(result.task.id, childId);
 
       // Should navigate back
       expect(provider.currentParent!.id, parentId);

@@ -838,30 +838,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     // Check if completing this task will free any dependents — confirm first.
     final dependentNames = await provider.getDependentTaskNames(task.id!);
     if (!mounted) return;
-    if (dependentNames.isNotEmpty) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Unblock waiting tasks?'),
-          content: Text(
-            'These tasks are waiting on "${task.name}":\n\n'
-            '${dependentNames.map((n) => '• $n').join('\n')}\n\n'
-            'Completing it will unblock them.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Complete'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true || !mounted) return;
-    }
+    if (!await confirmDependentUnblock(context, task.name, dependentNames)) return;
+    if (!mounted) return;
 
     await showCompletionAnimation(context);
     if (!mounted) return;

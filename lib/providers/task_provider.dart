@@ -225,25 +225,29 @@ class TaskProvider extends ChangeNotifier {
 
   /// Marks a task as skipped and navigates back.
   /// Returns the task for undo support.
-  Future<Task> skipTask(int taskId) async {
+  Future<({Task task, List<({int taskId, int dependsOnId})> removedDeps})> skipTask(int taskId) async {
     final task = _currentParent?.id == taskId
         ? _currentParent!
         : _tasks.firstWhere((t) => t.id == taskId,
             orElse: () => throw StateError('Task $taskId not found in current list'));
-    await _db.skipTask(taskId);
+    final removedDeps = await _db.skipTask(taskId);
     onMutation?.call();
     await navigateBack();
-    return task;
+    return (task: task, removedDeps: removedDeps);
   }
 
   /// Un-skips a task and refreshes the list.
-  Future<void> unskipTask(int taskId) async {
-    await _db.unskipTask(taskId);
+  /// Optionally restores dependency links that were removed on skip.
+  Future<void> unskipTask(int taskId, {
+    List<({int taskId, int dependsOnId})> restoredDeps = const [],
+  }) async {
+    await _db.unskipTask(taskId, restoredDeps: restoredDeps);
     await _refreshAfterMutation();
   }
 
   /// Re-skips a task (for undo-restore). Unlike skipTask(), this does
   /// not call navigateBack() since it's invoked from the archive screen.
+  /// Discards removedDeps intentionally (restore-from-archive path).
   Future<void> reSkipTask(int taskId) async {
     await _db.skipTask(taskId);
     await _refreshAfterMutation();
