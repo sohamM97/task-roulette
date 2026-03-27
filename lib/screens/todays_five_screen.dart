@@ -492,6 +492,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     //  - Reserved picks' roots are seeded into existingRootPickCounts so the
     //    general pool penalises picking the same root again.
     final reserved = <Task>[];
+    final reservedIds = <int>{};
     final slotsAvailable = (5 - kept.length).clamp(0, 5);
     if (slotsAvailable > 0 && ctx.scheduledSourceToLeafMap.isNotEmpty) {
       final sources = ctx.scheduledSourceToLeafMap.keys.toList()..shuffle();
@@ -503,21 +504,43 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       for (final sourceId in sources) {
         if (reserved.length >= maxReserved) break;
         final candidateIds = ctx.scheduledSourceToLeafMap[sourceId]!;
-        final candidates = candidateIds
+        // Prefer exclusive leaf (not already reserved by another source).
+        // If all candidates are already reserved (shared DAG leaves), fall back
+        // to the full eligible pool — the pick won't add a duplicate.
+        final exclusiveCandidates = candidateIds
             .where((id) => !ctx.blockedIds.contains(id) && !keptIds.contains(id) &&
-                !reserved.any((r) => r.id == id))
+                !reservedIds.contains(id))
             .map((id) => leafById[id])
             .whereType<Task>()
             .toList();
+        final candidates = exclusiveCandidates.isNotEmpty
+            ? exclusiveCandidates
+            : candidateIds
+                .where((id) => !ctx.blockedIds.contains(id) && !keptIds.contains(id))
+                .map((id) => leafById[id])
+                .whereType<Task>()
+                .toList();
         if (candidates.isEmpty) continue;
         final pick = provider.pickWeightedN(candidates, 1,
             scheduleBoostedIds: ctx.scheduleBoostedIds,
             deadlineDaysMap: ctx.deadlineDaysMap,
             normData: ctx.normData);
-        if (pick.isNotEmpty) reserved.add(pick.first);
+        if (pick.isNotEmpty && !reservedIds.contains(pick.first.id)) {
+          reserved.add(pick.first);
+          reservedIds.add(pick.first.id!);
+        }
       }
     }
-    final reservedIds = reserved.map((t) => t.id).toSet();
+
+    // Seed diversity penalty with roots already represented by kept + reserved,
+    // so the general pool penalises picking the same root categories again.
+    final rootPickCounts = <int, int>{};
+    for (final task in [...kept, ...reserved]) {
+      final roots = ctx.normData.leafToRoots[task.id] ?? <int>{};
+      for (final r in roots) {
+        rootPickCounts[r] = (rootPickCounts[r] ?? 0) + 1;
+      }
+    }
 
     final eligible = ctx.allLeaves.where(
       (t) => !ctx.blockedIds.contains(t.id) &&
@@ -529,7 +552,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final picked = provider.pickWeightedN(eligible, slotsToFill,
         scheduleBoostedIds: ctx.scheduleBoostedIds,
         deadlineDaysMap: ctx.deadlineDaysMap,
-        normData: ctx.normData);
+        normData: ctx.normData,
+        existingRootPickCounts: rootPickCounts.isEmpty ? null : rootPickCounts);
     if (!mounted) return;
     _todaysTasks = [...kept, ...reserved, ...picked];
     await _loadOtherDoneToday();
