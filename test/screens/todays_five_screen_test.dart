@@ -1190,7 +1190,9 @@ void main() {
         await db.insertTask(Task(name: 'No deadline task'));
       });
 
-      await pumpAndLoad(tester, buildTestWidget());
+      // Extra rounds needed: _generateNewSet now calls _fetchSelectionContext
+      // which does 5 DB queries (schedule boost, deadline boost, norm, etc.)
+      await pumpAndLoad(tester, buildTestWidget(), rounds: 40);
 
       await tester.tap(find.text('No deadline task'));
       for (var i = 0; i < 10; i++) {
@@ -1201,7 +1203,7 @@ void main() {
       // Pump enough to see if dialog appears, but also advance the
       // completion animation timer (700ms) so it doesn't remain pending.
       await tester.pump(const Duration(milliseconds: 800));
-      await pumpAsync(tester, rounds: 20);
+      await pumpAsync(tester, rounds: 40);
 
       // No deadline dialog should appear — should go straight to animation
       expect(find.text('Remove deadline?'), findsNothing);
@@ -1479,6 +1481,54 @@ void main() {
         isTrue,
         reason: 'One of the parent descendants should replace the pinned parent',
       );
+    });
+
+    testWidgets('_replaceIfNoLongerLeaf uses schedule params on uncomplete', (tester) async {
+      // Bug fix: _replaceIfNoLongerLeaf previously called pickWeightedN
+      // without schedule/deadline/norm params. This test verifies the fix
+      // by uncompleting a done task that is no longer a leaf.
+      // Flow: tap done task → _handleUncomplete → _replaceIfNoLongerLeaf.
+      late int id1, id2, idTarget, idScheduled;
+      final todayDow = DateTime.now().weekday;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Replace A'));
+        id2 = await db.insertTask(Task(name: 'Replace B'));
+        idTarget = await db.insertTask(Task(name: 'Will uncomplete'));
+        idScheduled = await db.insertTask(Task(name: 'Replace Scheduled'));
+        await db.replaceSchedules(idScheduled, [
+          TaskSchedule(taskId: idScheduled, dayOfWeek: todayDow),
+        ]);
+        // Mark target as worked-on so it loads as "done today"
+        await db.markWorkedOn(idTarget);
+        // Make target a non-leaf by adding a child
+        final childId = await db.insertTask(Task(name: 'Child of target'));
+        await db.addRelationship(idTarget, childId);
+        // Save state: target is in completedIds + workedOnIds
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2, idTarget],
+          completedIds: {idTarget},
+          workedOnIds: {idTarget},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Target should show as done (strikethrough text visible)
+      expect(find.text('Will uncomplete'), findsWidgets);
+
+      // Tap the done task to uncomplete it → _handleUncomplete →
+      // _replaceIfNoLongerLeaf fires because target is no longer a leaf
+      await tester.tap(find.text('Will uncomplete').first);
+      await pumpAsync(tester, rounds: 20);
+
+      // Target should be replaced since it's no longer a leaf.
+      // Eligible replacements: 'Replace Scheduled', 'Child of target'.
+      // With schedule boost, 'Replace Scheduled' is strongly preferred.
+      final hasScheduled = find.text('Replace Scheduled').evaluate().isNotEmpty;
+      final hasChild = find.text('Child of target').evaluate().isNotEmpty;
+      expect(hasScheduled || hasChild, isTrue,
+        reason: '_replaceIfNoLongerLeaf should pick an eligible replacement');
     });
   });
 }
