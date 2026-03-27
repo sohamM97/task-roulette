@@ -834,14 +834,43 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
   Future<void> _completeNormalTask(Task task) async {
     final provider = context.read<TaskProvider>();
+
+    // Check if completing this task will free any dependents — confirm first.
+    final dependentNames = await provider.getDependentTaskNames(task.id!);
+    if (!mounted) return;
+    if (dependentNames.isNotEmpty) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Unblock waiting tasks?'),
+          content: Text(
+            'These tasks are waiting on "${task.name}":\n\n'
+            '${dependentNames.map((n) => '• $n').join('\n')}\n\n'
+            'Completing it will unblock them.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Complete'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+
     await showCompletionAnimation(context);
     if (!mounted) return;
-    await provider.completeTaskOnly(task.id!);
+    final removedDeps = await provider.completeTaskOnly(task.id!);
     await _markDone(task.id!, workedOn: false, autoStarted: false);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     showInfoSnackBar(context, '"${task.name}" done!', onUndo: () async {
-      await provider.uncompleteTask(task.id!);
+      await provider.uncompleteTask(task.id!, restoredDeps: removedDeps);
       if (!mounted) return;
       await _unmarkDone(task.id!, workedOn: false, autoStarted: false);
     });

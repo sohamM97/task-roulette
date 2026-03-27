@@ -798,15 +798,44 @@ class TaskListScreenState extends State<TaskListScreen>
   Future<void> _completeTaskWithUndo(Task task) async {
     final provider = context.read<TaskProvider>();
 
+    // Check if completing this task will free any dependents — confirm first.
+    final dependentNames = await provider.getDependentTaskNames(task.id!);
+    if (!mounted) return;
+    if (dependentNames.isNotEmpty) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Unblock waiting tasks?'),
+          content: Text(
+            'These tasks are waiting on "${task.name}":\n\n'
+            '${dependentNames.map((n) => '• $n').join('\n')}\n\n'
+            'Completing it will unblock them.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Complete'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+
     // Show celebratory animation before completing
     await showCompletionAnimation(context);
 
     if (!mounted) return;
 
-    await provider.completeTask(task.id!);
+    final result = await provider.completeTask(task.id!);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
-    showInfoSnackBar(context, '"${task.name}" done for good!', onUndo: () => provider.uncompleteTask(task.id!));
+    showInfoSnackBar(context, '"${task.name}" done for good!',
+        onUndo: () => provider.uncompleteTask(task.id!, restoredDeps: result.removedDeps));
   }
 
   Widget _buildLeafTaskDetail(TaskProvider provider) {
@@ -850,6 +879,7 @@ class TaskListScreenState extends State<TaskListScreen>
           onTogglePin: _todaysFiveIds.isNotEmpty
               ? () => _togglePinInTodays5(task.id!)
               : null,
+          isBlocked: provider.blockedTaskIds.contains(task.id),
         );
       },
     );

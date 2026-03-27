@@ -4,7 +4,7 @@ Last updated: 2026-03-27
 
 ## Summary
 
-~1050 tests across 27 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
+~1052 tests across 27 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
 
 ## Covered
 
@@ -36,7 +36,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 
 ### Widgets (good)
 - **test/widgets/task_picker_dialog_test.dart** (~18 tests) — Priority sorting (tiers), preserved relative order, search filtering, parent context, search ranking (name matches before context-only matches, stable order within tiers, interaction with priority tiers), **headerAction** (shown when provided, hidden during search, absent when not provided).
-- **test/widgets/leaf_task_detail_test.dart** (~50 tests) — Name display, rename, URL icon states, Done/Skip buttons, Start/Stop buttons, priority/someday toggle icons and callbacks, "Done today"/"Worked on today" toggle, **dependency icon** (add_task vs hourglass, tap navigates to dependency, long-press opens edit picker), **pin button** (pinned/unpinned/hidden), **"Done today" fallback** to onDone when onWorkedOn null, **formatTimeAgo** (days/minutes).
+- **test/widgets/leaf_task_detail_test.dart** (~52 tests) — Name display, rename, URL icon states, Done/Skip buttons, Start/Stop buttons, priority/someday toggle icons and callbacks, "Done today"/"Worked on today" toggle, **dependency icon** (add_task vs hourglass, tap navigates to dependency, long-press opens edit picker, **isBlocked color**: primary when blocked, greyed out when resolved), **pin button** (pinned/unpinned/hidden), **"Done today" fallback** to onDone when onWorkedOn null, **formatTimeAgo** (days/minutes).
 - **test/widgets/pin_button_test.dart** (~15 tests) — Pin/unpin icons, tooltips, max-pins disabled, muted alpha, callbacks.
 - **test/widgets/small_widgets_test.dart** (~27 tests) — `EmptyState` (root/non-root), `DeleteTaskDialog` (cancel/keep-subtrees/delete-everything), `AddTaskDialog` (submit, empty/whitespace rejection, "Add multiple" with text preservation and trimming, pin toggle), `BrainDumpDialog` (line counting, whitespace trimming, submit, disabled state, initialText pre-fill).
 - **test/widgets/task_card_icons_test.dart** (~12 tests) — Pin vs fire icon, color/size.
@@ -67,7 +67,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 - **firestore_service.dart** (512 lines) — Only serialization helpers tested. REST API calls (create/update/delete docs, batch ops, error handling) NOT tested. Requires HTTP mocking.
 
 ### Widgets (incomplete)
-- **leaf_task_detail.dart** — 48 tests but 76.9% coverage. NOT tested: URL opening (requires url_launcher mock), editUrlDialog submit/remove flows.
+- **leaf_task_detail.dart** — 52 tests but ~77% coverage. NOT tested: URL opening (requires url_launcher mock), editUrlDialog submit/remove flows.
 - **schedule_dialog.dart** — 87.4% coverage. NOT tested: Save navigation result (requires bottom sheet host), `show` static method.
 - **add_task_dialog.dart** — Only partial coverage in `small_widgets_test.dart`.
 - **brain_dump_dialog.dart** — Only partial coverage in `small_widgets_test.dart`.

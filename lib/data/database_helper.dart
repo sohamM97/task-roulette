@@ -1304,15 +1304,53 @@ class DatabaseHelper {
     });
   }
 
-  /// Marks a task as completed by setting completed_at to now.
-  Future<void> completeTask(int taskId) async {
+  /// Returns the names of tasks that depend on [taskId] (i.e. tasks that
+  /// will be freed when [taskId] is completed). Only returns uncompleted,
+  /// unskipped dependents — already-resolved ones are excluded.
+  Future<List<String>> getDependentTaskNames(int taskId) async {
     final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT t.name
+      FROM task_dependencies td
+      INNER JOIN tasks t ON td.task_id = t.id
+      WHERE td.depends_on_id = ?
+        AND t.completed_at IS NULL
+        AND t.skipped_at IS NULL
+    ''', [taskId]);
+    return rows.map((r) => r['name'] as String).toList();
+  }
+
+  /// Marks a task as completed by setting completed_at to now.
+  /// Also removes dependency links where this task was a blocker, since
+  /// a completed task no longer blocks anything. Returns the removed
+  /// dependency rows for undo support.
+  Future<List<({int taskId, int dependsOnId})>> completeTask(int taskId) async {
+    final db = await database;
+    // Capture dependencies that will be removed (for undo support).
+    final depRows = await db.query(
+      'task_dependencies',
+      where: 'depends_on_id = ?',
+      whereArgs: [taskId],
+    );
+    final removedDeps = depRows
+        .map((r) => (taskId: r['task_id'] as int, dependsOnId: r['depends_on_id'] as int))
+        .toList();
+
     await db.update(
       'tasks',
       {'completed_at': DateTime.now().millisecondsSinceEpoch, ..._dirtyFields()},
       where: 'id = ?',
       whereArgs: [taskId],
     );
+    // Remove dependency links — completed task no longer blocks dependents.
+    if (removedDeps.isNotEmpty) {
+      await db.delete(
+        'task_dependencies',
+        where: 'depends_on_id = ?',
+        whereArgs: [taskId],
+      );
+    }
+    return removedDeps;
   }
 
   /// Marks a task as skipped by setting skipped_at to now.
@@ -1338,7 +1376,10 @@ class DatabaseHelper {
   }
 
   /// Un-completes a task by clearing completed_at.
-  Future<void> uncompleteTask(int taskId) async {
+  /// Optionally restores dependency links that were removed on completion.
+  Future<void> uncompleteTask(int taskId, {
+    List<({int taskId, int dependsOnId})> restoredDeps = const [],
+  }) async {
     final db = await database;
     await db.update(
       'tasks',
@@ -1346,6 +1387,14 @@ class DatabaseHelper {
       where: 'id = ?',
       whereArgs: [taskId],
     );
+    // Restore dependency links that were removed when the task was completed.
+    for (final dep in restoredDeps) {
+      await db.insert(
+        'task_dependencies',
+        {'task_id': dep.taskId, 'depends_on_id': dep.dependsOnId},
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+    }
   }
 
   /// Deletes a task and returns its relationships and schedules for undo support.

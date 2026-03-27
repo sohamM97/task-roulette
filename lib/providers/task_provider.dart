@@ -207,18 +207,20 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Marks a task as completed (archived) and navigates back.
-  /// Returns the task for undo support.
-  Future<Task> completeTask(int taskId) async {
+  /// Returns the task and removed dependency links for undo support.
+  /// Completing a task also removes dependency links where this task was
+  /// a blocker — dependents are freed since the blocker no longer exists.
+  Future<({Task task, List<({int taskId, int dependsOnId})> removedDeps})> completeTask(int taskId) async {
     // The task being completed may be _currentParent (leaf detail view's
     // Done button) rather than a member of _tasks.
     final task = _currentParent?.id == taskId
         ? _currentParent!
         : _tasks.firstWhere((t) => t.id == taskId,
             orElse: () => throw StateError('Task $taskId not found in current list'));
-    await _db.completeTask(taskId);
+    final removedDeps = await _db.completeTask(taskId);
     onMutation?.call();
     await navigateBack();
-    return task;
+    return (task: task, removedDeps: removedDeps);
   }
 
   /// Marks a task as skipped and navigates back.
@@ -249,14 +251,19 @@ class TaskProvider extends ChangeNotifier {
 
   /// Completes a task without navigating back. Used by Today's 5 screen
   /// which manages its own UI state separately.
-  Future<void> completeTaskOnly(int taskId) async {
-    await _db.completeTask(taskId);
+  /// Returns removed dependency links for undo support.
+  Future<List<({int taskId, int dependsOnId})>> completeTaskOnly(int taskId) async {
+    final removedDeps = await _db.completeTask(taskId);
     await _refreshAfterMutation();
+    return removedDeps;
   }
 
   /// Un-completes a task and refreshes the list.
-  Future<void> uncompleteTask(int taskId) async {
-    await _db.uncompleteTask(taskId);
+  /// Optionally restores dependency links that were removed on completion.
+  Future<void> uncompleteTask(int taskId, {
+    List<({int taskId, int dependsOnId})> restoredDeps = const [],
+  }) async {
+    await _db.uncompleteTask(taskId, restoredDeps: restoredDeps);
     await _refreshAfterMutation();
   }
 
@@ -455,8 +462,9 @@ class TaskProvider extends ChangeNotifier {
 
   /// Re-completes a task (for undo-restore). Unlike completeTask(), this does
   /// not call navigateBack() since it's invoked from the archive screen.
+  /// Discards removed deps — restore-from-archive doesn't preserve dep links.
   Future<void> reCompleteTask(int taskId) async {
-    await _db.completeTask(taskId);
+    await _db.completeTask(taskId); // removedDeps discarded intentionally
     await _refreshAfterMutation();
   }
 
@@ -520,6 +528,12 @@ class TaskProvider extends ChangeNotifier {
 
   Future<List<Task>> getDependencies(int taskId) async {
     return _db.getDependencies(taskId);
+  }
+
+  /// Returns names of tasks that depend on [taskId] and will be freed
+  /// when it is completed (excludes already-completed/skipped dependents).
+  Future<List<String>> getDependentTaskNames(int taskId) async {
+    return _db.getDependentTaskNames(taskId);
   }
 
   Future<Set<int>> getBlockedChildIds(List<int> childIds) async {
@@ -753,7 +767,8 @@ class TaskProvider extends ChangeNotifier {
     late Map<int, ({String deadline, String type})> effectiveDeadlines;
     late Set<int> scheduledTodayIds;
     await Future.wait([
-      _db.getBlockedTaskInfo(taskIds).then((v) => blockedInfo = v),
+      // Include currentParent so leaf detail view can check its blocked state.
+      _db.getBlockedTaskInfo(parentNameIds).then((v) => blockedInfo = v),
       _db.getSiblingDependencyPairs(taskIds).then((v) => siblingDeps = v),
       _db.getParentNamesForTaskIds(parentNameIds).then((v) => parentNames = v),
       _db.getEffectiveDeadlines(taskIds).then((v) => effectiveDeadlines = v),

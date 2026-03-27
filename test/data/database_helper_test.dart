@@ -361,6 +361,95 @@ void main() {
       expect(deps, isEmpty);
     });
 
+    test('completeTask removes dependency links where task was blocker', () async {
+      // Bug fix: completing a blocker should free its dependents by removing
+      // the dependency rows, not just marking them unblocked.
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep1 = await db.insertTask(Task(name: 'Dependent 1'));
+      final dep2 = await db.insertTask(Task(name: 'Dependent 2'));
+      await db.addDependency(dep1, blocker);
+      await db.addDependency(dep2, blocker);
+
+      final removedDeps = await db.completeTask(blocker);
+
+      // Dependency rows should be removed
+      expect(await db.getDependencies(dep1), isEmpty);
+      expect(await db.getDependencies(dep2), isEmpty);
+      // Removed deps returned for undo support
+      expect(removedDeps, hasLength(2));
+      expect(removedDeps.map((d) => d.taskId).toSet(), {dep1, dep2});
+    });
+
+    test('uncompleteTask restores dependency links when restoredDeps provided', () async {
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep = await db.insertTask(Task(name: 'Dependent'));
+      await db.addDependency(dep, blocker);
+
+      // Complete removes deps
+      final removedDeps = await db.completeTask(blocker);
+      expect(await db.getDependencies(dep), isEmpty);
+
+      // Uncomplete with restoredDeps restores them
+      await db.uncompleteTask(blocker, restoredDeps: removedDeps);
+      final deps = await db.getDependencies(dep);
+      expect(deps, hasLength(1));
+      expect(deps.first.id, blocker);
+    });
+
+    test('uncompleteTask without restoredDeps does not restore deps', () async {
+      // Restore-from-archive path: deps intentionally not restored
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep = await db.insertTask(Task(name: 'Dependent'));
+      await db.addDependency(dep, blocker);
+
+      await db.completeTask(blocker);
+      await db.uncompleteTask(blocker); // no restoredDeps
+
+      expect(await db.getDependencies(dep), isEmpty);
+    });
+
+    test('getDependentTaskNames returns names of uncompleted dependents', () async {
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep1 = await db.insertTask(Task(name: 'Dependent A'));
+      final dep2 = await db.insertTask(Task(name: 'Dependent B'));
+      final dep3 = await db.insertTask(Task(name: 'Completed Dep'));
+      await db.addDependency(dep1, blocker);
+      await db.addDependency(dep2, blocker);
+      await db.addDependency(dep3, blocker);
+      // Complete dep3 — it should be excluded from the result
+      await db.completeTask(dep3);
+
+      final names = await db.getDependentTaskNames(blocker);
+      expect(names, unorderedEquals(['Dependent A', 'Dependent B']));
+    });
+
+    test('getDependentTaskNames excludes skipped dependents', () async {
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final active = await db.insertTask(Task(name: 'Active Dep'));
+      final skipped = await db.insertTask(Task(name: 'Skipped Dep'));
+      await db.addDependency(active, blocker);
+      await db.addDependency(skipped, blocker);
+      await db.skipTask(skipped);
+
+      final names = await db.getDependentTaskNames(blocker);
+      expect(names, equals(['Active Dep']));
+    });
+
+    test('completeTask returns empty list when task has no dependents', () async {
+      final task = await db.insertTask(Task(name: 'No deps'));
+      final removedDeps = await db.completeTask(task);
+      expect(removedDeps, isEmpty);
+      // Task should still be completed
+      final dbTask = await db.getTaskById(task);
+      expect(dbTask!.isCompleted, isTrue);
+    });
+
+    test('getDependentTaskNames returns empty when no dependents', () async {
+      final task = await db.insertTask(Task(name: 'Standalone'));
+      final names = await db.getDependentTaskNames(task);
+      expect(names, isEmpty);
+    });
+
     test('getBlockedTaskIds returns tasks with unresolved dependencies', () async {
       final a = await db.insertTask(Task(name: 'Task A'));
       final b = await db.insertTask(Task(name: 'Task B'));
@@ -480,15 +569,16 @@ void main() {
       expect(pairs, isEmpty);
     });
 
-    test('getSiblingDependencyPairs includes resolved deps', () async {
+    test('getSiblingDependencyPairs excludes deps removed by completeTask', () async {
+      // Bug fix: completeTask now removes dependency rows entirely,
+      // so getSiblingDependencyPairs won't find them anymore.
       final a = await db.insertTask(Task(name: 'Task A'));
       final b = await db.insertTask(Task(name: 'Task B'));
       await db.addDependency(b, a);
-      await db.completeTask(a); // A is completed
+      await db.completeTask(a); // A is completed — dep row removed
 
-      // Should still return the pair (unlike getBlockedTaskInfo)
       final pairs = await db.getSiblingDependencyPairs([a, b]);
-      expect(pairs[b], a);
+      expect(pairs, isEmpty);
     });
 
     test('getBlockedTaskIds returns empty for empty input', () async {
@@ -559,17 +649,16 @@ void main() {
       expect(cDeps.map((t) => t.id), contains(b));
     });
 
-    test('getDependencies returns completed deps for UI display', () async {
+    test('getDependencies returns empty after blocker completed', () async {
+      // Bug fix: completeTask now removes dependency rows entirely,
+      // so getDependencies returns empty after the blocker is completed.
       final a = await db.insertTask(Task(name: 'Task A'));
       final b = await db.insertTask(Task(name: 'Task B'));
       await db.addDependency(b, a);
       await db.completeTask(a);
 
-      // getDependencies should still return A (for chip display)
       final deps = await db.getDependencies(b);
-      expect(deps, hasLength(1));
-      expect(deps.first.id, a);
-      expect(deps.first.isCompleted, isTrue);
+      expect(deps, isEmpty);
     });
   });
 
