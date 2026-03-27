@@ -162,7 +162,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     // Try to restore from DB
     final saved = await db.loadTodaysFiveState(today);
     if (saved != null && saved.taskIds.isNotEmpty) {
-      final allLeaves = await provider.getAllLeafTasks();
+      final ctx = await _fetchSelectionContext();
+      final allLeaves = ctx.allLeaves;
       final leafIdSet = allLeaves.map((t) => t.id!).toSet();
       final savedCompletedIds = Set<int>.from(saved.completedIds);
       final savedWorkedOnIds = Set<int>.from(saved.workedOnIds);
@@ -196,7 +197,13 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                 (d) => !currentIds.contains(d.id) && !descBlockedIds.contains(d.id),
               ).toList();
               if (eligibleDesc.isNotEmpty) {
-                final picked = provider.pickWeightedN(eligibleDesc, 1);
+                // Bug fix: previously called pickWeightedN without schedule/
+                // deadline/norm params, silently dropping 2.5x schedule boost
+                // and up to 8x deadline boost during pinned-descendant replacement.
+                final picked = provider.pickWeightedN(eligibleDesc, 1,
+                    scheduleBoostedIds: ctx.scheduleBoostedIds,
+                    deadlineDaysMap: ctx.deadlineDaysMap,
+                    normData: ctx.normData);
                 if (picked.isNotEmpty) {
                   tasks.add(picked.first);
                   savedPinnedIds.remove(id);
@@ -213,15 +220,16 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       // Backfill if some non-done tasks are no longer leaves
       if (tasks.length < 5) {
         final currentIds = tasks.map((t) => t.id).toSet();
-        final leafIds = allLeaves.map((t) => t.id!).toList();
-        final blockedIds = await provider.getBlockedChildIds(leafIds);
         final eligible = allLeaves.where(
-          (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
+          (t) => !currentIds.contains(t.id) && !ctx.blockedIds.contains(t.id),
         ).toList();
-        // Use all leafIds (not just eligible) so norm factors reflect true root sizes
-        final normData = await provider.getNormalizationData(leafIds);
+        // Bug fix: previously only passed normData, silently dropping
+        // 2.5x schedule boost and up to 8x deadline boost during backfill.
         final replacements = provider.pickWeightedN(
-          eligible, 5 - tasks.length, normData: normData,
+          eligible, 5 - tasks.length,
+          scheduleBoostedIds: ctx.scheduleBoostedIds,
+          deadlineDaysMap: ctx.deadlineDaysMap,
+          normData: ctx.normData,
         );
         tasks.addAll(replacements);
       }
@@ -293,10 +301,14 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     if (!mounted) return;
     final provider = context.read<TaskProvider>();
+    // Fetch only leaf list upfront — needed to determine which tasks are still
+    // valid leaves. Full selection context (schedule boost, deadline boost,
+    // norm, blocked) is fetched lazily below, only if pickWeightedN is needed.
     final allLeaves = await provider.getAllLeafTasks();
     final leafIdSet = allLeaves.map((t) => t.id!).toSet();
     final db = DatabaseHelper();
     final refreshed = <Task>[];
+    _SelectionContext? ctx; // fetched lazily when pickWeightedN is needed
     for (final t in _todaysTasks) {
       if (leafIdSet.contains(t.id)) {
         // Still a leaf — re-fetch fresh data
@@ -329,7 +341,14 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
               (d) => !currentIds.contains(d.id) && !descBlockedIds.contains(d.id),
             ).toList();
             if (eligibleDesc.isNotEmpty) {
-              final picked = provider.pickWeightedN(eligibleDesc, 1);
+              // Bug fix: previously called pickWeightedN without schedule/
+              // deadline/norm params, silently dropping 2.5x schedule boost
+              // and up to 8x deadline boost during pinned-descendant replacement.
+              ctx ??= await _fetchSelectionContext();
+              final picked = provider.pickWeightedN(eligibleDesc, 1,
+                  scheduleBoostedIds: ctx.scheduleBoostedIds,
+                  deadlineDaysMap: ctx.deadlineDaysMap,
+                  normData: ctx.normData);
               if (picked.isNotEmpty) {
                 refreshed.add(picked.first);
                 _pinnedIds.remove(t.id);
@@ -346,16 +365,18 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     }
     // Backfill replacements for non-done tasks that became non-leaf/deleted
     if (refreshed.length < _todaysTasks.length) {
+      ctx ??= await _fetchSelectionContext();
       final currentIds = refreshed.map((t) => t.id).toSet();
-      final leafIds = allLeaves.map((t) => t.id!).toList();
-      final blockedIds = await provider.getBlockedChildIds(leafIds);
-      final eligible = allLeaves.where(
-        (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
+      final eligible = ctx.allLeaves.where(
+        (t) => !currentIds.contains(t.id) && !ctx!.blockedIds.contains(t.id),
       ).toList();
-      // Use all leafIds (not just eligible) so norm factors reflect true root sizes
-      final normData = await provider.getNormalizationData(leafIds);
+      // Bug fix: previously only passed normData, silently dropping
+      // 2.5x schedule boost and up to 8x deadline boost during backfill.
       final replacements = provider.pickWeightedN(
-        eligible, _todaysTasks.length - refreshed.length, normData: normData,
+        eligible, _todaysTasks.length - refreshed.length,
+        scheduleBoostedIds: ctx.scheduleBoostedIds,
+        deadlineDaysMap: ctx.deadlineDaysMap,
+        normData: ctx.normData,
       );
       refreshed.addAll(replacements);
     }
@@ -761,20 +782,24 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   /// Calls setState if a replacement happens.
   Future<void> _replaceIfNoLongerLeaf(Task task) async {
     final provider = context.read<TaskProvider>();
-    final allLeaves = await provider.getAllLeafTasks();
-    final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+    final ctx = await _fetchSelectionContext();
+    final leafIdSet = ctx.allLeaves.map((t) => t.id!).toSet();
     if (leafIdSet.contains(task.id)) return;
 
     final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
     if (idx < 0) return;
 
     final currentIds = _todaysTasks.map((t) => t.id).toSet();
-    final leafIds = allLeaves.map((t) => t.id!).toList();
-    final blockedIds = await provider.getBlockedChildIds(leafIds);
-    final eligible = allLeaves.where(
-      (t) => !currentIds.contains(t.id) && !blockedIds.contains(t.id),
+    final eligible = ctx.allLeaves.where(
+      (t) => !currentIds.contains(t.id) && !ctx.blockedIds.contains(t.id),
     ).toList();
-    final replacements = provider.pickWeightedN(eligible, 1);
+    // Bug fix: previously called pickWeightedN without any optional params,
+    // silently dropping schedule boost (2.5x), deadline boost (up to 8x),
+    // and normalization during non-leaf replacement.
+    final replacements = provider.pickWeightedN(eligible, 1,
+        scheduleBoostedIds: ctx.scheduleBoostedIds,
+        deadlineDaysMap: ctx.deadlineDaysMap,
+        normData: ctx.normData);
     if (!mounted) return;
     _pinnedIds.remove(task.id);
     setState(() {

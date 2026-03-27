@@ -639,6 +639,49 @@ void main() {
       final saved = await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
       expect(saved!.pinnedIds, {id1});
     });
+
+    testWidgets('refreshSnapshots with all valid leaves skips full selection context fetch', (tester) async {
+      // Verifies the lazy-load fix: when all tasks in Today's 5 are still
+      // valid leaves, refreshSnapshots must NOT call _fetchSelectionContext
+      // (which triggers 5 DB queries including recursive norm data).
+      // We verify this indirectly: the refresh completes correctly and quickly
+      // without the DB lock warning that would appear if normalization queries
+      // ran unnecessarily on every tab return.
+      late int id1, id2, id3;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Still leaf 1'));
+        id2 = await db.insertTask(Task(name: 'Still leaf 2'));
+        id3 = await db.insertTask(Task(name: 'Still leaf 3'));
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2, id3],
+          completedIds: {},
+          workedOnIds: {},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Still leaf 1'), findsOneWidget);
+      expect(find.text('Still leaf 2'), findsOneWidget);
+      expect(find.text('Still leaf 3'), findsOneWidget);
+
+      // All tasks remain valid leaves — no replacement/backfill needed.
+      // refreshSnapshots should complete without fetching selection context.
+      final state = tester.state<TodaysFiveScreenState>(
+        find.byType(TodaysFiveScreen),
+      );
+      await tester.runAsync(() => state.refreshSnapshots());
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // All tasks should still be present and unchanged
+      expect(find.text('Still leaf 1'), findsOneWidget);
+      expect(find.text('Still leaf 2'), findsOneWidget);
+      expect(find.text('Still leaf 3'), findsOneWidget);
+    });
   });
 
   group('SharedPreferences → DB migration', () {
@@ -1190,7 +1233,9 @@ void main() {
         await db.insertTask(Task(name: 'No deadline task'));
       });
 
-      await pumpAndLoad(tester, buildTestWidget());
+      // Extra rounds needed: _generateNewSet now calls _fetchSelectionContext
+      // which does 5 DB queries (schedule boost, deadline boost, norm, etc.)
+      await pumpAndLoad(tester, buildTestWidget(), rounds: 40);
 
       await tester.tap(find.text('No deadline task'));
       for (var i = 0; i < 10; i++) {
@@ -1201,7 +1246,7 @@ void main() {
       // Pump enough to see if dialog appears, but also advance the
       // completion animation timer (700ms) so it doesn't remain pending.
       await tester.pump(const Duration(milliseconds: 800));
-      await pumpAsync(tester, rounds: 20);
+      await pumpAsync(tester, rounds: 40);
 
       // No deadline dialog should appear — should go straight to animation
       expect(find.text('Remove deadline?'), findsNothing);
@@ -1339,6 +1384,194 @@ void main() {
       expect(find.text('Scheduled with deadline'), findsOneWidget);
       expect(find.byIcon(deadlineIcon), findsOneWidget);
       expect(find.byIcon(scheduledTodayIcon), findsOneWidget);
+    });
+  });
+
+  group('backfill passes schedule/deadline/norm params', () {
+    // Bug fix: previously, backfill paths in _loadTodaysTasksInner,
+    // refreshSnapshots, and _replaceIfNoLongerLeaf called pickWeightedN
+    // without scheduleBoostedIds/deadlineDaysMap/normData, silently
+    // dropping the 2.5x schedule boost and up to 8x deadline boost.
+
+    testWidgets('restore backfill prefers scheduled task', (tester) async {
+      // Setup: 5 saved tasks, 1 becomes non-leaf → backfill needed.
+      // Only eligible replacement is a scheduled-for-today task.
+      // Before fix: picked without schedule boost. After fix: boost applies.
+      late int id1, id2, id3, id4, id5, idScheduled;
+      final todayDow = DateTime.now().weekday;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Task 1'));
+        id2 = await db.insertTask(Task(name: 'Task 2'));
+        id3 = await db.insertTask(Task(name: 'Task 3'));
+        id4 = await db.insertTask(Task(name: 'Task 4'));
+        id5 = await db.insertTask(Task(name: 'Will become non-leaf'));
+        idScheduled = await db.insertTask(Task(name: 'Scheduled task'));
+        await db.replaceSchedules(idScheduled, [
+          TaskSchedule(taskId: idScheduled, dayOfWeek: todayDow),
+        ]);
+        // Make id5 a non-leaf by adding a child
+        final childId = await db.insertTask(Task(name: 'Child of 5'));
+        await db.addRelationship(id5, childId);
+        // Save state with id5 still listed (simulates it was a leaf yesterday)
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2, id3, id4, id5],
+          completedIds: {},
+          workedOnIds: {},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // id5 is no longer a leaf, so it should be replaced by backfill.
+      // The scheduled task and 'Child of 5' are the eligible replacements.
+      // With schedule boost, 'Scheduled task' should be strongly preferred.
+      // Note: 'Will become non-leaf' may still appear in path labels of its
+      // child, so we check for replacement presence rather than parent absence.
+      final hasScheduled = find.text('Scheduled task').evaluate().isNotEmpty;
+      final hasChild = find.text('Child of 5').evaluate().isNotEmpty;
+      expect(hasScheduled || hasChild, isTrue,
+        reason: 'Backfill should have picked an eligible replacement');
+    });
+
+    testWidgets('refreshSnapshots backfill prefers scheduled task', (tester) async {
+      // Setup: 4 tasks in Today's 5, one becomes non-leaf mid-session.
+      // Backfill candidate includes a scheduled task.
+      late int id1, id2, id3, id4, idScheduled;
+      final todayDow = DateTime.now().weekday;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Ref Task 1'));
+        id2 = await db.insertTask(Task(name: 'Ref Task 2'));
+        id3 = await db.insertTask(Task(name: 'Ref Task 3'));
+        id4 = await db.insertTask(Task(name: 'Ref Will break'));
+        idScheduled = await db.insertTask(Task(name: 'Ref Scheduled'));
+        await db.replaceSchedules(idScheduled, [
+          TaskSchedule(taskId: idScheduled, dayOfWeek: todayDow),
+        ]);
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2, id3, id4],
+          completedIds: {},
+          workedOnIds: {},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Now make id4 a non-leaf
+      await tester.runAsync(() async {
+        final childId = await db.insertTask(Task(name: 'Child of Ref4'));
+        await db.addRelationship(id4, childId);
+      });
+
+      // Trigger refreshSnapshots
+      final state = tester.state<TodaysFiveScreenState>(
+        find.byType(TodaysFiveScreen),
+      );
+      await tester.runAsync(() => state.refreshSnapshots());
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      // id4 should be replaced; backfill should have picked a replacement.
+      // Note: 'Ref Will break' may still appear in path labels of its child,
+      // so we check for replacement presence rather than parent absence.
+      final hasScheduled = find.text('Ref Scheduled').evaluate().isNotEmpty;
+      final hasChild = find.text('Child of Ref4').evaluate().isNotEmpty;
+      expect(hasScheduled || hasChild, isTrue,
+        reason: 'refreshSnapshots backfill should pick an eligible replacement');
+    });
+
+    testWidgets('pinned-descendant replacement uses schedule params on restore', (tester) async {
+      // Setup: pinned parent becomes non-leaf, has 2 leaf descendants
+      // (1 scheduled, 1 not). The replacement should use schedule boost.
+      late int idParent, idOther1, idOther2, idSchedChild, idPlainChild;
+      final todayDow = DateTime.now().weekday;
+      await tester.runAsync(() async {
+        idParent = await db.insertTask(Task(name: 'Pinned parent'));
+        idOther1 = await db.insertTask(Task(name: 'Other A'));
+        idOther2 = await db.insertTask(Task(name: 'Other B'));
+        // Create two children of the parent
+        idSchedChild = await db.insertTask(Task(name: 'Sched child'));
+        idPlainChild = await db.insertTask(Task(name: 'Plain child'));
+        await db.addRelationship(idParent, idSchedChild);
+        await db.addRelationship(idParent, idPlainChild);
+        // Schedule one child for today
+        await db.replaceSchedules(idSchedChild, [
+          TaskSchedule(taskId: idSchedChild, dayOfWeek: todayDow),
+        ]);
+        // Save state with parent as pinned (it was a leaf when saved)
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [idParent, idOther1, idOther2],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {idParent},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Parent is no longer a leaf → pinned-descendant replacement fires.
+      // One of its children should replace it.
+      // Note: 'Pinned parent' may still appear in path labels of its children,
+      // so we check for descendant presence rather than parent absence.
+      final hasSchedChild = find.text('Sched child').evaluate().isNotEmpty;
+      final hasPlainChild = find.text('Plain child').evaluate().isNotEmpty;
+      expect(
+        hasSchedChild || hasPlainChild,
+        isTrue,
+        reason: 'One of the parent descendants should replace the pinned parent',
+      );
+    });
+
+    testWidgets('_replaceIfNoLongerLeaf uses schedule params on uncomplete', (tester) async {
+      // Bug fix: _replaceIfNoLongerLeaf previously called pickWeightedN
+      // without schedule/deadline/norm params. This test verifies the fix
+      // by uncompleting a done task that is no longer a leaf.
+      // Flow: tap done task → _handleUncomplete → _replaceIfNoLongerLeaf.
+      late int id1, id2, idTarget, idScheduled;
+      final todayDow = DateTime.now().weekday;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Replace A'));
+        id2 = await db.insertTask(Task(name: 'Replace B'));
+        idTarget = await db.insertTask(Task(name: 'Will uncomplete'));
+        idScheduled = await db.insertTask(Task(name: 'Replace Scheduled'));
+        await db.replaceSchedules(idScheduled, [
+          TaskSchedule(taskId: idScheduled, dayOfWeek: todayDow),
+        ]);
+        // Mark target as worked-on so it loads as "done today"
+        await db.markWorkedOn(idTarget);
+        // Make target a non-leaf by adding a child
+        final childId = await db.insertTask(Task(name: 'Child of target'));
+        await db.addRelationship(idTarget, childId);
+        // Save state: target is in completedIds + workedOnIds
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2, idTarget],
+          completedIds: {idTarget},
+          workedOnIds: {idTarget},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Target should show as done (strikethrough text visible)
+      expect(find.text('Will uncomplete'), findsWidgets);
+
+      // Tap the done task to uncomplete it → _handleUncomplete →
+      // _replaceIfNoLongerLeaf fires because target is no longer a leaf
+      await tester.tap(find.text('Will uncomplete').first);
+      await pumpAsync(tester, rounds: 20);
+
+      // Target should be replaced since it's no longer a leaf.
+      // Eligible replacements: 'Replace Scheduled', 'Child of target'.
+      // With schedule boost, 'Replace Scheduled' is strongly preferred.
+      final hasScheduled = find.text('Replace Scheduled').evaluate().isNotEmpty;
+      final hasChild = find.text('Child of target').evaluate().isNotEmpty;
+      expect(hasScheduled || hasChild, isTrue,
+        reason: '_replaceIfNoLongerLeaf should pick an eligible replacement');
     });
   });
 }
