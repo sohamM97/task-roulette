@@ -16,7 +16,7 @@ Merge the current branch's PR after verifying CI and review comments.
 1. Identify the PR — use `$ARGUMENTS` if provided, otherwise run `gh pr view --json number` from the current branch.
 2. Launch **two background agents in parallel**:
    - **CI agent:** Run `gh pr checks` and wait for **all** checks to pass (including `analyze-and-test`, `claude-review`, and any other checks). If any check is still pending, poll every 30 seconds (up to 5 minutes). If a check fails, stop and report the failure. Checks with status `skipping` can be ignored.
-   - **Review comments agent:** Check all three comment endpoints for comments from **any bot** (Codex, Claude, or other reviewers):
+   - **Review comments agent:** Check all three comment endpoints for comments from **any bot** (Codex, Claude, or other reviewers) **on this specific PR number only** — do NOT look at GitHub Actions run history or other PRs:
      - `gh api repos/{owner}/{repo}/issues/{number}/comments` — where Codex posts review summaries
      - `gh api repos/{owner}/{repo}/pulls/{number}/comments` — inline review comments (both Codex and Claude post here)
      - `gh api repos/{owner}/{repo}/pulls/{number}/reviews` — review bodies

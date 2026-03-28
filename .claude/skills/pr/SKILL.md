@@ -20,7 +20,11 @@ Create a PR from the current branch to the target branch.
 7. Draft a PR title (short, under 70 chars) and body summarizing all commits — not just the latest.
 8. Create the PR using `gh pr create` with a HEREDOC body. Target branch is `$ARGUMENTS` if provided, otherwise `main`.
 9. Report the PR URL.
+
+<!-- DISABLED: Claude Code Review CI action now runs automatically on every PR.
+     Re-enable this step if the CI review bot stops working.
 10. **Review recommendation:** Assess whether `/review` (in a fresh session) would be valuable for this PR. Suggest it with a rationale when: the changeset is large (10+ files or 200+ lines), touches architectural patterns (providers, DB schema, sync flow), involves security-sensitive code, or has complex logic prone to subtle bugs. Always include the exact command with PR number, e.g. `/review 50`. Skip the suggestion for small/focused changes, straightforward UI tweaks, or well-tested behavior — just say the user can merge directly.
+-->
 
 ## Rules
 
