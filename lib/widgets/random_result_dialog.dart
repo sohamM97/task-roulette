@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/task.dart';
+import '../utils/display_utils.dart';
 
 enum RandomResultAction { goDeeper, goToTask, pickAnother }
 
@@ -18,7 +19,7 @@ class RandomResultDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Random Pick'),
+      title: const Text('Lucky Pick'),
       content: Text(
         task.name,
         style: Theme.of(context).textTheme.headlineSmall,
@@ -30,8 +31,8 @@ class RandomResultDialog extends StatelessWidget {
             if (canPickAnother)
               IconButton(
                 onPressed: () => Navigator.pop(context, RandomResultAction.pickAnother),
-                icon: const Icon(Icons.shuffle),
-                tooltip: 'Pick Another',
+                icon: const Icon(spinIcon),
+                tooltip: 'Spin Again',
               ),
             if (hasChildren)
               IconButton(

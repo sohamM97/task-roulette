@@ -190,7 +190,7 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      expect(find.byIcon(Icons.shuffle), findsOneWidget);
+      expect(find.byTooltip('Spin'), findsOneWidget);
     });
 
     testWidgets('navigate button calls onNavigateToTask', (tester) async {
@@ -254,7 +254,7 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      final refreshFinder = find.byIcon(Icons.refresh);
+      final refreshFinder = find.byTooltip('Reroll all');
       expect(refreshFinder, findsOneWidget);
 
       await tester.tap(refreshFinder);
@@ -262,9 +262,9 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
       }
 
-      expect(find.text('New set?'), findsOneWidget);
+      expect(find.text('Reroll all?'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
-      expect(find.text('Replace'), findsOneWidget);
+      expect(find.text('Reroll'), findsOneWidget);
     });
 
     testWidgets('restores state from DB on reload', (tester) async {
@@ -1055,11 +1055,11 @@ void main() {
       await pumpAndLoad(tester, buildTestWidget());
 
       // Trigger "New set"
-      await tester.tap(find.byIcon(Icons.refresh));
+      await tester.tap(find.byTooltip('Reroll all'));
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
-      await tester.tap(find.text('Replace'));
+      await tester.tap(find.text('Reroll'));
       await pumpAsync(tester, rounds: 30);
 
       // No deadline task should be auto-pinned
@@ -1709,6 +1709,69 @@ void main() {
       // At most 4 reserved + 1 general (which could be any of the 5 scheduled)
       // so all 5 may appear, but only 4 were reserved — total is still 5
       expect(count, equals(5));
+    });
+  });
+
+  group('Roulette terminology', () {
+    testWidgets('swap bottom sheet shows Roulette spin and Place your bet', (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Swap me'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Tap the spin/swap button (tooltip: 'Spin')
+      final spinButton = find.byTooltip('Spin');
+      expect(spinButton, findsOneWidget);
+      await tester.tap(spinButton);
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      expect(find.text('Roulette spin'), findsOneWidget);
+      expect(find.text('Spin the wheel for a new task'), findsOneWidget);
+      expect(find.text('Place your bet'), findsOneWidget);
+      expect(find.text('Hand-pick a task for this slot'), findsOneWidget);
+    });
+
+    testWidgets('respin pinned task dialog shows reroll text', (tester) async {
+      late int id1, id2;
+      await tester.runAsync(() async {
+        id1 = await db.insertTask(Task(name: 'Pinned task'));
+        id2 = await db.insertTask(Task(name: 'Other task'));
+        await db.saveTodaysFiveState(
+          date: _todayKey(),
+          taskIds: [id1, id2],
+          completedIds: {},
+          workedOnIds: {},
+          pinnedIds: {id1},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Find the spin button for the pinned task — there should be at least one
+      final spinButtons = find.byTooltip('Spin');
+      expect(spinButtons, findsAtLeastNWidgets(1));
+
+      // Tap the first spin button (pinned task)
+      await tester.tap(spinButtons.first);
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      // Bottom sheet should show "This task was manually pinned." banner
+      expect(find.text('This task was manually pinned.'), findsOneWidget);
+
+      // Tap "Roulette spin" to trigger the unpin confirmation dialog
+      await tester.tap(find.text('Roulette spin'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      expect(find.text('Reroll pinned task?'), findsOneWidget);
+      expect(find.text('Reroll'), findsOneWidget);
+      expect(find.text('Cancel'), findsOneWidget);
     });
   });
 }

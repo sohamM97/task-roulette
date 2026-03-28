@@ -45,7 +45,7 @@ void main() {
         hasChildren: false,
       );
 
-      expect(find.text('Random Pick'), findsOneWidget);
+      expect(find.text('Lucky Pick'), findsOneWidget);
       expect(find.text('My Task'), findsOneWidget);
     });
 
@@ -111,17 +111,17 @@ void main() {
       expect(result, RandomResultAction.goToTask);
     });
 
-    testWidgets('shows Pick Another by default', (tester) async {
+    testWidgets('shows Spin Again by default', (tester) async {
       await showRandomDialog(
         tester,
         task: Task(name: 'Test'),
         hasChildren: false,
       );
 
-      expect(find.byTooltip('Pick Another'), findsOneWidget);
+      expect(find.byTooltip('Spin Again'), findsOneWidget);
     });
 
-    testWidgets('hides Pick Another when canPickAnother is false',
+    testWidgets('hides Spin Again when canPickAnother is false',
         (tester) async {
       await showRandomDialog(
         tester,
@@ -130,10 +130,10 @@ void main() {
         canPickAnother: false,
       );
 
-      expect(find.byTooltip('Pick Another'), findsNothing);
+      expect(find.byTooltip('Spin Again'), findsNothing);
     });
 
-    testWidgets('Pick Another returns pickAnother', (tester) async {
+    testWidgets('Spin Again returns pickAnother', (tester) async {
       RandomResultAction? result;
       await tester.pumpWidget(
         MaterialApp(
@@ -158,7 +158,7 @@ void main() {
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('Pick Another'));
+      await tester.tap(find.byTooltip('Spin Again'));
       await tester.pumpAndSettle();
 
       expect(result, RandomResultAction.pickAnother);
@@ -205,7 +205,7 @@ void main() {
       await tester.tapAt(const Offset(10, 10));
       await tester.pumpAndSettle();
 
-      expect(find.text('Random Pick'), findsNothing);
+      expect(find.text('Lucky Pick'), findsNothing);
     });
   });
 

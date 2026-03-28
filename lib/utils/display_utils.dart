@@ -11,6 +11,9 @@ const IconData deadlineIcon = Icons.schedule;
 /// Icon for "scheduled today" indicators on task cards.
 const IconData scheduledTodayIcon = Icons.event_available;
 
+/// Icon for roulette spin / random task selection actions.
+const IconData spinIcon = Icons.loop;
+
 /// Returns the deadline icon color based on days until deadline.
 /// Used by task cards, Today's 5, and schedule dialog.
 Color deadlineProximityColor(int daysUntil, ColorScheme colorScheme) {

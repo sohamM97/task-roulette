@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../data/database_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../utils/display_utils.dart';
@@ -25,6 +26,8 @@ class StarredScreenState extends State<StarredScreen>
   List<Task> _starredTasks = [];
   /// taskId → tree preview data
   Map<int, ({List<({Task child, List<Task> grandchildren, int totalGrandchildren})> children, int totalChildren})> _treeData = {};
+  /// childId → (blockerId, blockerName) for blocked children across all starred tasks
+  Map<int, ({int blockerId, String blockerName})> _blockedInfo = {};
   bool _loading = true;
   TaskProvider? _provider;
   Timer? _debounce;
@@ -57,13 +60,15 @@ class StarredScreenState extends State<StarredScreen>
     final provider = context.read<TaskProvider>();
     final starred = await provider.getStarredTasks();
 
-    // Load tree preview data for all starred tasks in parallel
+    // Load tree preview data and blocked info for all starred tasks in parallel
+    final allChildIds = <int>[];
     final treeEntries = await Future.wait(starred.map((task) async {
       final children = await provider.getChildren(task.id!);
       final allActive = children
           .where((c) => c.completedAt == null && c.skippedAt == null)
           .toList();
       final shownChildren = allActive.take(3).toList();
+      allChildIds.addAll(allActive.map((c) => c.id!));
 
       final childEntries = await Future.wait(shownChildren.map((child) async {
         final grandchildren = await provider.getChildren(child.id!);
@@ -81,10 +86,14 @@ class StarredScreenState extends State<StarredScreen>
     }));
     final treeData = Map.fromEntries(treeEntries);
 
+    // Fetch blocked info for all children across all starred tasks
+    final blockedInfo = await DatabaseHelper().getBlockedTaskInfo(allChildIds);
+
     if (!mounted) return;
     setState(() {
       _starredTasks = starred;
       _treeData = treeData;
+      _blockedInfo = blockedInfo;
       _loading = false;
     });
   }
@@ -291,6 +300,7 @@ class StarredScreenState extends State<StarredScreen>
             task: task,
             tree: treeInfo?.children ?? [],
             totalChildren: treeInfo?.totalChildren ?? 0,
+            blockedInfo: _blockedInfo,
             onTap: () {
               if ((treeInfo?.totalChildren ?? 0) == 0) {
                 widget.onNavigateToTask?.call(task);
@@ -333,10 +343,39 @@ Color _accentColor(BuildContext context, int taskId) {
   return accents[taskId % accents.length];
 }
 
+/// Returns a priority- and blocked-aware text style for task children in starred views.
+/// Blocked tasks get dimmed; high-priority tasks get a subtle accent tint + bold;
+/// normal tasks use baseColor. Used by both tree preview and expanded dialog.
+@visibleForTesting
+TextStyle childTextStyle({
+  required Task task,
+  required Color baseColor,
+  required Color accent,
+  required double fontSize,
+  bool isBlocked = false,
+}) {
+  if (isBlocked) {
+    return TextStyle(
+      fontSize: fontSize,
+      color: baseColor.withAlpha(100),
+      height: 1.3,
+    );
+  }
+  return TextStyle(
+    fontSize: fontSize,
+    color: task.isHighPriority
+        ? Color.lerp(baseColor, accent, 0.5)!
+        : baseColor,
+    fontWeight: task.isHighPriority ? FontWeight.w600 : null,
+    height: 1.3,
+  );
+}
+
 class _StarredTaskCard extends StatelessWidget {
   final Task task;
   final List<({Task child, List<Task> grandchildren, int totalGrandchildren})> tree;
   final int totalChildren;
+  final Map<int, ({int blockerId, String blockerName})> blockedInfo;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
   final int index;
@@ -346,6 +385,7 @@ class _StarredTaskCard extends StatelessWidget {
     required this.task,
     required this.tree,
     required this.totalChildren,
+    required this.blockedInfo,
     required this.onTap,
     required this.onLongPress,
     required this.index,
@@ -388,7 +428,7 @@ class _StarredTaskCard extends StatelessWidget {
         child: IntrinsicHeight(
           child: Row(
             children: [
-              // Accent bar — thicker, the card's identity
+              // Accent bar — the card's identity
               Container(
                 width: 5,
                 decoration: BoxDecoration(
@@ -484,13 +524,21 @@ class _StarredTaskCard extends StatelessWidget {
     for (var i = 0; i < tree.length; i++) {
       final item = tree[i];
       final isLastChild = i == tree.length - 1 && moreChildren == 0;
+      final isBlocked = blockedInfo.containsKey(item.child.id);
       rows.add(_TreeRow(
         indent: 0,
         lineColor: lineColor,
         isLast: isLastChild,
+        highlight: item.child.isHighPriority,
         child: Text(
           item.child.name,
-          style: TextStyle(fontSize: 14, color: childColor, height: 1.3),
+          style: childTextStyle(
+            task: item.child,
+            baseColor: childColor,
+            accent: accent,
+            fontSize: 14,
+            isBlocked: isBlocked,
+          ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -560,6 +608,7 @@ class _TreeRow extends StatelessWidget {
   final Color lineColor;
   final bool isLast;
   final bool parentIsLast;
+  final bool highlight;
   final Widget child;
 
   static const double _indentWidth = 14.0;
@@ -570,6 +619,7 @@ class _TreeRow extends StatelessWidget {
     required this.lineColor,
     required this.isLast,
     this.parentIsLast = false,
+    this.highlight = false,
     required this.child,
   });
 
@@ -691,6 +741,8 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
   final Set<int> _expanded = {};
   /// Cache loaded children per task ID.
   final Map<int, List<_TreeNode>> _childrenCache = {};
+  /// IDs of tasks that are blocked by a dependency.
+  final Set<int> _blockedIds = {};
   bool _loading = true;
 
   @override
@@ -717,6 +769,11 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     final active = children
         .where((c) => c.completedAt == null && c.skippedAt == null)
         .toList();
+
+    // Fetch blocked info for these children
+    final childIds = active.map((c) => c.id!).toList();
+    final blockedInfo = await DatabaseHelper().getBlockedTaskInfo(childIds);
+    _blockedIds.addAll(blockedInfo.keys);
 
     final nodes = <_TreeNode>[];
     for (var i = 0; i < active.length; i++) {
@@ -890,9 +947,12 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                             index, node.depth, ancestorIsLast);
                         final isExpanded = _expanded.contains(taskId);
 
+                        final isBlocked = _blockedIds.contains(taskId);
                         return _ExpandedTreeRow(
                           node: node,
                           lineColor: lineColor,
+                          accent: widget.accent,
+                          isBlocked: isBlocked,
                           textColor: onSurface.withAlpha(
                               191 - (node.depth * 15).clamp(0, 60)),
                           ancestorIsLast: ancestorIsLast,
@@ -948,21 +1008,25 @@ class _TreeNode {
 class _ExpandedTreeRow extends StatelessWidget {
   final _TreeNode node;
   final Color lineColor;
+  final Color accent;
   final Color textColor;
   final List<bool> ancestorIsLast;
   final bool isExpanded;
+  final bool isBlocked;
   final VoidCallback onNavigate;
   final VoidCallback? onToggleExpand;
 
-  static const double _indentWidth = 20.0;
+  static const double _indentWidth = 16.0;
   static const double _rowHeight = 45.0;
 
   const _ExpandedTreeRow({
     required this.node,
     required this.lineColor,
+    required this.accent,
     required this.textColor,
     required this.ancestorIsLast,
     required this.isExpanded,
+    this.isBlocked = false,
     required this.onNavigate,
     this.onToggleExpand,
   });
@@ -1001,10 +1065,10 @@ class _ExpandedTreeRow extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
               child: Padding(
                 padding:
-                    const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                    const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
                 child: Row(
                   children: [
-                    // Chevron for non-leaf nodes
+                    // Chevron for non-leaf nodes; spacer for leaves to align names
                     if (!isLeaf) ...[
                       Icon(
                         isExpanded
@@ -1014,14 +1078,17 @@ class _ExpandedTreeRow extends StatelessWidget {
                         color: textColor.withAlpha(150),
                       ),
                       const SizedBox(width: 4),
-                    ],
+                    ] else
+                      const SizedBox(width: 22), // 18 (icon) + 4 (gap)
                     Expanded(
                       child: Text(
                         node.task.name,
-                        style: TextStyle(
+                        style: childTextStyle(
+                          task: node.task,
+                          baseColor: textColor,
+                          accent: accent,
                           fontSize: 17,
-                          color: textColor,
-                          height: 1.3,
+                          isBlocked: isBlocked,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
