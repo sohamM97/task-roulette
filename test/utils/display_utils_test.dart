@@ -598,4 +598,117 @@ void main() {
       expect(result, isNull);
     });
   });
+
+  group('confirmDependentUnblock', () {
+    testWidgets('returns true immediately when dependentNames is empty', (tester) async {
+      // No dialog should appear when there are no dependents to unblock.
+      late bool result;
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () async {
+              result = await confirmDependentUnblock(context, 'Task A', []);
+            },
+            child: const Text('Trigger'),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Trigger'));
+      await tester.pump();
+
+      expect(result, isTrue);
+      // No dialog should have appeared
+      expect(find.text('Unblock waiting tasks?'), findsNothing);
+    });
+
+    testWidgets('shows confirmation dialog with dependent names', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () async {
+              await confirmDependentUnblock(context, 'Blocker', ['Dep A', 'Dep B']);
+            },
+            child: const Text('Trigger'),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Trigger'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Unblock waiting tasks?'), findsOneWidget);
+      expect(find.textContaining('Dep A'), findsOneWidget);
+      expect(find.textContaining('Dep B'), findsOneWidget);
+      expect(find.text('Cancel'), findsOneWidget);
+      expect(find.text('Complete'), findsOneWidget);
+    });
+
+    testWidgets('returns true when user taps Complete', (tester) async {
+      late bool result;
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () async {
+              result = await confirmDependentUnblock(context, 'Blocker', ['Dep A']);
+            },
+            child: const Text('Trigger'),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Trigger'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Complete'));
+      await tester.pumpAndSettle();
+
+      expect(result, isTrue);
+    });
+
+    testWidgets('returns false when user taps Cancel', (tester) async {
+      late bool result;
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () async {
+              result = await confirmDependentUnblock(context, 'Blocker', ['Dep A']);
+            },
+            child: const Text('Trigger'),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Trigger'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(result, isFalse);
+    });
+
+    testWidgets('returns false when dialog is dismissed by tapping outside', (tester) async {
+      late bool result;
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () async {
+              result = await confirmDependentUnblock(context, 'Blocker', ['Dep A']);
+            },
+            child: const Text('Trigger'),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Trigger'));
+      await tester.pumpAndSettle();
+
+      // Tap outside the dialog to dismiss
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+
+      expect(result, isFalse);
+    });
+  });
 }

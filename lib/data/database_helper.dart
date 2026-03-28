@@ -461,6 +461,44 @@ class DatabaseHelper {
     'sync_status': 'pending',
   };
 
+  /// Enqueues sync_queue entries for dependency add/remove operations.
+  /// Used by completeTask/skipTask (remove) and uncompleteTask/unskipTask (add)
+  /// to ensure dependency mutations propagate to Firestore.
+  Future<void> _enqueueDependencySyncEntries(
+    dynamic txn,
+    List<({int taskId, int dependsOnId})> deps,
+    String action,
+  ) async {
+    // Collect all unique task IDs to look up sync_ids in one query.
+    final allIds = <int>{};
+    for (final dep in deps) {
+      allIds.add(dep.taskId);
+      allIds.add(dep.dependsOnId);
+    }
+    final placeholders = List.filled(allIds.length, '?').join(',');
+    final rows = await txn.rawQuery(
+      'SELECT id, sync_id FROM tasks WHERE id IN ($placeholders)',
+      allIds.toList(),
+    );
+    final syncIds = <int, String>{};
+    for (final r in rows) {
+      final sid = r['sync_id'] as String?;
+      if (sid != null) syncIds[r['id'] as int] = sid;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    for (final dep in deps) {
+      if (syncIds.containsKey(dep.taskId) && syncIds.containsKey(dep.dependsOnId)) {
+        await txn.insert('sync_queue', {
+          'entity_type': 'dependency',
+          'action': action,
+          'key1': syncIds[dep.taskId],
+          'key2': syncIds[dep.dependsOnId],
+          'created_at': now,
+        });
+      }
+    }
+  }
+
   /// Shared conversion: maps DB rows to Task objects.
   static List<Task> _tasksFromMaps(List<Map<String, Object?>> maps) {
     return maps.map((m) => Task.fromMap(m)).toList();
@@ -1326,31 +1364,37 @@ class DatabaseHelper {
   /// dependency rows for undo support.
   Future<List<({int taskId, int dependsOnId})>> completeTask(int taskId) async {
     final db = await database;
-    // Capture dependencies that will be removed (for undo support).
-    final depRows = await db.query(
-      'task_dependencies',
-      where: 'depends_on_id = ?',
-      whereArgs: [taskId],
-    );
-    final removedDeps = depRows
-        .map((r) => (taskId: r['task_id'] as int, dependsOnId: r['depends_on_id'] as int))
-        .toList();
-
-    await db.update(
-      'tasks',
-      {'completed_at': DateTime.now().millisecondsSinceEpoch, ..._dirtyFields()},
-      where: 'id = ?',
-      whereArgs: [taskId],
-    );
-    // Remove dependency links — completed task no longer blocks dependents.
-    if (removedDeps.isNotEmpty) {
-      await db.delete(
+    return db.transaction((txn) async {
+      // Capture dependencies that will be removed (for undo support).
+      final depRows = await txn.query(
         'task_dependencies',
         where: 'depends_on_id = ?',
         whereArgs: [taskId],
       );
-    }
-    return removedDeps;
+      final removedDeps = depRows
+          .map((r) => (taskId: r['task_id'] as int, dependsOnId: r['depends_on_id'] as int))
+          .toList();
+
+      await txn.update(
+        'tasks',
+        {'completed_at': DateTime.now().millisecondsSinceEpoch, ..._dirtyFields()},
+        where: 'id = ?',
+        whereArgs: [taskId],
+      );
+      // Remove dependency links — completed task no longer blocks dependents.
+      // Bug fix: also enqueue sync_queue entries so removals propagate to Firestore.
+      // Before fix: deps were deleted locally but never synced, causing remote to
+      // reintroduce them on next pull.
+      if (removedDeps.isNotEmpty) {
+        await txn.delete(
+          'task_dependencies',
+          where: 'depends_on_id = ?',
+          whereArgs: [taskId],
+        );
+        await _enqueueDependencySyncEntries(txn, removedDeps, 'remove');
+      }
+      return removedDeps;
+    });
   }
 
   /// Marks a task as skipped by setting skipped_at to now.
@@ -1358,30 +1402,34 @@ class DatabaseHelper {
   /// completeTask). Returns removed deps for undo support.
   Future<List<({int taskId, int dependsOnId})>> skipTask(int taskId) async {
     final db = await database;
-    final depRows = await db.query(
-      'task_dependencies',
-      where: 'depends_on_id = ?',
-      whereArgs: [taskId],
-    );
-    final removedDeps = depRows
-        .map((r) => (taskId: r['task_id'] as int, dependsOnId: r['depends_on_id'] as int))
-        .toList();
-
-    await db.update(
-      'tasks',
-      {'skipped_at': DateTime.now().millisecondsSinceEpoch, ..._dirtyFields()},
-      where: 'id = ?',
-      whereArgs: [taskId],
-    );
-    // Remove dependency links — skipped task no longer blocks dependents.
-    if (removedDeps.isNotEmpty) {
-      await db.delete(
+    return db.transaction((txn) async {
+      final depRows = await txn.query(
         'task_dependencies',
         where: 'depends_on_id = ?',
         whereArgs: [taskId],
       );
-    }
-    return removedDeps;
+      final removedDeps = depRows
+          .map((r) => (taskId: r['task_id'] as int, dependsOnId: r['depends_on_id'] as int))
+          .toList();
+
+      await txn.update(
+        'tasks',
+        {'skipped_at': DateTime.now().millisecondsSinceEpoch, ..._dirtyFields()},
+        where: 'id = ?',
+        whereArgs: [taskId],
+      );
+      // Remove dependency links — skipped task no longer blocks dependents.
+      // Bug fix: enqueue sync_queue entries so removals propagate to Firestore.
+      if (removedDeps.isNotEmpty) {
+        await txn.delete(
+          'task_dependencies',
+          where: 'depends_on_id = ?',
+          whereArgs: [taskId],
+        );
+        await _enqueueDependencySyncEntries(txn, removedDeps, 'remove');
+      }
+      return removedDeps;
+    });
   }
 
   /// Un-skips a task by clearing skipped_at.
@@ -1390,18 +1438,25 @@ class DatabaseHelper {
     List<({int taskId, int dependsOnId})> restoredDeps = const [],
   }) async {
     final db = await database;
-    await db.update(
-      'tasks',
-      {'skipped_at': null, ..._dirtyFields()},
-      where: 'id = ?',
-      whereArgs: [taskId],
-    );
-    for (final dep in restoredDeps) {
-      await db.insert('task_dependencies', {
-        'task_id': dep.taskId,
-        'depends_on_id': dep.dependsOnId,
-      }, conflictAlgorithm: ConflictAlgorithm.ignore);
-    }
+    await db.transaction((txn) async {
+      await txn.update(
+        'tasks',
+        {'skipped_at': null, ..._dirtyFields()},
+        where: 'id = ?',
+        whereArgs: [taskId],
+      );
+      // Bug fix: enqueue sync_queue 'add' entries so restored deps propagate to
+      // Firestore. Before fix: restored deps stayed local-only.
+      for (final dep in restoredDeps) {
+        await txn.insert('task_dependencies', {
+          'task_id': dep.taskId,
+          'depends_on_id': dep.dependsOnId,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+      if (restoredDeps.isNotEmpty) {
+        await _enqueueDependencySyncEntries(txn, restoredDeps, 'add');
+      }
+    });
   }
 
   /// Un-completes a task by clearing completed_at.
@@ -1410,20 +1465,27 @@ class DatabaseHelper {
     List<({int taskId, int dependsOnId})> restoredDeps = const [],
   }) async {
     final db = await database;
-    await db.update(
-      'tasks',
-      {'completed_at': null, ..._dirtyFields()},
-      where: 'id = ?',
-      whereArgs: [taskId],
-    );
-    // Restore dependency links that were removed when the task was completed.
-    for (final dep in restoredDeps) {
-      await db.insert(
-        'task_dependencies',
-        {'task_id': dep.taskId, 'depends_on_id': dep.dependsOnId},
-        conflictAlgorithm: ConflictAlgorithm.ignore,
+    await db.transaction((txn) async {
+      await txn.update(
+        'tasks',
+        {'completed_at': null, ..._dirtyFields()},
+        where: 'id = ?',
+        whereArgs: [taskId],
       );
-    }
+      // Restore dependency links that were removed when the task was completed.
+      // Bug fix: enqueue sync_queue 'add' entries so restored deps propagate to
+      // Firestore. Before fix: restored deps stayed local-only.
+      for (final dep in restoredDeps) {
+        await txn.insert(
+          'task_dependencies',
+          {'task_id': dep.taskId, 'depends_on_id': dep.dependsOnId},
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+      if (restoredDeps.isNotEmpty) {
+        await _enqueueDependencySyncEntries(txn, restoredDeps, 'add');
+      }
+    });
   }
 
   /// Deletes a task and returns its relationships and schedules for undo support.

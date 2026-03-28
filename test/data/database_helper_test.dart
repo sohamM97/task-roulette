@@ -435,6 +435,62 @@ void main() {
       expect(names, equals(['Active Dep']));
     });
 
+    test('skipTask removes dependency links where task was blocker', () async {
+      // Bug fix: skipping a blocker should free its dependents by removing
+      // the dependency rows, same as completeTask.
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep1 = await db.insertTask(Task(name: 'Dependent 1'));
+      final dep2 = await db.insertTask(Task(name: 'Dependent 2'));
+      await db.addDependency(dep1, blocker);
+      await db.addDependency(dep2, blocker);
+
+      final removedDeps = await db.skipTask(blocker);
+
+      // Dependency rows should be removed
+      expect(await db.getDependencies(dep1), isEmpty);
+      expect(await db.getDependencies(dep2), isEmpty);
+      // Removed deps returned for undo support
+      expect(removedDeps, hasLength(2));
+      expect(removedDeps.map((d) => d.taskId).toSet(), {dep1, dep2});
+    });
+
+    test('skipTask returns empty list when task has no dependents', () async {
+      final task = await db.insertTask(Task(name: 'No deps'));
+      final removedDeps = await db.skipTask(task);
+      expect(removedDeps, isEmpty);
+      // Task should still be skipped
+      final dbTask = await db.getTaskById(task);
+      expect(dbTask!.isSkipped, isTrue);
+    });
+
+    test('unskipTask restores dependency links when restoredDeps provided', () async {
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep = await db.insertTask(Task(name: 'Dependent'));
+      await db.addDependency(dep, blocker);
+
+      // Skip removes deps
+      final removedDeps = await db.skipTask(blocker);
+      expect(await db.getDependencies(dep), isEmpty);
+
+      // Unskip with restoredDeps restores them
+      await db.unskipTask(blocker, restoredDeps: removedDeps);
+      final deps = await db.getDependencies(dep);
+      expect(deps, hasLength(1));
+      expect(deps.first.id, blocker);
+    });
+
+    test('unskipTask without restoredDeps does not restore deps', () async {
+      // Restore-from-archive path: deps intentionally not restored
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep = await db.insertTask(Task(name: 'Dependent'));
+      await db.addDependency(dep, blocker);
+
+      await db.skipTask(blocker);
+      await db.unskipTask(blocker); // no restoredDeps
+
+      expect(await db.getDependencies(dep), isEmpty);
+    });
+
     test('completeTask returns empty list when task has no dependents', () async {
       final task = await db.insertTask(Task(name: 'No deps'));
       final removedDeps = await db.completeTask(task);
