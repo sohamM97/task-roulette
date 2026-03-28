@@ -50,8 +50,9 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 ## Skills & Hooks
 
 - Skills in `.claude/skills/` are auto-invokable — **always use the relevant skill** instead of doing things manually (e.g. `/commit` instead of raw git commands, `/feature` instead of manual branch creation).
-- `/code-review` and `/sec-review` have `disable-model-invocation: true` — **always run in a fresh session**.
-- `/code-review-fix` and `/sec-review-fix` — can run in any session **except** the one where the corresponding review was run.
+- `/full-code-review` and `/sec-review` have `disable-model-invocation: true` — **always run in a fresh session**.
+- `/full-code-review-fix` and `/sec-review-fix` — can run in any session **except** the one where the corresponding review was run.
+- `code-review` (without prefix) is reserved for the CI marketplace plugin (`claude-code-action`) — do NOT create a local skill with that name.
 - Hooks in `.claude/hooks/` enforce guardrails automatically (analyze before commit, confirm before tag/merge/install, block `flutter run` without `-d linux`, auto-inject `--dart-define` for APK builds).
 
 ## Development Preferences
