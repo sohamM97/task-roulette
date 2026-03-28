@@ -23,7 +23,8 @@ Reference for manual test instructions. Use these names consistently.
 - **Task list** — hierarchical list. Shows children of the current parent. Root level shows top-level tasks + Inbox.
 - **Inbox section** — collapsible section at top showing unorganized tasks.
 - **Leaf detail view** — appears when navigating into a leaf task (a task with no children). Shows task name, "Done today" button, "Done for good!" button, "Start"/"Started" toggle, priority selector, schedule/deadline info, dependencies, parent breadcrumbs. This is NOT the same as the Today's 5 bottom sheet.
-  - **Dependency icon (hourglass)** — shown when the task has a dependency. The icon is **present only while the task is actively blocked** (blocker not yet completed/skipped). Once the blocker is completed or skipped, the hourglass icon **disappears entirely** — it does NOT grey out or remain visible.
+  - **"Do after..." icon (add_task)** — shown when the task has **no** dependency. **Tap** opens the "Do X after..." picker dialog to add a dependency.
+  - **Dependency icon (hourglass)** — replaces the "Do after..." icon when the task has a dependency. **Tap** navigates to the blocker task. **Long-press** opens the "Do X after..." picker dialog to change or remove the dependency. Color behavior: **primary color** when actively blocked, **greyed out** when the blocker is no longer blocking (e.g. marked "Done today"). When the blocker is completed ("Done for good") or skipped, the dependency row is deleted from the DB, so the hourglass **disappears entirely**.
 - **"Done today" button** — filled purple button on the leaf detail view. Marks the task as worked on.
 - **"Worked on today" button** — outlined button that replaces "Done today" after marking. Acts as undo for the worked-on status.
 

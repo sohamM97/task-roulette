@@ -4,7 +4,7 @@ Last updated: 2026-03-28
 
 ## Summary
 
-~1065 tests across 27 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
+~1066 tests across 27 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
 
 ## Covered
 
@@ -35,7 +35,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 - **test/services/firestore_service_test.dart** (~34 tests) — `taskToFirestoreFields` (all fields), `taskFromFirestoreDoc` (parsing, sync_id extraction), relationship doc parsing, **deadline** (include/omit in Firestore fields, parse from doc, reject >10 chars, round-trip), **deadline type** (`deadline_type` include/omit, parse, default, round-trip), **starred fields** (is_starred/star_order serialization, omission when false/null, parsing, defaults).
 
 ### Widgets (good)
-- **test/widgets/task_picker_dialog_test.dart** (~18 tests) — Priority sorting (tiers), preserved relative order, search filtering, parent context, search ranking (name matches before context-only matches, stable order within tiers, interaction with priority tiers), **headerAction** (shown when provided, hidden during search, absent when not provided).
+- **test/widgets/task_picker_dialog_test.dart** (~19 tests) — Priority sorting (tiers), preserved relative order, search filtering, parent context, search ranking (name matches before context-only matches, stable order within tiers, interaction with priority tiers), **headerAction** (shown when provided, hidden during search, absent when not provided, **remove dependency long-name overflow fix** — Expanded wraps Text in Row, ellipsis+maxLines).
 - **test/widgets/leaf_task_detail_test.dart** (~52 tests) — Name display, rename, URL icon states, Done/Skip buttons, Start/Stop buttons, priority/someday toggle icons and callbacks, "Done today"/"Worked on today" toggle, **dependency icon** (add_task vs hourglass, tap navigates to dependency, long-press opens edit picker, **isBlocked color**: primary when blocked, greyed out when resolved), **pin button** (pinned/unpinned/hidden), **"Done today" fallback** to onDone when onWorkedOn null, **formatTimeAgo** (days/minutes).
 - **test/widgets/pin_button_test.dart** (~15 tests) — Pin/unpin icons, tooltips, max-pins disabled, muted alpha, callbacks.
 - **test/widgets/small_widgets_test.dart** (~27 tests) — `EmptyState` (root/non-root), `DeleteTaskDialog` (cancel/keep-subtrees/delete-everything), `AddTaskDialog` (submit, empty/whitespace rejection, "Add multiple" with text preservation and trimming, pin toggle), `BrainDumpDialog` (line counting, whitespace trimming, submit, disabled state, initialText pre-fill).
