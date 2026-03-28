@@ -1015,7 +1015,7 @@ class _ExpandedTreeRow extends StatelessWidget {
   final VoidCallback onNavigate;
   final VoidCallback? onToggleExpand;
 
-  static const double _indentWidth = 20.0;
+  static const double _indentWidth = 16.0;
   static const double _rowHeight = 45.0;
 
   const _ExpandedTreeRow({
@@ -1064,10 +1064,10 @@ class _ExpandedTreeRow extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
               child: Padding(
                 padding:
-                    const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                    const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
                 child: Row(
                   children: [
-                    // Chevron for non-leaf nodes
+                    // Chevron for non-leaf nodes; spacer for leaves to align names
                     if (!isLeaf) ...[
                       Icon(
                         isExpanded
@@ -1077,7 +1077,8 @@ class _ExpandedTreeRow extends StatelessWidget {
                         color: textColor.withAlpha(150),
                       ),
                       const SizedBox(width: 4),
-                    ],
+                    ] else
+                      const SizedBox(width: 22), // 18 (icon) + 4 (gap)
                     Expanded(
                       child: Text(
                         node.task.name,
