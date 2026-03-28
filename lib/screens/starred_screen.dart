@@ -346,7 +346,8 @@ Color _accentColor(BuildContext context, int taskId) {
 /// Returns a priority- and blocked-aware text style for task children in starred views.
 /// Blocked tasks get dimmed; high-priority tasks get a subtle accent tint + bold;
 /// normal tasks use baseColor. Used by both tree preview and expanded dialog.
-TextStyle _childTextStyle({
+@visibleForTesting
+TextStyle childTextStyle({
   required Task task,
   required Color baseColor,
   required Color accent,
@@ -531,7 +532,7 @@ class _StarredTaskCard extends StatelessWidget {
         highlight: item.child.isHighPriority,
         child: Text(
           item.child.name,
-          style: _childTextStyle(
+          style: childTextStyle(
             task: item.child,
             baseColor: childColor,
             accent: accent,
@@ -1082,7 +1083,7 @@ class _ExpandedTreeRow extends StatelessWidget {
                     Expanded(
                       child: Text(
                         node.task.name,
-                        style: _childTextStyle(
+                        style: childTextStyle(
                           task: node.task,
                           baseColor: textColor,
                           accent: accent,
