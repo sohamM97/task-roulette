@@ -46,7 +46,7 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 
 ## Design Philosophy
 
-**Minimal cognitive load.** Every feature should reduce friction. Prefer sensible defaults over configuration. Avoid jargon like "DAG", "node", "parent" in UI — use natural alternatives like "listed under", "show under". Material 3 theming throughout.
+**Minimal cognitive load.** Every feature should reduce friction. Prefer sensible defaults over configuration. Avoid jargon like "DAG", "node", "parent" in UI — use natural alternatives like "listed under", "show under". Material 3 theming throughout. **Icons must be self-explanatory** — don't rely on tooltips to convey meaning, as they don't show on mobile.
 
 ## Skills & Hooks
 

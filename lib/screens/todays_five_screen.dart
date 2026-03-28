@@ -1278,7 +1278,33 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           if (_todaysTasks.any((t) =>
               !_completedIds.contains(t.id) && !_pinnedIds.contains(t.id)))
             IconButton(
-              icon: const Icon(Icons.casino_outlined),
+              icon: SizedBox(
+                width: 24,
+                height: 24,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned(
+                      left: -1,
+                      bottom: 0,
+                      child: Transform.rotate(
+                        angle: -0.3,
+                        child: Icon(Icons.casino_rounded, size: 16,
+                            color: Theme.of(context).colorScheme.onSurface.withAlpha(140)),
+                      ),
+                    ),
+                    Positioned(
+                      right: -1,
+                      top: 0,
+                      child: Transform.rotate(
+                        angle: 0.25,
+                        child: Icon(Icons.casino_rounded, size: 18,
+                            color: Theme.of(context).colorScheme.onSurface),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               onPressed: _confirmNewSet,
               tooltip: 'Respin all',
             ),
@@ -1628,7 +1654,33 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                 Icon(Icons.push_pin, size: 18, color: colorScheme.tertiary),
               if (!isDone)
                 IconButton(
-                  icon: const Icon(spinIcon, size: 18),
+                  icon: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Positioned(
+                          left: -1,
+                          bottom: 0,
+                          child: Transform.rotate(
+                            angle: -0.3,
+                            child: Icon(Icons.casino_outlined, size: 12,
+                                color: colorScheme.onSurface.withAlpha(140)),
+                          ),
+                        ),
+                        Positioned(
+                          right: -1,
+                          top: 0,
+                          child: Transform.rotate(
+                            angle: 0.25,
+                            child: Icon(Icons.casino_outlined, size: 14,
+                                color: colorScheme.onSurface),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   onPressed: () => _confirmSwapTask(index),
                   tooltip: 'Spin',
                   visualDensity: VisualDensity.compact,

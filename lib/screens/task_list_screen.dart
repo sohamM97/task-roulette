@@ -14,7 +14,7 @@ import '../widgets/brain_dump_dialog.dart';
 import '../widgets/completion_animation.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/leaf_task_detail.dart';
-import '../widgets/random_result_dialog.dart';
+import '../widgets/spotlight_overlay.dart';
 import '../widgets/task_card.dart';
 import '../utils/display_utils.dart';
 import '../widgets/delete_task_dialog.dart';
@@ -26,6 +26,27 @@ import '../widgets/profile_icon.dart';
 import 'completed_tasks_screen.dart';
 import 'dag_view_screen.dart';
 
+/// Data needed to render the spotlight overlay on top of the Scaffold.
+class SpotlightData {
+  final Rect cardRect;
+  final Widget cardContent;
+  final bool hasChildren;
+  final bool canPickAnother;
+  final Offset fabCenter;
+  final Task task;
+  final List<Task> allEligibleSiblings;
+
+  const SpotlightData({
+    required this.cardRect,
+    required this.cardContent,
+    required this.hasChildren,
+    required this.canPickAnother,
+    required this.fabCenter,
+    required this.task,
+    required this.allEligibleSiblings,
+  });
+}
+
 class TaskListScreen extends StatefulWidget {
   const TaskListScreen({super.key});
 
@@ -34,7 +55,7 @@ class TaskListScreen extends StatefulWidget {
 }
 
 class TaskListScreenState extends State<TaskListScreen>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, TickerProviderStateMixin {
   // Cached deps Future for the leaf detail view — avoids recreating on every
   // Consumer rebuild. Invalidated when dependency mutations occur.
   int? _leafDepsTaskId;
@@ -54,6 +75,20 @@ class TaskListScreenState extends State<TaskListScreen>
   int _inboxCount = 0;
   List<Task>? _inboxTasks;
   bool _inboxExpanded = true;
+
+  // Spotlight state
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _scrollViewKey = GlobalKey();
+  final GlobalKey _inboxKey = GlobalKey();
+  final GlobalKey _flareFabKey = GlobalKey();
+  // When non-null, the spotlight overlay is shown on top of the Scaffold.
+  SpotlightData? _spotlightData;
+  bool _autoSpotlightAfterBuild = false;
+  Set<int> _spinExcluded = {};
+  List<Task>? _spotlightSiblingPool;
+  Task? _spotlightNavigateTarget;
+  double? _lastConstraintWidth;
+  Offset? _lastFabCenter;
 
   @override
   bool get wantKeepAlive => true;
@@ -83,6 +118,7 @@ class TaskListScreenState extends State<TaskListScreen>
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _providerRef?.removeListener(_onProviderChanged);
     super.dispose();
   }
@@ -97,6 +133,15 @@ class TaskListScreenState extends State<TaskListScreen>
     final provider = _providerRef;
     if (provider != null && provider.isRoot) {
       _loadInboxTasks();
+    }
+
+    // Auto-spotlight after "Go Deeper" navigation — wait for grid to rebuild
+    // with new children before picking a random task to spotlight.
+    if (_autoSpotlightAfterBuild) {
+      _autoSpotlightAfterBuild = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _pickRandom();
+      });
     }
   }
 
@@ -898,90 +943,190 @@ class TaskListScreenState extends State<TaskListScreen>
       }
       return;
     }
-    await _showRandomResult(picked);
+    _spinExcluded = {picked.id!};
+    _spotlightSiblingPool = null;
+    _spotlightNavigateTarget = null;
+    await _showSpotlight(picked);
   }
 
-  Future<void> _showRandomResult(
-    Task task, {
-    Set<int>? excluded,
-    /// The pool of siblings for Pick Another. When null, uses provider.tasks.
-    /// Set by Go Deeper so Pick Another picks from the parent's children.
-    List<Task>? siblingPool,
-    /// The task to navigate into for Go to Task. When null, navigates into
-    /// [task] itself. Set by Go Deeper so Go to Task enters the parent.
-    Task? navigateTarget,
-  }) async {
+  Future<void> _showSpotlight(Task task) async {
+    // Capture FAB position before dismissing (which hides FABs via setState)
+    Offset fabCenter = Offset.zero;
+    final fabBox =
+        _flareFabKey.currentContext?.findRenderObject() as RenderBox?;
+    if (fabBox != null) {
+      fabCenter = fabBox.localToGlobal(
+        Offset(fabBox.size.width / 2, fabBox.size.height / 2),
+      );
+    }
+
+    _dismissSpotlight();
+
+    // If we didn't get FAB position (e.g. during Spin Again when FABs are
+    // already hidden), use the last known position.
+    if (fabCenter == Offset.zero && _lastFabCenter != null) {
+      fabCenter = _lastFabCenter!;
+    }
+    _lastFabCenter = fabCenter;
+
     final provider = context.read<TaskProvider>();
+    final gridTasks = provider.isRoot && _inboxCount > 0
+        ? provider.tasks.where((t) => !t.isInbox).toList()
+        : provider.tasks;
+
+    final index = gridTasks.indexWhere((t) => t.id == task.id);
+    if (index == -1) return;
+
+    final width = _lastConstraintWidth;
+    if (width == null) return;
+
+    final columns = _crossAxisCount(width);
+    final gridWidth = width - 16; // SingleChildScrollView padding (8 each side)
+    final cellWidth = (gridWidth - (columns - 1) * 8) / columns;
+    final cellHeight = cellWidth / _childAspectRatio(columns);
+    final row = index ~/ columns;
+    final col = index % columns;
+
+    // Measure inbox section height
+    double inboxHeight = 0;
+    if (provider.isRoot && _inboxCount > 0) {
+      final inboxBox =
+          _inboxKey.currentContext?.findRenderObject() as RenderBox?;
+      if (inboxBox != null) {
+        inboxHeight = inboxBox.size.height;
+      }
+    }
+
+    // Cell's local offset within the SingleChildScrollView's content
+    final cellTop = 8 + inboxHeight + row * (cellHeight + 8);
+    final cellLeft = 8 + col * (cellWidth + 8);
+
+    // Scroll the cell into view (centered in viewport)
+    if (_scrollController.hasClients) {
+      final viewportHeight = _scrollController.position.viewportDimension;
+      final targetScroll =
+          (cellTop - (viewportHeight - cellHeight) / 2).clamp(
+        0.0,
+        _scrollController.position.maxScrollExtent,
+      );
+      await _scrollController.animateTo(
+        targetScroll,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
+
+    if (!mounted) return;
+
+    // Compute global rect from scroll view's render box
+    final scrollBox =
+        _scrollViewKey.currentContext?.findRenderObject() as RenderBox?;
+    if (scrollBox == null) return;
+
+    final scrollOffset = _scrollController.offset;
+    final localOffset = Offset(cellLeft, cellTop - scrollOffset);
+    final globalTopLeft = scrollBox.localToGlobal(localOffset);
+    final cardRect = Rect.fromLTWH(
+      globalTopLeft.dx,
+      globalTopLeft.dy,
+      cellWidth,
+      cellHeight,
+    );
+
+    // Determine button states (has children, can pick another)
     final children = await provider.getChildren(task.id!);
     final childIds = children.map((c) => c.id!).toList();
     final blockedIds = await provider.getBlockedChildIds(childIds);
-    final eligible = children.where((c) => !blockedIds.contains(c.id)).toList();
+    final eligible =
+        children.where((c) => !blockedIds.contains(c.id)).toList();
 
-    // Use explicit sibling pool (from Go Deeper) or current view's tasks
-    final siblings = siblingPool ?? provider.tasks;
+    final siblings = _spotlightSiblingPool ?? gridTasks;
     final siblingIds = siblings.map((s) => s.id!).toList();
     final blockedSiblingIds = await provider.getBlockedChildIds(siblingIds);
-    final allEligibleSiblings = siblings.where(
-      (s) => s.id != task.id && !blockedSiblingIds.contains(s.id),
-    ).toList();
-    final eligibleSiblings = allEligibleSiblings.where(
-      (s) => !(excluded?.contains(s.id) ?? false),
-    ).toList();
+    final allEligibleSiblings = siblings
+        .where(
+            (s) => s.id != task.id && !blockedSiblingIds.contains(s.id))
+        .toList();
 
     if (!mounted) return;
 
-    final action = await showDialog<RandomResultAction>(
-      context: context,
-      builder: (_) => RandomResultDialog(
+    // Build a TaskCard replica for the spotlight (non-interactive)
+    final cardContent = IgnorePointer(
+      child: TaskCard(
         task: task,
-        hasChildren: eligible.isNotEmpty,
-        // Show button if there are other siblings at all (pool replenishes)
-        canPickAnother: allEligibleSiblings.isNotEmpty,
+        onTap: () {},
+        onDelete: () {},
+        isBlocked: provider.blockedTaskIds.contains(task.id),
+        blockedByName: provider.blockedByNames[task.id],
+        isInTodaysFive: _todaysFiveIds.contains(task.id),
+        isPinnedInTodaysFive:
+            _todays5PinnedIds?.contains(task.id) ?? false,
+        parentNames: (provider.parentNamesMap[task.id] ?? [])
+            .where((name) => name != provider.currentParent?.name)
+            .toList(),
+        effectiveDeadline: provider.effectiveDeadlines[task.id],
+        isScheduledToday: provider.scheduledTodayIds.contains(task.id),
+        isStarred: task.isStarred,
       ),
     );
 
-    if (!mounted) return;
+    setState(() {
+      _spotlightData = SpotlightData(
+        cardRect: cardRect,
+        cardContent: cardContent,
+        hasChildren: eligible.isNotEmpty,
+        canPickAnother: allEligibleSiblings.isNotEmpty,
+        fabCenter: fabCenter,
+        task: task,
+        allEligibleSiblings: allEligibleSiblings,
+      );
+    });
+  }
 
-    switch (action) {
-      case RandomResultAction.goDeeper:
-        // Pick random from this task's children, pass children as sibling pool
-        if (eligible.isNotEmpty) {
-          final picked = provider.pickWeightedN(eligible, 1);
-          if (picked.isNotEmpty) {
-            if (!mounted) return;
-            await _showRandomResult(
-              picked.first,
-              siblingPool: eligible,
-              navigateTarget: task,
-            );
-          }
-        }
-      case RandomResultAction.goToTask:
-        await provider.navigateInto(navigateTarget ?? task);
-      case RandomResultAction.pickAnother:
-        var newExcluded = {...?excluded, task.id!};
-        var pool = eligibleSiblings;
-        if (pool.isEmpty) {
-          newExcluded = {task.id!};
-          pool = siblings.where(
-            (s) => s.id != task.id && !blockedSiblingIds.contains(s.id),
-          ).toList();
-        }
-        if (pool.isNotEmpty) {
-          final picked = provider.pickWeightedN(pool, 1);
-          if (picked.isNotEmpty) {
-            if (!mounted) return;
-            await _showRandomResult(
-              picked.first,
-              excluded: newExcluded,
-              siblingPool: siblingPool,
-              navigateTarget: navigateTarget,
-            );
-          }
-        }
-      case null:
-        break;
+  void _dismissSpotlight() {
+    if (_spotlightData != null) {
+      setState(() => _spotlightData = null);
     }
+  }
+
+  void _spotlightSpinAgain(
+    Task current,
+    List<Task> allEligibleSiblings,
+  ) {
+    _dismissSpotlight();
+
+    _spinExcluded.add(current.id!);
+    var pool = allEligibleSiblings
+        .where((s) => !_spinExcluded.contains(s.id))
+        .toList();
+    // Pool exhausted — reset exclusions (keep only current)
+    if (pool.isEmpty) {
+      _spinExcluded = {current.id!};
+      pool = allEligibleSiblings;
+    }
+    if (pool.isEmpty) return;
+
+    final provider = context.read<TaskProvider>();
+    final picked = provider.pickWeightedN(pool, 1);
+    if (picked.isNotEmpty) {
+      _showSpotlight(picked.first);
+    }
+  }
+
+  void _spotlightGoDeeper(Task task) {
+    _dismissSpotlight();
+    _autoSpotlightAfterBuild = true;
+    _spinExcluded = {};
+    _spotlightSiblingPool = null;
+    _spotlightNavigateTarget = null;
+    final provider = context.read<TaskProvider>();
+    provider.navigateInto(task);
+  }
+
+  void _spotlightGoToTask(Task task) {
+    _dismissSpotlight();
+    final provider = context.read<TaskProvider>();
+    provider.navigateInto(task);
   }
 
   Widget _buildInboxSection(TaskProvider provider) {
@@ -1372,6 +1517,93 @@ class TaskListScreenState extends State<TaskListScreen>
     if (mounted) setState(() {});
   }
 
+  Widget? _buildFabs(TaskProvider provider) {
+    final sd = _spotlightData;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    if (sd != null) {
+      // During spotlight: flare = Spin Again, below = Open, above = Spin Deeper
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (sd.hasChildren)
+            FloatingActionButton(
+              heroTag: 'spotlightDeeper',
+              onPressed: () => _spotlightGoDeeper(sd.task),
+              backgroundColor: colorScheme.surfaceContainerHighest,
+              foregroundColor: colorScheme.onSurface,
+              tooltip: 'Spin Deeper',
+              child: const Icon(Icons.keyboard_double_arrow_down),
+            ),
+          if (sd.hasChildren)
+            const SizedBox(height: 12),
+          FloatingActionButton(
+            key: _flareFabKey,
+            heroTag: 'pickRandom',
+            onPressed: sd.canPickAnother
+                ? () => _spotlightSpinAgain(sd.task, sd.allEligibleSiblings)
+                : null,
+            tooltip: 'Spin Again',
+            child: const Icon(Icons.flare),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: 'spotlightOpen',
+            onPressed: () => _spotlightGoToTask(
+                _spotlightNavigateTarget ?? sd.task),
+            backgroundColor: colorScheme.surfaceContainerHighest,
+            foregroundColor: colorScheme.onSurface,
+            tooltip: 'Open',
+            child: const Icon(Icons.open_in_new),
+          ),
+        ],
+      );
+    }
+
+    // Normal state
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (provider.tasks.isNotEmpty)
+          FloatingActionButton(
+            key: _flareFabKey,
+            heroTag: 'pickRandom',
+            onPressed: _pickRandom,
+            child: const Icon(Icons.flare),
+          ),
+        if (provider.tasks.isNotEmpty)
+          const SizedBox(height: 12),
+        if (!provider.isRoot)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FloatingActionButton(
+                heroTag: 'linkTask',
+                onPressed: _linkExistingTask,
+                backgroundColor: colorScheme.surfaceContainerHighest,
+                foregroundColor: colorScheme.onSurface,
+                child: const Icon(Icons.playlist_add),
+              ),
+              const SizedBox(width: 12),
+              FloatingActionButton(
+                heroTag: 'addTask',
+                onPressed: _addTask,
+                child: const Icon(Icons.add),
+              ),
+            ],
+          )
+        else
+          FloatingActionButton(
+            heroTag: 'addTask',
+            onPressed: _addTask,
+            child: const Icon(Icons.add),
+          ),
+      ],
+    );
+  }
+
   int _crossAxisCount(double width) {
     if (width >= 900) return 3;
     if (width >= 600) return 2;
@@ -1390,6 +1622,11 @@ class TaskListScreenState extends State<TaskListScreen>
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
+        // Dismiss spotlight on back press before navigating
+        if (_spotlightData != null) {
+          _dismissSpotlight();
+          return;
+        }
         final provider = context.read<TaskProvider>();
         final navigated = await provider.navigateBack();
         if (!navigated && mounted) {
@@ -1398,7 +1635,7 @@ class TaskListScreenState extends State<TaskListScreen>
       },
       child: Consumer<TaskProvider>(
         builder: (context, provider, _) {
-          return Scaffold(
+          final scaffold = Scaffold(
             appBar: AppBar(
               titleSpacing: provider.isRoot ? 16 : 0,
               title: provider.isRoot
@@ -1586,6 +1823,7 @@ class TaskListScreenState extends State<TaskListScreen>
                     ? _buildLeafTaskDetail(provider)
                     : LayoutBuilder(
                     builder: (context, constraints) {
+                      _lastConstraintWidth = constraints.maxWidth;
                       final columns = _crossAxisCount(constraints.maxWidth);
                       // At root, filter inbox tasks out of the grid — they show
                       // in the inbox section above.
@@ -1593,12 +1831,17 @@ class TaskListScreenState extends State<TaskListScreen>
                           ? provider.tasks.where((t) => !t.isInbox).toList()
                           : provider.tasks;
                       return SingleChildScrollView(
+                        key: _scrollViewKey,
+                        controller: _scrollController,
                         padding: const EdgeInsets.all(8),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             if (provider.isRoot && _inboxCount > 0)
-                              _buildInboxSection(provider),
+                              KeyedSubtree(
+                                key: _inboxKey,
+                                child: _buildInboxSection(provider),
+                              ),
                             GridView.builder(
                             physics: const NeverScrollableScrollPhysics(),
                             shrinkWrap: true,
@@ -1651,45 +1894,35 @@ class TaskListScreenState extends State<TaskListScreen>
                 ),
               ],
             ),
-            floatingActionButton: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (provider.tasks.isNotEmpty)
-                  FloatingActionButton(
-                    heroTag: 'pickRandom',
-                    onPressed: _pickRandom,
-                    child: const Icon(Icons.flare),
-                  ),
-                if (provider.tasks.isNotEmpty)
-                  const SizedBox(height: 12),
-                if (!provider.isRoot)
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      FloatingActionButton(
-                        heroTag: 'linkTask',
-                        onPressed: _linkExistingTask,
-                        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        foregroundColor: Theme.of(context).colorScheme.onSurface,
-                        child: const Icon(Icons.playlist_add),
-                      ),
-                      const SizedBox(width: 12),
-                      FloatingActionButton(
-                        heroTag: 'addTask',
-                        onPressed: _addTask,
-                        child: const Icon(Icons.add),
-                      ),
-                    ],
-                  )
-                else
-                  FloatingActionButton(
-                    heroTag: 'addTask',
-                    onPressed: _addTask,
-                    child: const Icon(Icons.add),
-                  ),
-              ],
-            ),
+            floatingActionButton: _spotlightData != null
+                ? null  // FABs rendered above overlay in Stack
+                : _buildFabs(provider),
+          );
+
+          // Stack the spotlight overlay on top of the Scaffold so it
+          // covers everything including FABs and bottom nav.
+          if (_spotlightData == null) return scaffold;
+
+          final sd = _spotlightData!;
+          return Stack(
+            children: [
+              scaffold,
+              SpotlightOverlay(
+                cardRect: sd.cardRect,
+                cardContent: sd.cardContent,
+                hasChildren: sd.hasChildren,
+                onDismiss: _dismissSpotlight,
+                onGoDeeper: () => _spotlightGoDeeper(sd.task),
+                onGoToTask: () =>
+                    _spotlightGoToTask(_spotlightNavigateTarget ?? sd.task),
+              ),
+              // FABs above the overlay so they're tappable
+              Positioned(
+                right: 16,
+                bottom: 16,
+                child: _buildFabs(provider)!,
+              ),
+            ],
           );
         },
       ),
