@@ -1215,12 +1215,17 @@ class TaskListScreenState extends State<TaskListScreen>
                         Icon(Icons.link_off, size: 18,
                             color: colorScheme.error),
                         const SizedBox(width: 8),
-                        Text(
-                          'Remove dependency on "${existingDeps.first.name}"',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: colorScheme.error),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        // Bug fix: Text overflowed when blocker name was long.
+                        // Expanded constrains the Text to remaining Row width
+                        // so TextOverflow.ellipsis can truncate properly.
+                        Expanded(
+                          child: Text(
+                            'Remove dependency on "${existingDeps.first.name}"',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: colorScheme.error),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ],
                     ),

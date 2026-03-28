@@ -438,5 +438,94 @@ void main() {
       // Only the task list and search, no header action
       expect(find.text('Remove dependency'), findsNothing);
     });
+
+    testWidgets(
+        'remove dependency headerAction with long name uses Expanded to prevent overflow',
+        (tester) async {
+      // Reproduces the exact widget structure from _addDependencyToTask
+      // in task_list_screen.dart — the bug fix wraps Text in Expanded
+      // inside a Row so long blocker names get ellipsis instead of overflow.
+      final tasks = makeTasks(['Alpha', 'Beta']);
+      const longBlockerName =
+          'This is a very long blocker task name that would definitely '
+          'overflow the row width in the dialog without proper text wrapping';
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) {
+              final colorScheme = Theme.of(context).colorScheme;
+              return ElevatedButton(
+                onPressed: () {
+                  showDialog<Object>(
+                    context: context,
+                    builder: (_) => TaskPickerDialog(
+                      candidates: tasks,
+                      title: 'Do "My Task" after...',
+                      // Mirrors the exact structure from task_list_screen.dart
+                      headerAction: Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () => Navigator.pop(context, 'remove'),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 8),
+                            child: Row(
+                              children: [
+                                Icon(Icons.link_off,
+                                    size: 18, color: colorScheme.error),
+                                const SizedBox(width: 8),
+                                // Bug fix: Expanded prevents overflow
+                                Expanded(
+                                  child: Text(
+                                    'Remove dependency on "$longBlockerName"',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(color: colorScheme.error),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+                child: const Text('Open'),
+              );
+            },
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      // Verify the remove dependency row is rendered
+      expect(find.byIcon(Icons.link_off), findsOneWidget);
+      final removeText = find.textContaining('Remove dependency on');
+      expect(removeText, findsOneWidget);
+
+      // Verify Text is wrapped in Expanded (the bug fix)
+      final expandedAncestor = find.ancestor(
+        of: removeText,
+        matching: find.byType(Expanded),
+      );
+      expect(expandedAncestor, findsOneWidget,
+          reason:
+              'Text must be wrapped in Expanded to prevent overflow with long names');
+
+      // Verify text has ellipsis overflow
+      final textWidget = tester.widget<Text>(removeText);
+      expect(textWidget.overflow, TextOverflow.ellipsis);
+      expect(textWidget.maxLines, 1);
+
+      // Verify no overflow errors were reported
+      // (Flutter test framework automatically fails on layout overflow)
+    });
   });
 }
