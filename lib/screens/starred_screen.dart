@@ -333,6 +333,24 @@ Color _accentColor(BuildContext context, int taskId) {
   return accents[taskId % accents.length];
 }
 
+/// Returns a priority-aware text style for task children in starred views.
+/// High-priority tasks get a subtle accent tint + bold; normal tasks use baseColor.
+TextStyle _priorityChildStyle({
+  required Task task,
+  required Color baseColor,
+  required Color accent,
+  required double fontSize,
+}) {
+  return TextStyle(
+    fontSize: fontSize,
+    color: task.isHighPriority
+        ? Color.lerp(baseColor, accent, 0.5)!
+        : baseColor,
+    fontWeight: task.isHighPriority ? FontWeight.w600 : null,
+    height: 1.3,
+  );
+}
+
 class _StarredTaskCard extends StatelessWidget {
   final Task task;
   final List<({Task child, List<Task> grandchildren, int totalGrandchildren})> tree;
@@ -388,7 +406,7 @@ class _StarredTaskCard extends StatelessWidget {
         child: IntrinsicHeight(
           child: Row(
             children: [
-              // Accent bar — thicker, the card's identity
+              // Accent bar — the card's identity
               Container(
                 width: 5,
                 decoration: BoxDecoration(
@@ -488,9 +506,15 @@ class _StarredTaskCard extends StatelessWidget {
         indent: 0,
         lineColor: lineColor,
         isLast: isLastChild,
+        highlight: item.child.isHighPriority,
         child: Text(
           item.child.name,
-          style: TextStyle(fontSize: 14, color: childColor, height: 1.3),
+          style: _priorityChildStyle(
+            task: item.child,
+            baseColor: childColor,
+            accent: accent,
+            fontSize: 14,
+          ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -560,6 +584,7 @@ class _TreeRow extends StatelessWidget {
   final Color lineColor;
   final bool isLast;
   final bool parentIsLast;
+  final bool highlight;
   final Widget child;
 
   static const double _indentWidth = 14.0;
@@ -570,6 +595,7 @@ class _TreeRow extends StatelessWidget {
     required this.lineColor,
     required this.isLast,
     this.parentIsLast = false,
+    this.highlight = false,
     required this.child,
   });
 
@@ -893,6 +919,7 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                         return _ExpandedTreeRow(
                           node: node,
                           lineColor: lineColor,
+                          accent: widget.accent,
                           textColor: onSurface.withAlpha(
                               191 - (node.depth * 15).clamp(0, 60)),
                           ancestorIsLast: ancestorIsLast,
@@ -948,6 +975,7 @@ class _TreeNode {
 class _ExpandedTreeRow extends StatelessWidget {
   final _TreeNode node;
   final Color lineColor;
+  final Color accent;
   final Color textColor;
   final List<bool> ancestorIsLast;
   final bool isExpanded;
@@ -960,6 +988,7 @@ class _ExpandedTreeRow extends StatelessWidget {
   const _ExpandedTreeRow({
     required this.node,
     required this.lineColor,
+    required this.accent,
     required this.textColor,
     required this.ancestorIsLast,
     required this.isExpanded,
@@ -1018,10 +1047,11 @@ class _ExpandedTreeRow extends StatelessWidget {
                     Expanded(
                       child: Text(
                         node.task.name,
-                        style: TextStyle(
+                        style: _priorityChildStyle(
+                          task: node.task,
+                          baseColor: textColor,
+                          accent: accent,
                           fontSize: 17,
-                          color: textColor,
-                          height: 1.3,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
