@@ -254,7 +254,7 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      final refreshFinder = find.byIcon(Icons.refresh);
+      final refreshFinder = find.byTooltip('Respin all');
       expect(refreshFinder, findsOneWidget);
 
       await tester.tap(refreshFinder);
@@ -1055,7 +1055,7 @@ void main() {
       await pumpAndLoad(tester, buildTestWidget());
 
       // Trigger "New set"
-      await tester.tap(find.byIcon(Icons.refresh));
+      await tester.tap(find.byTooltip('Respin all'));
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
