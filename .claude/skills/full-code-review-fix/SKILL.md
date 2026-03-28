@@ -1,6 +1,6 @@
 ---
-name: code-review-fix
-description: Code Review Fix. Use when fixing issues from a code review.
+name: full-code-review-fix
+description: Full Code Review Fix. Use when fixing issues from a full codebase code review.
 ---
 
 # Code Review Fix
@@ -53,5 +53,5 @@ You are fixing issues found during code review of the TaskRoulette Flutter codeb
    - Update the "Items Still Open From Previous Rounds" section to reflect current state.
 9. **Commit** all fixes to the `code-review` branch with a descriptive message summarizing what was fixed.
 10. **Push** and remind the user to:
-    - Run `/code-review verify` in a fresh session to confirm the fixes
+    - Run `/full-code-review verify` in a fresh session to confirm the fixes
     - Create a PR to merge `code-review` into `main`

@@ -478,6 +478,59 @@ void main() {
       expect(find.byIcon(Icons.hourglass_top), findsNothing);
       expect(find.byIcon(Icons.add_task), findsNothing);
     });
+
+    testWidgets('hourglass uses primary color when isBlocked is true', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LeafTaskDetail(
+            task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+            onDone: () {},
+            onSkip: () {},
+            onToggleStarted: () {},
+            onRename: () {},
+            onUpdateUrl: (_) {},
+            onUpdatePriority: (_) {},
+            onUpdateSomeday: (_) {},
+            dependencies: [
+              Task(id: 2, name: 'Blocker', createdAt: DateTime.now().millisecondsSinceEpoch),
+            ],
+            isBlocked: true,
+          ),
+        ),
+      ));
+
+      final icon = tester.widget<Icon>(find.byIcon(Icons.hourglass_top));
+      final theme = Theme.of(tester.element(find.byType(LeafTaskDetail)));
+      expect(icon.color, theme.colorScheme.primary);
+    });
+
+    testWidgets('hourglass is greyed out when isBlocked is false', (tester) async {
+      // Bug fix: hourglass stayed active (primary color) even after the blocker
+      // was completed. Now it greys out when the dependency is resolved, while
+      // remaining visible so the user can still long-press to change/remove it.
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LeafTaskDetail(
+            task: Task(id: 1, name: 'Task', createdAt: DateTime.now().millisecondsSinceEpoch),
+            onDone: () {},
+            onSkip: () {},
+            onToggleStarted: () {},
+            onRename: () {},
+            onUpdateUrl: (_) {},
+            onUpdatePriority: (_) {},
+            onUpdateSomeday: (_) {},
+            dependencies: [
+              Task(id: 2, name: 'Blocker', createdAt: DateTime.now().millisecondsSinceEpoch),
+            ],
+            isBlocked: false,
+          ),
+        ),
+      ));
+
+      final icon = tester.widget<Icon>(find.byIcon(Icons.hourglass_top));
+      final theme = Theme.of(tester.element(find.byType(LeafTaskDetail)));
+      expect(icon.color, theme.colorScheme.onSurfaceVariant.withAlpha(120));
+    });
   });
 
   group('LeafTaskDetail pin button', () {

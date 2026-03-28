@@ -787,26 +787,40 @@ class TaskListScreenState extends State<TaskListScreen>
   Future<void> _skipTaskWithUndo(Task task) async {
     final provider = context.read<TaskProvider>();
 
-    await provider.skipTask(task.id!);
+    // Check if skipping this task will free any dependents — confirm first.
+    final dependentNames = await provider.getDependentTaskNames(task.id!);
+    if (!mounted) return;
+    if (!await confirmDependentUnblock(context, task.name, dependentNames)) return;
+    if (!mounted) return;
+
+    final result = await provider.skipTask(task.id!);
 
     if (!mounted) return;
 
     ScaffoldMessenger.of(context).clearSnackBars();
-    showInfoSnackBar(context, 'Skipped "${task.name}"', onUndo: () => provider.unskipTask(task.id!));
+    showInfoSnackBar(context, 'Skipped "${task.name}"',
+        onUndo: () => provider.unskipTask(task.id!, restoredDeps: result.removedDeps));
   }
 
   Future<void> _completeTaskWithUndo(Task task) async {
     final provider = context.read<TaskProvider>();
+
+    // Check if completing this task will free any dependents — confirm first.
+    final dependentNames = await provider.getDependentTaskNames(task.id!);
+    if (!mounted) return;
+    if (!await confirmDependentUnblock(context, task.name, dependentNames)) return;
+    if (!mounted) return;
 
     // Show celebratory animation before completing
     await showCompletionAnimation(context);
 
     if (!mounted) return;
 
-    await provider.completeTask(task.id!);
+    final result = await provider.completeTask(task.id!);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
-    showInfoSnackBar(context, '"${task.name}" done for good!', onUndo: () => provider.uncompleteTask(task.id!));
+    showInfoSnackBar(context, '"${task.name}" done for good!',
+        onUndo: () => provider.uncompleteTask(task.id!, restoredDeps: result.removedDeps));
   }
 
   Widget _buildLeafTaskDetail(TaskProvider provider) {
@@ -850,6 +864,7 @@ class TaskListScreenState extends State<TaskListScreen>
           onTogglePin: _todaysFiveIds.isNotEmpty
               ? () => _togglePinInTodays5(task.id!)
               : null,
+          isBlocked: provider.blockedTaskIds.contains(task.id),
         );
       },
     );

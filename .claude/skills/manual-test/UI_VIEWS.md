@@ -23,6 +23,7 @@ Reference for manual test instructions. Use these names consistently.
 - **Task list** — hierarchical list. Shows children of the current parent. Root level shows top-level tasks + Inbox.
 - **Inbox section** — collapsible section at top showing unorganized tasks.
 - **Leaf detail view** — appears when navigating into a leaf task (a task with no children). Shows task name, "Done today" button, "Done for good!" button, "Start"/"Started" toggle, priority selector, schedule/deadline info, dependencies, parent breadcrumbs. This is NOT the same as the Today's 5 bottom sheet.
+  - **Dependency icon (hourglass)** — shown when the task has a dependency. The icon is **present only while the task is actively blocked** (blocker not yet completed/skipped). Once the blocker is completed or skipped, the hourglass icon **disappears entirely** — it does NOT grey out or remain visible.
 - **"Done today" button** — filled purple button on the leaf detail view. Marks the task as worked on.
 - **"Worked on today" button** — outlined button that replaces "Done today" after marking. Acts as undo for the worked-on status.
 

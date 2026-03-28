@@ -20,6 +20,7 @@ class LeafTaskDetail extends StatelessWidget {
   final bool isPinnedInTodays5;
   final bool atMaxPins;
   final VoidCallback? onTogglePin;
+  final bool isBlocked;
   const LeafTaskDetail({
     super.key,
     required this.task,
@@ -39,6 +40,7 @@ class LeafTaskDetail extends StatelessWidget {
     this.isPinnedInTodays5 = false,
     this.atMaxPins = false,
     this.onTogglePin,
+    this.isBlocked = false,
   });
 
   String _formatTimeAgo(int millis) {
@@ -266,7 +268,12 @@ class LeafTaskDetail extends StatelessWidget {
                           child: Icon(
                             Icons.hourglass_top,
                             size: 20,
-                            color: colorScheme.primary,
+                            // Active color when blocked, greyed out when blocker
+                            // is resolved (completed/skipped). Icon stays visible
+                            // so user can still long-press to change/remove dep.
+                            color: isBlocked
+                                ? colorScheme.primary
+                                : colorScheme.onSurfaceVariant.withAlpha(120),
                           ),
                         ),
                       ),

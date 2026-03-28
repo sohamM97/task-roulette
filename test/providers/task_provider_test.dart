@@ -44,8 +44,8 @@ void main() {
       expect(provider.tasks, isEmpty);
 
       // Completing the leaf task (currentParent) should not throw
-      final completed = await provider.completeTask(childId);
-      expect(completed.id, childId);
+      final result = await provider.completeTask(childId);
+      expect(result.task.id, childId);
 
       // Should have navigated back to parent level
       expect(provider.currentParent!.id, parentId);
@@ -64,8 +64,8 @@ void main() {
       expect(provider.tasks, isEmpty);
 
       // Should not throw
-      final completed = await provider.completeTask(leafId);
-      expect(completed.id, leafId);
+      final result = await provider.completeTask(leafId);
+      expect(result.task.id, leafId);
 
       // Should have navigated back to root
       expect(provider.currentParent, isNull);
@@ -2238,7 +2238,7 @@ void main() {
 
       expect(provider.currentParent!.id, childId);
       final result = await provider.completeTask(childId);
-      expect(result.id, childId);
+      expect(result.task.id, childId);
 
       // Should navigate back to parent
       expect(provider.currentParent!.id, parentId);
@@ -2260,7 +2260,7 @@ void main() {
       await provider.navigateInto(child);
 
       final result = await provider.skipTask(childId);
-      expect(result.id, childId);
+      expect(result.task.id, childId);
 
       // Should navigate back
       expect(provider.currentParent!.id, parentId);
@@ -2397,6 +2397,191 @@ void main() {
       await provider.uncompleteTask(id);
       dbTask = await db.getTaskById(id);
       expect(dbTask!.isCompleted, isFalse);
+    });
+
+    test('completeTask returns removed dependency links', () async {
+      // Bug fix: completeTask now removes dep rows and returns them for undo.
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep = await db.insertTask(Task(name: 'Dependent'));
+      await db.addDependency(dep, blocker);
+
+      await provider.loadRootTasks();
+      final task = provider.tasks.firstWhere((t) => t.id == blocker);
+      await provider.navigateInto(task);
+
+      final result = await provider.completeTask(blocker);
+      expect(result.removedDeps, hasLength(1));
+      expect(result.removedDeps.first.taskId, dep);
+      expect(result.removedDeps.first.dependsOnId, blocker);
+    });
+
+    test('completeTask returns empty removedDeps when no dependents', () async {
+      final id = await db.insertTask(Task(name: 'Solo'));
+
+      await provider.loadRootTasks();
+      final task = provider.tasks.firstWhere((t) => t.id == id);
+      await provider.navigateInto(task);
+
+      final result = await provider.completeTask(id);
+      expect(result.removedDeps, isEmpty);
+    });
+
+    test('completeTaskOnly returns removed dependency links', () async {
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep = await db.insertTask(Task(name: 'Dependent'));
+      await db.addDependency(dep, blocker);
+
+      await provider.loadRootTasks();
+      final removedDeps = await provider.completeTaskOnly(blocker);
+      expect(removedDeps, hasLength(1));
+      expect(removedDeps.first.taskId, dep);
+      expect(removedDeps.first.dependsOnId, blocker);
+    });
+
+    test('uncompleteTask with restoredDeps restores dependency links', () async {
+      // Undo path: completing a blocker removes deps, undoing restores them.
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep = await db.insertTask(Task(name: 'Dependent'));
+      await db.addDependency(dep, blocker);
+
+      await provider.loadRootTasks();
+      final removedDeps = await provider.completeTaskOnly(blocker);
+
+      // Deps should be gone
+      final depsAfterComplete = await db.getDependencies(dep);
+      expect(depsAfterComplete, isEmpty);
+
+      // Undo — restore deps
+      await provider.uncompleteTask(blocker, restoredDeps: removedDeps);
+      final depsAfterUndo = await db.getDependencies(dep);
+      expect(depsAfterUndo, hasLength(1));
+      expect(depsAfterUndo.first.id, blocker);
+    });
+
+    test('reCompleteTask works without breaking on removedDeps', () async {
+      // reCompleteTask (restore-from-archive) discards removedDeps intentionally.
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep = await db.insertTask(Task(name: 'Dependent'));
+      await db.addDependency(dep, blocker);
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      await db.addRelationship(parentId, blocker);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      // reCompleteTask should complete without errors
+      await provider.reCompleteTask(blocker);
+      final task = await db.getTaskById(blocker);
+      expect(task!.isCompleted, isTrue);
+      // Dep rows removed as side effect (not restored on re-archive)
+      expect(await db.getDependencies(dep), isEmpty);
+    });
+
+    test('getDependentTaskNames returns names via provider', () async {
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep1 = await db.insertTask(Task(name: 'Waiting A'));
+      final dep2 = await db.insertTask(Task(name: 'Waiting B'));
+      await db.addDependency(dep1, blocker);
+      await db.addDependency(dep2, blocker);
+
+      final names = await provider.getDependentTaskNames(blocker);
+      expect(names, unorderedEquals(['Waiting A', 'Waiting B']));
+    });
+
+    test('getDependentTaskNames returns empty when no dependents', () async {
+      final id = await db.insertTask(Task(name: 'Standalone'));
+      final names = await provider.getDependentTaskNames(id);
+      expect(names, isEmpty);
+    });
+
+    test('blockedTaskIds includes currentParent when blocked', () async {
+      // Bug fix: _loadAuxiliaryData now passes parentNameIds (including
+      // currentParent) to getBlockedTaskInfo, so leaf detail view can
+      // check the blocked state of the task being viewed.
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final blocked = await db.insertTask(Task(name: 'Blocked'));
+      await db.addDependency(blocked, blocker);
+
+      await provider.loadRootTasks();
+      final task = provider.tasks.firstWhere((t) => t.id == blocked);
+      await provider.navigateInto(task);
+
+      // currentParent is 'blocked', which depends on 'blocker'
+      expect(provider.currentParent!.id, blocked);
+      expect(provider.blockedTaskIds, contains(blocked));
+    });
+
+    test('skipTask returns removed dependency links', () async {
+      // Bug fix: skipTask now removes dep rows and returns them for undo,
+      // same as completeTask.
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep = await db.insertTask(Task(name: 'Dependent'));
+      await db.addDependency(dep, blocker);
+
+      await provider.loadRootTasks();
+      final task = provider.tasks.firstWhere((t) => t.id == blocker);
+      await provider.navigateInto(task);
+
+      final result = await provider.skipTask(blocker);
+      expect(result.removedDeps, hasLength(1));
+      expect(result.removedDeps.first.taskId, dep);
+      expect(result.removedDeps.first.dependsOnId, blocker);
+    });
+
+    test('skipTask returns empty removedDeps when no dependents', () async {
+      final id = await db.insertTask(Task(name: 'Solo'));
+
+      await provider.loadRootTasks();
+      final task = provider.tasks.firstWhere((t) => t.id == id);
+      await provider.navigateInto(task);
+
+      final result = await provider.skipTask(id);
+      expect(result.removedDeps, isEmpty);
+    });
+
+    test('unskipTask with restoredDeps restores dependency links', () async {
+      // Undo path: skipping a blocker removes deps, undoing restores them.
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep = await db.insertTask(Task(name: 'Dependent'));
+      await db.addDependency(dep, blocker);
+
+      await provider.loadRootTasks();
+      final task = provider.tasks.firstWhere((t) => t.id == blocker);
+      await provider.navigateInto(task);
+
+      final result = await provider.skipTask(blocker);
+
+      // Deps should be gone
+      final depsAfterSkip = await db.getDependencies(dep);
+      expect(depsAfterSkip, isEmpty);
+
+      // Undo — restore deps
+      await provider.unskipTask(blocker, restoredDeps: result.removedDeps);
+      final depsAfterUndo = await db.getDependencies(dep);
+      expect(depsAfterUndo, hasLength(1));
+      expect(depsAfterUndo.first.id, blocker);
+    });
+
+    test('reSkipTask discards removedDeps intentionally', () async {
+      // reSkipTask (restore-from-archive) discards removedDeps — same as
+      // reCompleteTask. Dependency links are not preserved on re-archive.
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      final dep = await db.insertTask(Task(name: 'Dependent'));
+      await db.addDependency(dep, blocker);
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      await db.addRelationship(parentId, blocker);
+
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      // reSkipTask should skip without errors
+      await provider.reSkipTask(blocker);
+      final task = await db.getTaskById(blocker);
+      expect(task!.isSkipped, isTrue);
+      // Dep rows removed as side effect (not restored on re-archive)
+      expect(await db.getDependencies(dep), isEmpty);
     });
 
     test('skip then unskip roundtrip', () async {

@@ -71,5 +71,10 @@ Create [whatever state is needed for the tests below].
 - Don't suggest tests that duplicate what automated tests already cover — check the test files first.
 - If a change is purely algorithmic with no UI impact, say so and focus tests on observable outcomes.
 - Mention which platform to test on (Linux via `./dev.sh` unless the change is mobile-specific).
-- **Present tests in batches by section.** Don't dump all test cases at once — show one section at a time (e.g. "Today's 5" tests first, then "All Tasks" after the user reports results). This prevents the list from feeling overwhelming and lets the user focus.
+- **Present tests in batches by section.** Don't dump all test cases at once — show one section at a time (e.g. "Today's 5" tests first, then "All Tasks" after the user reports results). This prevents the list from feeling overwhelming and lets the user focus. **This applies to the caller too** — when presenting the agent's results, you MUST show only the first section and hold back the rest until the user reports results. Never flatten all sections into one list or present them all at once, even as a "summary".
+- **Snackbar undo tests are time-sensitive.** The undo snackbar only lasts 5 seconds. Rules for undo tests:
+  - An undo test must be a **separate, self-contained test case** — never an addendum tagged onto a non-undo test ("now tap Undo").
+  - The undo tap must be the **very first action** after the trigger — no intermediate verification steps between the action and the undo. Verify the result of the undo AFTER tapping it, not before.
+  - If the undo test requires the same setup as a non-undo test, tell the user to **re-do the setup** (or use a separate task) rather than chaining it after the non-undo test's verification steps.
+  - Warn the user about the 5s window, and suggest a manual fallback path (e.g. unarchive + re-add state) if they miss it.
 - The user reports results like "1. works / 2. works". If their list is incomplete (doesn't cover all test cases), don't assume they're skipping the rest. Ask (via AskUserQuestion, with "continue" as the default) whether they want to carry on or skip. If they want to carry on, re-display the remaining test cases so they don't have to scroll up.

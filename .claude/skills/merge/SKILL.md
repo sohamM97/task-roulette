@@ -28,9 +28,11 @@ Merge the current branch's PR after verifying CI and review comments.
 
 Both agents MUST run in parallel (launched in a single message with two Agent tool calls). **Report results as they arrive** — don't wait for both to finish. If any reviewer has actionable comments, address them immediately (even if CI is still pending — CI will re-run after the fix push anyway). Only proceed to Phase 2 once both are resolved.
 
+**IMPORTANT: When reporting agent results, verify current state first.** Background agents return point-in-time snapshots that may be stale by the time you present them. Before reporting, run `gh pr checks <number>` to get live status — do NOT relay an agent's "still pending" if the check has since completed.
+
 ### Phase 2: Merge (foreground, needs user)
 
-4. Report the Phase 1 results (CI status, any review comments found/addressed).
+4. Report the Phase 1 results (CI status, any review comments found/addressed). Always use **live status** from `gh pr checks`, not cached agent output.
 5. If CI failed, stop — do NOT merge.
 6. If there were unresolved review comments, ask the user what to do.
 7. If bot reviewers only posted a **quota-exceeded** message (no actual review), treat it the same as "no actionable comments" — proceed to merge without asking.

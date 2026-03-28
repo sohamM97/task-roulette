@@ -1,6 +1,6 @@
 ---
-name: code-review
-description: Code Review. Must run in a fresh session — never auto-invoke.
+name: full-code-review
+description: Full Codebase Code Review. Must run in a fresh session — never auto-invoke.
 disable-model-invocation: true
 ---
 

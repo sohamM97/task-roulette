@@ -35,6 +35,35 @@ Color deadlineDisplayColor(String deadlineStr, String deadlineType, ColorScheme 
   return deadlineProximityColor(days, colorScheme);
 }
 
+/// Shows a confirmation dialog when completing/skipping a task that has
+/// waiting dependents. Returns true if user confirms, false/null otherwise.
+/// Returns true immediately (no dialog) if [dependentNames] is empty.
+Future<bool> confirmDependentUnblock(BuildContext context, String taskName, List<String> dependentNames) async {
+  if (dependentNames.isEmpty) return true;
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Unblock waiting tasks?'),
+      content: Text(
+        'These tasks are waiting on "$taskName":\n\n'
+        '${dependentNames.map((n) => '• $n').join('\n')}\n\n'
+        'Completing it will unblock them.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Complete'),
+        ),
+      ],
+    ),
+  );
+  return confirmed == true;
+}
+
 /// Shows a brief informational snackbar with a close icon (or Undo action).
 void showInfoSnackBar(BuildContext context, String message, {VoidCallback? onUndo}) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(

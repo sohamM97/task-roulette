@@ -1304,7 +1304,8 @@ void main() {
 
       // Tap "Done for good!" instead of "Done today"
       await tester.tap(find.text('Done for good!'));
-      // Pump through completion animation
+      // Pump through getDependentTaskNames async call + completion animation
+      await pumpAsync(tester, rounds: 10);
       await tester.pump(const Duration(milliseconds: 800));
       await pumpAsync(tester, rounds: 40);
 

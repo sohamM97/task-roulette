@@ -834,14 +834,21 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
   Future<void> _completeNormalTask(Task task) async {
     final provider = context.read<TaskProvider>();
+
+    // Check if completing this task will free any dependents — confirm first.
+    final dependentNames = await provider.getDependentTaskNames(task.id!);
+    if (!mounted) return;
+    if (!await confirmDependentUnblock(context, task.name, dependentNames)) return;
+    if (!mounted) return;
+
     await showCompletionAnimation(context);
     if (!mounted) return;
-    await provider.completeTaskOnly(task.id!);
+    final removedDeps = await provider.completeTaskOnly(task.id!);
     await _markDone(task.id!, workedOn: false, autoStarted: false);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     showInfoSnackBar(context, '"${task.name}" done!', onUndo: () async {
-      await provider.uncompleteTask(task.id!);
+      await provider.uncompleteTask(task.id!, restoredDeps: removedDeps);
       if (!mounted) return;
       await _unmarkDone(task.id!, workedOn: false, autoStarted: false);
     });
