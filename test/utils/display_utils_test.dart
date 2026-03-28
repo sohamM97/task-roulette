@@ -121,6 +121,12 @@ void main() {
     });
   });
 
+  group('spinIcon', () {
+    test('is Icons.loop', () {
+      expect(spinIcon, Icons.loop);
+    });
+  });
+
   group('displayUrl', () {
     test('strips https:// prefix', () {
       expect(displayUrl('https://example.com'), 'example.com');

@@ -12,9 +12,9 @@ Reference for manual test instructions. Use these names consistently.
 - **Task card** — each task in the Today's 5 list. Shows task name, subtitle icons (priority, deadline, scheduled today, started, someday). Done tasks are faded with strikethrough. Trailing icons: pin button, spin button (double-dice `casino_outlined`), "Go to task" link (`open_in_new`).
 - **Spin button** (double-dice icon) — on undone task cards. Opens the **swap bottom sheet**. Not shown on done tasks.
 - **Swap bottom sheet** — appears when tapping the spin button. Options: "Roulette spin" (spin the wheel for a new task) and "Place your bet" (hand-pick a task for this slot).
-- **Respin pinned task dialog** — appears when tapping "Roulette spin" on a pinned task. Title: "Respin pinned task?", body: "Respin this slot?", buttons: "Cancel" / "Respin".
-- **Respin all button** — double-dice icon (`casino_rounded`, two overlapping tilted dice) in the app bar. Only shown when there are undone unpinned tasks. Opens the **Respin all dialog**.
-- **Respin all dialog** — title: "Respin all?", body varies by state, button: "Respin". When all tasks are done/pinned, shows "nothing to respin" with no confirm button.
+- **Reroll pinned task dialog** — appears when tapping "Roulette spin" on a pinned task. Title: "Reroll pinned task?", body: "Reroll this slot?", buttons: "Cancel" / "Reroll".
+- **Reroll all button** — double-dice icon (`casino_rounded`, two overlapping tilted dice) in the app bar. Only shown when there are undone unpinned tasks. Opens the **Reroll all dialog**.
+- **Reroll all dialog** — title: "Reroll all?", body varies by state, button: "Reroll". When all tasks are done/pinned, shows "nothing to reroll" with no confirm button.
 - **Bottom sheet** — appears when **tapping** an undone task card. Options: "Done today", "Done for good!", "In progress"/"Stop working". Note: Pin/Unpin is NOT in the bottom sheet — it's a separate pin icon button on the card itself.
 - **Completion animation** — brief celebration overlay after marking done.
 - **"Also done today" section** — expandable area below the main list showing tasks worked on today outside the Today's 5 set.

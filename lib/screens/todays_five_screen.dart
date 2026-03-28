@@ -942,20 +942,20 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     ).length;
     final String message;
     if (replaceableCount == 0) {
-      message = 'All tasks are done or pinned — nothing to respin.';
+      message = 'All tasks are done or pinned — nothing to reroll.';
     } else if (pinnedCount > 0) {
-      message = 'Respin $replaceableCount undone ${replaceableCount == 1 ? 'task' : 'tasks'}? '
+      message = 'Reroll $replaceableCount undone ${replaceableCount == 1 ? 'task' : 'tasks'}? '
           'Done and pinned tasks will stay.';
     } else if (replaceableCount == _todaysTasks.length) {
-      message = 'Respin all tasks with a fresh set of 5?';
+      message = 'Reroll all tasks with a fresh set of 5?';
     } else {
-      message = 'Respin $replaceableCount undone ${replaceableCount == 1 ? 'task' : 'tasks'}? '
+      message = 'Reroll $replaceableCount undone ${replaceableCount == 1 ? 'task' : 'tasks'}? '
           'Done tasks will stay.';
     }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Respin all?'),
+        title: const Text('Reroll all?'),
         content: Text(message),
         actions: [
           TextButton(
@@ -965,7 +965,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           if (replaceableCount > 0)
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Respin'),
+              child: const Text('Reroll'),
             ),
         ],
       ),
@@ -1037,8 +1037,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Respin pinned task?'),
-        content: Text('"${task.name}" was manually pinned. Respin this slot?'),
+        title: const Text('Reroll pinned task?'),
+        content: Text('"${task.name}" was manually pinned. Reroll this slot?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -1046,7 +1046,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Respin'),
+            child: const Text('Reroll'),
           ),
         ],
       ),
@@ -1306,7 +1306,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                 ),
               ),
               onPressed: _confirmNewSet,
-              tooltip: 'Respin all',
+              tooltip: 'Reroll all',
             ),
         ],
       ),
