@@ -942,20 +942,20 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     ).length;
     final String message;
     if (replaceableCount == 0) {
-      message = 'All tasks are done or pinned — nothing to replace.';
+      message = 'All tasks are done or pinned — nothing to respin.';
     } else if (pinnedCount > 0) {
-      message = 'Replace $replaceableCount undone ${replaceableCount == 1 ? 'task' : 'tasks'} '
-          'with new picks? Done and pinned tasks will stay.';
+      message = 'Respin $replaceableCount undone ${replaceableCount == 1 ? 'task' : 'tasks'}? '
+          'Done and pinned tasks will stay.';
     } else if (replaceableCount == _todaysTasks.length) {
-      message = 'Replace all tasks with a fresh set of 5?';
+      message = 'Respin all tasks with a fresh set of 5?';
     } else {
-      message = 'Replace $replaceableCount undone ${replaceableCount == 1 ? 'task' : 'tasks'} '
-          'with new picks? Done tasks will stay.';
+      message = 'Respin $replaceableCount undone ${replaceableCount == 1 ? 'task' : 'tasks'}? '
+          'Done tasks will stay.';
     }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('New set?'),
+        title: const Text('Respin all?'),
         content: Text(message),
         actions: [
           TextButton(
@@ -965,7 +965,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           if (replaceableCount > 0)
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Replace'),
+              child: const Text('Respin'),
             ),
         ],
       ),
@@ -1003,9 +1003,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                   ),
                 ),
               ListTile(
-                leading: Icon(Icons.shuffle, color: colorScheme.onSurfaceVariant),
-                title: const Text('Random replacement'),
-                subtitle: const Text('Replace with a randomly picked task'),
+                leading: Icon(spinIcon, color: colorScheme.onSurfaceVariant),
+                title: const Text('Roulette spin'),
+                subtitle: const Text('Spin the wheel for a new task'),
                 onTap: () {
                   Navigator.pop(ctx);
                   if (isPinned) {
@@ -1017,8 +1017,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
               ),
               ListTile(
                 leading: Icon(Icons.checklist, color: colorScheme.primary),
-                title: const Text('Choose a task'),
-                subtitle: const Text('Pick a specific task for this slot'),
+                title: const Text('Place your bet'),
+                subtitle: const Text('Hand-pick a task for this slot'),
                 onTap: () {
                   Navigator.pop(ctx);
                   _pickAndPinTask(index);
@@ -1037,8 +1037,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Replace pinned task?'),
-        content: Text('"${task.name}" was manually pinned. Replace it with a random task?'),
+        title: const Text('Respin pinned task?'),
+        content: Text('"${task.name}" was manually pinned. Respin this slot?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -1046,7 +1046,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Replace'),
+            child: const Text('Respin'),
           ),
         ],
       ),
@@ -1073,7 +1073,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     if (eligible.isEmpty) {
       if (mounted) {
-        showInfoSnackBar(context, 'No other tasks available to pick');
+        showInfoSnackBar(context, 'No tasks left to spin');
       }
       return;
     }
@@ -1087,7 +1087,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       context: context,
       builder: (ctx) => TaskPickerDialog(
         candidates: eligible,
-        title: 'Pick a task',
+        title: 'Place your bet',
         parentNamesMap: parentNamesMap,
       ),
     );
@@ -1134,7 +1134,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     if (eligible.isEmpty) {
       if (mounted) {
-        showInfoSnackBar(context, 'No other tasks to swap in');
+        showInfoSnackBar(context, 'No tasks left to spin');
       }
       return;
     }
@@ -1278,9 +1278,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           if (_todaysTasks.any((t) =>
               !_completedIds.contains(t.id) && !_pinnedIds.contains(t.id)))
             IconButton(
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(Icons.casino_outlined),
               onPressed: _confirmNewSet,
-              tooltip: 'New set',
+              tooltip: 'Respin all',
             ),
         ],
       ),
@@ -1628,9 +1628,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                 Icon(Icons.push_pin, size: 18, color: colorScheme.tertiary),
               if (!isDone)
                 IconButton(
-                  icon: const Icon(Icons.shuffle, size: 18),
+                  icon: const Icon(spinIcon, size: 18),
                   onPressed: () => _confirmSwapTask(index),
-                  tooltip: 'Swap task',
+                  tooltip: 'Spin',
                   visualDensity: VisualDensity.compact,
                   constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 ),

@@ -894,7 +894,7 @@ class TaskListScreenState extends State<TaskListScreen>
     final picked = provider.pickRandom();
     if (picked == null) {
       if (mounted) {
-        showInfoSnackBar(context, 'No tasks to pick from');
+        showInfoSnackBar(context, 'No tasks to spin');
       }
       return;
     }
@@ -1659,7 +1659,7 @@ class TaskListScreenState extends State<TaskListScreen>
                   FloatingActionButton(
                     heroTag: 'pickRandom',
                     onPressed: _pickRandom,
-                    child: const Icon(Icons.shuffle),
+                    child: const Icon(Icons.flare),
                   ),
                 if (provider.tasks.isNotEmpty)
                   const SizedBox(height: 12),

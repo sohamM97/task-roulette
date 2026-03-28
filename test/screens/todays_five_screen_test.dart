@@ -190,7 +190,7 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      expect(find.byIcon(Icons.shuffle), findsOneWidget);
+      expect(find.byIcon(spinIcon), findsOneWidget);
     });
 
     testWidgets('navigate button calls onNavigateToTask', (tester) async {
@@ -262,9 +262,9 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
       }
 
-      expect(find.text('New set?'), findsOneWidget);
+      expect(find.text('Respin all?'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
-      expect(find.text('Replace'), findsOneWidget);
+      expect(find.text('Respin'), findsOneWidget);
     });
 
     testWidgets('restores state from DB on reload', (tester) async {
@@ -1059,7 +1059,7 @@ void main() {
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
-      await tester.tap(find.text('Replace'));
+      await tester.tap(find.text('Respin'));
       await pumpAsync(tester, rounds: 30);
 
       // No deadline task should be auto-pinned
