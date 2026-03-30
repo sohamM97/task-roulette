@@ -25,7 +25,7 @@ void main() {
       expect(style.height, 1.3);
     });
 
-    test('returns accent-tinted bold style for high-priority tasks', () {
+    test('returns accent-tinted style for high-priority tasks (no bold)', () {
       final task = Task(name: 'Urgent task', priority: 2);
       final style = childTextStyle(
         task: task,
@@ -38,7 +38,8 @@ void main() {
       // Color should be a blend of baseColor and accent (50% lerp)
       final expectedColor = Color.lerp(baseColor, accent, 0.5)!;
       expect(style.color, expectedColor);
-      expect(style.fontWeight, FontWeight.w600);
+      // No bold — colour alone distinguishes high priority
+      expect(style.fontWeight, isNull);
       expect(style.height, 1.3);
     });
 
@@ -82,7 +83,7 @@ void main() {
         fontSize: fontSize,
       );
 
-      expect(style.fontWeight, FontWeight.w600);
+      expect(style.fontWeight, isNull);
       final expectedColor = Color.lerp(baseColor, accent, 0.5)!;
       expect(style.color, expectedColor);
     });

@@ -4,7 +4,7 @@ Last updated: 2026-03-30
 
 ## Summary
 
-~1074 tests across 27 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
+~1086 tests across 28 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
 
 ## Covered
 
@@ -28,6 +28,8 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 - **test/screens/todays_five_screen_test.dart** (~54 tests) — Empty state, task rendering (max 5, leaf-only, blocked excluded), bottom sheet options, swap/navigate buttons, progress bar, priority icon, refresh dialog, DB state restore, SharedPrefs→DB migration, sync reload (task list replacement, completed status from remote), **deadline auto-pin override** (unpinned deadline stays unpinned on reload, generate doesn't re-pin suppressed tasks, suppression cleared on re-pin, re-pin persists across reload), **first generation auto-pin** (deadline task auto-pinned, `on` deadline auto-pinned on day, suppressed not pinned, max 5 respected, midnight rollover triggers auto-pin, reroll/New set does NOT auto-pin), **scheduled-today icon** (shown/hidden based on schedule, combined with deadline icon), **backfill params** (restore/refreshSnapshots/pinned-descendant backfill passes schedule+deadline+norm to `pickWeightedN`, lazy `_fetchSelectionContext` in `refreshSnapshots`, `_replaceIfNoLongerLeaf` on uncomplete), **reserved slots** (single scheduled source guaranteed slot, two sources each get a slot, ≥1 general-pool slot always preserved, cap at 4 reserved when 5+ sources).
 - **test/screens/completed_tasks_screen_test.dart** (~15 tests) — Empty state, completed/skipped display, today/older labels, restore/delete buttons, parent context, AppBar title.
 - **test/screens/starred_screen_test.dart** (27 tests) — Empty state, card display (single/multiple/subtitle/in-progress/tree preview/badge count), long-press navigation, drag handle, **tap expanded view** (dialog open, lazy-expand direct children on tap, collapse hides grandchildren, "No sub-tasks" leaf, star icon confirmation dialog, cancel keeps starred, confirm unstar + undo snackbar, undo re-stars, long-press tree node navigates, tap leaf navigates directly, dismiss by tapping outside, **child count badge**, **no chevron on leaves**, **header navigate icon**, **leaf navigate icon**). **starOrder preservation** (explicit starOrder on re-star, appends to end without).
+- **test/screens/starred_screen_reorder_test.dart** (12 tests) — `reorderByDependencyChains`: empty deps no-op, single blocker→dependent pair, blocked-before-blocker reorder, transitive chain (A→B→C), reverse-order chain, unrelated tasks preserved, multiple dependents per blocker, empty task list, single task, missing task IDs in deps, independent chains, deep 4-task chain.
+- **test/screens/starred_screen_child_text_style_test.dart** (6 tests) — `childTextStyle`: blocked dimming, high-priority accent tint (no bold), normal style, blocked precedence over priority, priority 1 treated as high, custom fontSize.
 - **test/screens/task_list_screen_overflow_menu_test.dart** (7 tests) — Overflow menu: root shows export/import only (no task items), non-root with children shows Rename/Do after/Schedule/Delete/export/import, leaf shows "Also show under..." instead of Rename/Do after, "Add link" vs "Edit link" based on URL presence, divider count (2 for non-root, 1 for root on non-web).
 
 ### Services (minimal)

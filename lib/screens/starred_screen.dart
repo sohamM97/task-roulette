@@ -62,11 +62,16 @@ class StarredScreenState extends State<StarredScreen>
 
     // Load tree preview data and blocked info for all starred tasks in parallel
     final allChildIds = <int>[];
+    final db = DatabaseHelper();
     final treeEntries = await Future.wait(starred.map((task) async {
       final children = await provider.getChildren(task.id!);
-      final allActive = children
+      var allActive = children
           .where((c) => c.completedAt == null && c.skippedAt == null)
           .toList();
+      // Reorder by dependency chains so blocked tasks appear after their blocker
+      final siblingDeps = await db.getSiblingDependencyPairs(
+          allActive.map((c) => c.id!).toList());
+      allActive = reorderByDependencyChains(allActive, siblingDeps);
       final shownChildren = allActive.take(3).toList();
       allChildIds.addAll(allActive.map((c) => c.id!));
 
@@ -343,8 +348,47 @@ Color _accentColor(BuildContext context, int taskId) {
   return accents[taskId % accents.length];
 }
 
+/// Reorders tasks so that blocked tasks appear immediately after their blocker,
+/// matching the All Tasks view. [siblingDeps] maps dependentId → blockerId.
+@visibleForTesting
+List<Task> reorderByDependencyChains(
+    List<Task> tasks, Map<int, int> siblingDeps) {
+  if (siblingDeps.isEmpty) return tasks;
+
+  // Build blocker → [dependents] map
+  final dependents = <int, List<int>>{};
+  for (final e in siblingDeps.entries) {
+    dependents.putIfAbsent(e.value, () => []).add(e.key);
+  }
+
+  final dependentIds = siblingDeps.keys.toSet();
+  final taskById = <int, Task>{};
+  for (final t in tasks) {
+    taskById[t.id!] = t;
+  }
+
+  void walkChain(int id, List<Task> out) {
+    final task = taskById[id];
+    if (task == null) return;
+    out.add(task);
+    final deps = dependents[id];
+    if (deps != null) {
+      for (final depId in deps) {
+        walkChain(depId, out);
+      }
+    }
+  }
+
+  final reordered = <Task>[];
+  for (final task in tasks) {
+    if (dependentIds.contains(task.id)) continue;
+    walkChain(task.id!, reordered);
+  }
+  return reordered;
+}
+
 /// Returns a priority- and blocked-aware text style for task children in starred views.
-/// Blocked tasks get dimmed; high-priority tasks get a subtle accent tint + bold;
+/// Blocked tasks get dimmed; high-priority tasks get a subtle accent tint;
 /// normal tasks use baseColor. Used by both tree preview and expanded dialog.
 @visibleForTesting
 TextStyle childTextStyle({
@@ -366,7 +410,7 @@ TextStyle childTextStyle({
     color: task.isHighPriority
         ? Color.lerp(baseColor, accent, 0.5)!
         : baseColor,
-    fontWeight: task.isHighPriority ? FontWeight.w600 : null,
+    // No bold — colour alone distinguishes high priority to keep visual weight light.
     height: 1.3,
   );
 }
@@ -766,14 +810,22 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
   Future<List<_TreeNode>> _fetchChildren(
       TaskProvider provider, int parentId, int depth) async {
     final children = await provider.getChildren(parentId);
-    final active = children
+    var active = children
         .where((c) => c.completedAt == null && c.skippedAt == null)
         .toList();
 
-    // Fetch blocked info for these children
+    // Fetch blocked info and reorder by dependency chains
+    final db = DatabaseHelper();
     final childIds = active.map((c) => c.id!).toList();
-    final blockedInfo = await DatabaseHelper().getBlockedTaskInfo(childIds);
+    final results = await Future.wait([
+      db.getBlockedTaskInfo(childIds),
+      db.getSiblingDependencyPairs(childIds),
+    ]);
+    final blockedInfo = results[0] as Map<int, ({int blockerId, String blockerName})>;
+    final siblingDeps = results[1] as Map<int, int>;
     _blockedIds.addAll(blockedInfo.keys);
+    // Reorder so blocked tasks appear after their blocker, matching All Tasks view
+    active = reorderByDependencyChains(active, siblingDeps);
 
     final nodes = <_TreeNode>[];
     for (var i = 0; i < active.length; i++) {
