@@ -22,8 +22,8 @@ Reference for manual test instructions. Use these names consistently.
 
 ### Starred tab
 - **Starred task card** — card with accent bar (left edge, color derived from task ID), star icon, task name, subtitle (sub-task count, "In progress"), and tree preview. **Tap** opens the expanded dialog (if task has children) or navigates to the task (if leaf). **Long-press** opens unstar option with undo. **Drag handle** on right for reordering.
-- **Tree preview** — inside the card, shows up to 3 children and 2 grandchildren per child with connector lines. High-priority children are shown with accent-tinted bold text. Blocked children are dimmed.
-- **Expanded dialog** — full-screen dialog opened by tapping a starred card with children. Shows task tree with lazy-expanding nodes. Chevron (`>` / `v`) on non-leaf nodes to expand/collapse. Leaf nodes show `open_in_new` icon. Same priority highlighting and blocked dimming as tree preview via shared `childTextStyle()` helper.
+- **Tree preview** — inside the card, shows up to 3 children and 2 grandchildren per child with connector lines. High-priority children are shown with accent-tinted text (colour only, no bold). Blocked children are dimmed. Children are reordered by dependency chains — blocked tasks appear after their blocker, matching All Tasks view.
+- **Expanded dialog** — full-screen dialog opened by tapping a starred card with children. Shows task tree with lazy-expanding nodes. Chevron (`>` / `v`) on non-leaf nodes to expand/collapse. Leaf nodes show `open_in_new` icon. Same priority highlighting, blocked dimming, and dependency-chain ordering as tree preview via shared `childTextStyle()` helper and `_reorderByDependencyChains()`.
 
 ### All Tasks tab
 - **Task card** — grid card for each task. Shows task name, top-left indicator icons (Today's 5, worked-on, started, priority, someday, deadline, scheduled today, starred). **Tap** navigates into the task. **Long-press** opens a context menu (delete, rename, move, schedule, etc.).
