@@ -70,6 +70,8 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 - When writing tests in bulk, use `flutter test --coverage` to find gaps. Parse `coverage/lcov.info` directly (`genhtml` may not be installed).
 - Capture any user-mentioned future work items as todo tasks immediately.
 - **When changing weighting logic**, update `docs/TODAYS_FIVE_ALGORITHM.md` to keep the algorithm doc in sync.
+- **When changing UI** (adding/removing/modifying dialogs, buttons, toggles, screens, or interaction patterns), update `docs/UI_VIEWS.md` to keep the UI reference in sync. For UI bugs, read `docs/UI_VIEWS.md` first to understand the current UI context before investigating.
+- **When a manual test case is reported as wrong** (user says the test doesn't match actual behavior), immediately update `docs/UI_VIEWS.md` to reflect the correct behavior before correcting the test case. The test was wrong because the docs were incomplete — fix the source of truth first.
 - When setup instructions change (new deps, build steps), ask user if they want to update README.
 - **Widget tests with sqflite_ffi**: `testWidgets` runs in `FakeAsync` — use `databaseFactoryFfiNoIsolate` in `setUpAll`. Use shared helpers from `test/helpers/async_pump.dart` (`pumpAndLoad`, `pumpAsync`) for async loading. Provide `AuthProvider` and `SyncService` in MultiProvider for screens that need them.
 

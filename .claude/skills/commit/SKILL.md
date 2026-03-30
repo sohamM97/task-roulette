@@ -23,3 +23,4 @@ Commit all current uncommitted changes and push to the remote.
 - Do NOT amend previous commits — always create a new commit.
 - Do NOT force push.
 - If there are no changes to commit, say so and stop.
+- If any changed files are under `lib/screens/` or `lib/widgets/` and modify UI (new/changed dialogs, buttons, toggles, interaction patterns), check whether `docs/UI_VIEWS.md` needs updating. Remind the user if it hasn't been updated.

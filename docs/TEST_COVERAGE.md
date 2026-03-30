@@ -1,10 +1,10 @@
 # Test Coverage Inventory
 
-Last updated: 2026-03-28
+Last updated: 2026-03-30
 
 ## Summary
 
-~1066 tests across 27 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
+~1074 tests across 27 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
 
 ## Covered
 
@@ -20,7 +20,7 @@ Last updated: 2026-03-28
 Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** (`suppressDeadlineAutoPin`/`unsuppressDeadlineAutoPin`/`getDeadlineSuppressedIds`: suppress+retrieve, idempotent insert, unsuppress per date, cross-date isolation, empty for unknown date, cleared by `deleteAllLocalData`).
 
 ### Providers (good — 87.3%)
-- **test/providers/task_provider_test.dart** (~195 tests) — Navigation (load/into/back/toTask), completion (with nav, without nav, leaf handling), start/unstart with `_currentParent` freshness, dependencies (add/remove/cycle prevention, **dep removal on complete/skip** returning `removedDeps`, undo via `restoredDeps`, `getDependentTaskNames`, `reSkipTask`/`reCompleteTask` discarding deps, `blockedTaskIds` includes `currentParent`), random pick, deletion (single/with-relationships/subtree/restore), rename, field updates (URL/priority/someday) all with `_currentParent` freshness, someday↔priority mutual exclusion, someday weight exclusions (staleness/started/novelty skip, all-boosts-stacked still base weight, someday↔priority mutual exclusion at weight level), worked-on, multi-parent DAG (link/unlink), Today's 5 leaf filtering (`getAllLeafTasks`, `pickWeightedN`), undo/restore, `refreshCurrentView` (root refresh, non-root preserves position, stack depth preserved, no mutation trigger), **deadline** (sort tier ≤3 days at tier 1, overdue tier 1, >3 days normal, `updateTaskDeadline` with `_currentParent` freshness, weight multiplier statistical tests).
+- **test/providers/task_provider_test.dart** (~203 tests) — Navigation (load/into/back/toTask), completion (with nav, without nav, leaf handling), start/unstart with `_currentParent` freshness, dependencies (add/remove/cycle prevention, **dep removal on complete/skip** returning `removedDeps`, undo via `restoredDeps`, `getDependentTaskNames`, `reSkipTask`/`reCompleteTask` discarding deps, `blockedTaskIds` includes `currentParent`), random pick, deletion (single/with-relationships/subtree/restore), rename, field updates (URL/priority/someday) all with `_currentParent` freshness, someday↔priority mutual exclusion, someday weight exclusions (staleness/started/novelty skip, all-boosts-stacked still base weight, someday↔priority mutual exclusion at weight level), worked-on, multi-parent DAG (link/unlink), Today's 5 leaf filtering (`getAllLeafTasks`, `pickWeightedN`), undo/restore, `refreshCurrentView` (root refresh, non-root preserves position, stack depth preserved, no mutation trigger), **deadline** (sort tier ≤3 days at tier 1, overdue tier 1, >3 days normal, `updateTaskDeadline` with `_currentParent` freshness, weight multiplier statistical tests), **deferNotify** (`addTask` with `deferNotify:true` skips onMutation and task list refresh, still inserts task+relationships in DB, `refreshAfterMutation()` completes deferred notification, deferred flow allows DB writes like pinning before listeners fire).
 - **test/providers/theme_provider_test.dart** (8 tests) — Toggle, persistence, icons, listener notifications.
 - **test/providers/auth_provider_test.dart** (6 tests) — `setSyncStatus` updates/notifications, `isConfigured`, initial state.
 

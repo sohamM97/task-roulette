@@ -24,7 +24,7 @@ Generate a checklist of manual tests the user should run for recent changes.
    - **Data/DB changes** — schema migrations, new queries
    - **Edge cases** — boundary conditions, empty states, error paths
 
-3. **Before writing any test**, read `UI_VIEWS.md` (in this skill's directory) for canonical view names, then read the widget code for every screen/dialog touched by the changes. Note the exact button labels, icon names, menu item text, and how each interaction is triggered (tap, long press, swipe, overflow menu, etc.). Use view names from `UI_VIEWS.md` consistently. Do NOT proceed to step 4 until you have read every relevant widget file.
+3. **Before writing any test**, read `docs/UI_VIEWS.md` (in the project root) for canonical view names, then read the widget code for every screen/dialog touched by the changes. Note the exact button labels, icon names, menu item text, and how each interaction is triggered (tap, long press, swipe, overflow menu, etc.). Use view names from `docs/UI_VIEWS.md` consistently. Do NOT proceed to step 4 until you have read every relevant widget file.
 
 4. Generate a numbered checklist of manual tests. Every UI element referenced MUST come from step 3's reading — never from memory or assumption. Format rules:
    - **Each entry is a concrete test case**, not a step. A test case has a clear action and expected outcome. Setup steps (creating tasks, navigating) go in a separate "Setup" section before the test cases, not as numbered test items. A test case that ends with "dialog appears" or "screen shows X" without verifying the final outcome is incomplete — it's a step, not a test. **Always use numbered lists** (1, 2, 3...), never bullet points or checkboxes.
@@ -66,7 +66,7 @@ Create [whatever state is needed for the tests below].
 ## Rules
 
 - BLOCKING: You must read every relevant widget file in step 3 before generating any tests. If a test step mentions a UI element you haven't read the code for, delete the test and read the code first.
-- **Keep UI_VIEWS.md in sync.** If you discover UI behavior that is not documented in `UI_VIEWS.md`, or that has changed from what is documented, update `UI_VIEWS.md` as part of generating the test checklist. This ensures the reference stays accurate for future test runs.
+- **Keep `docs/UI_VIEWS.md` in sync.** If you discover UI behavior that is not documented in `docs/UI_VIEWS.md`, or that has changed from what is documented, update `docs/UI_VIEWS.md` as part of generating the test checklist. This ensures the reference stays accurate for future test runs.
 - Never write instructions that contradict or omit app behavior. Use precise language that reflects how the app actually works. If the app does something automatically (e.g. deadline inheritance from parent to child), mention it explicitly so the user isn't confused when it happens. Don't say "no deadline" when the task inherits one — say "it will automatically inherit the parent's deadline".
 - Only reference UI elements that actually exist on the screen. If the widget code shows an icon, don't say "shows the deadline" — say "shows the deadline icon". If information isn't visually displayed, don't ask the user to verify it.
 - Don't suggest tests that duplicate what automated tests already cover — check the test files first.

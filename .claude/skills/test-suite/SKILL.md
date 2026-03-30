@@ -14,3 +14,5 @@ Launch both skills simultaneously using the Agent tool, **always in the backgrou
 2. **Manual test agent** — runs `/manual-test`
 
 Both agents MUST run in the background so the user can continue working. Present combined results as each agent completes.
+
+When presenting auto-test results, include the test category labels (Regression, Mechanism, Baseline, Edge case) from the agent's report so the user can see at a glance which tests guard the bug vs test the fix mechanism.

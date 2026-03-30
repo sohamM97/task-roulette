@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:task_roulette/data/database_helper.dart';
+import 'package:task_roulette/data/todays_five_pin_helper.dart';
 import 'package:task_roulette/models/task.dart';
 import 'package:task_roulette/models/task_schedule.dart';
 
@@ -2645,6 +2646,116 @@ void main() {
       expect(loaded.pinnedIds, isNot(contains(parent)));
       // Other task unchanged
       expect(loaded.taskIds, contains(other));
+    });
+  });
+
+  group('pin-on-add race condition regression', () {
+    // Regression test for the pin-on-add bug: when adding a task with pin
+    // toggled, refreshSnapshots() (triggered by notifyListeners) could
+    // overwrite the pin via _persist() if it ran before the pin was saved.
+    //
+    // This test simulates the race at the DB level:
+    // 1. Existing Today's 5 state (no pin on new task)
+    // 2. pinNewTask saves the pin
+    // 3. A stale _persist() writes old in-memory state (without pin)
+    // 4. Verify whether the pin survived
+    //
+    // Bug (before fix): step 3 clobbers step 2's pin.
+    // Fix: deferNotify ensures step 2 completes before listeners fire.
+
+    test('stale persist overwrites externally added pin', () async {
+      final id1 = await db.insertTask(Task(name: 'Existing 1'));
+      final id2 = await db.insertTask(Task(name: 'Existing 2'));
+      final id3 = await db.insertTask(Task(name: 'Existing 3'));
+      final id4 = await db.insertTask(Task(name: 'Existing 4'));
+      final id5 = await db.insertTask(Task(name: 'Existing 5'));
+      final newTask = await db.insertTask(Task(name: 'Newly Added'));
+
+      // Step 1: initial Today's 5 state
+      await db.saveTodaysFiveState(
+        date: '2026-03-30',
+        taskIds: [id1, id2, id3, id4, id5],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {},
+      );
+
+      // Capture the stale in-memory state (what refreshSnapshots would have)
+      final staleState = await db.loadTodaysFiveState('2026-03-30');
+
+      // Step 2: pinNewTask saves the pin (what _pinNewTaskInTodays5 does)
+      final pinResult = TodaysFivePinHelper.pinNewTask(staleState!, newTask);
+      expect(pinResult, isNotNull);
+      expect(pinResult!.pinnedIds, contains(newTask));
+      await db.saveTodaysFiveState(
+        date: '2026-03-30',
+        taskIds: pinResult.taskIds,
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: pinResult.pinnedIds,
+      );
+
+      // Verify pin is in DB after step 2
+      final afterPin = await db.loadTodaysFiveState('2026-03-30');
+      expect(afterPin!.pinnedIds, contains(newTask),
+          reason: 'Pin should exist after pinNewTask save');
+
+      // Step 3: stale _persist() from refreshSnapshots writes OLD state
+      // This is the race — it uses staleState which has no pin.
+      await db.saveTodaysFiveState(
+        date: '2026-03-30',
+        taskIds: staleState.taskIds,
+        completedIds: staleState.completedIds,
+        workedOnIds: staleState.workedOnIds,
+        pinnedIds: staleState.pinnedIds,
+      );
+
+      // Step 4: verify the pin was lost (this IS the bug scenario)
+      final afterRace = await db.loadTodaysFiveState('2026-03-30');
+      expect(afterRace!.pinnedIds, isNot(contains(newTask)),
+          reason: 'Stale persist overwrites the pin — '
+              'this demonstrates why deferNotify is needed');
+      expect(afterRace.taskIds, isNot(contains(newTask)),
+          reason: 'New task also lost from Today\'s 5 list');
+    });
+
+    test('with deferNotify pattern, pin survives because persist sees correct state', () async {
+      final id1 = await db.insertTask(Task(name: 'Existing 1'));
+      final id2 = await db.insertTask(Task(name: 'Existing 2'));
+      final id3 = await db.insertTask(Task(name: 'Existing 3'));
+      final id4 = await db.insertTask(Task(name: 'Existing 4'));
+      final id5 = await db.insertTask(Task(name: 'Existing 5'));
+      final newTask = await db.insertTask(Task(name: 'Newly Added'));
+
+      // Step 1: initial Today's 5 state
+      await db.saveTodaysFiveState(
+        date: '2026-03-30',
+        taskIds: [id1, id2, id3, id4, id5],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {},
+      );
+
+      // Step 2: pinNewTask saves the pin BEFORE listeners fire (deferNotify)
+      final saved = await db.loadTodaysFiveState('2026-03-30');
+      final pinResult = TodaysFivePinHelper.pinNewTask(saved!, newTask);
+      expect(pinResult, isNotNull);
+      await db.saveTodaysFiveState(
+        date: '2026-03-30',
+        taskIds: pinResult!.taskIds,
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: pinResult.pinnedIds,
+      );
+
+      // Step 3: NOW refreshSnapshots fires — reads DB which already has the pin.
+      // The external-modification detection sees pinnedIds differ from
+      // in-memory state and calls _reloadFromDb, preserving the pin.
+      final dbState = await db.loadTodaysFiveState('2026-03-30');
+      expect(dbState!.pinnedIds, contains(newTask),
+          reason: 'Pin persisted before listeners fired — safe from race');
+      expect(dbState.taskIds, contains(newTask),
+          reason: 'New task present in Today\'s 5 list');
     });
   });
 

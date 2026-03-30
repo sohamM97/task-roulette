@@ -43,6 +43,7 @@ Quick verification that fixes were applied correctly.
    - Code duplication that could be extracted
    - Unused imports, dead code, TODO comments
    - Refactoring opportunities (overly complex methods, poor naming, missing abstractions, tangled responsibilities)
+   - **UI docs drift**: Check if any UI changes (new dialogs, buttons, toggles, interaction patterns) are missing from `docs/UI_VIEWS.md`. Flag any stale or missing entries.
 4. **Write findings** to `docs/CODE_REVIEW.md`. Append a new round section — do NOT overwrite previous rounds. Use this format:
 
 ```markdown
