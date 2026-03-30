@@ -1,6 +1,6 @@
 ---
-name: merge
-description: Merge Pull Request. Use when the user wants to merge a PR.
+name: merge-check
+description: Check CI & reviews, then merge PR. Use when the user wants to merge a PR.
 ---
 
 # Merge Pull Request
