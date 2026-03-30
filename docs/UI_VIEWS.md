@@ -40,7 +40,8 @@ Reference for manual test instructions. Use these names consistently.
 
 ## Dialogs
 
-- **Add Task dialog** — opened via the + FAB. Text field for name, "Add multiple" toggle, "Inbox" checkbox.
+- **Add Task dialog** — opened via the + FAB. Text field for name, "Add multiple" toggle, "Inbox" checkbox (root level only, default ON), pin toggle (only when Today's 5 exists and pin slots available). Pin label: "Pin" at root level, "Pin for today" inside a task. Only leaf tasks can appear in Today's 5 — non-leaf tasks are never pinned.
+- **"This task is pinned" warning dialog** — appears when tapping the + FAB on a task that is pinned in Today's 5. Title: "This task is pinned", body: explains adding a subtask will replace the pinned task with the new subtask. Buttons: "Cancel" / "Add anyway". Shown before the Add Task dialog opens.
 - **Schedule dialog** — opened via the calendar icon on a task card or leaf detail. Has deadline picker (date + "Due by"/"On" toggle), recurrence settings.
 - **Remove deadline dialog** — appears when tapping "Done today" on a task with a deadline. Title: "Remove deadline?", body shows deadline type and date, buttons: "Keep" / "Remove". Dismissing (tap outside) cancels the action entirely.
 

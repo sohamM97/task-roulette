@@ -357,7 +357,12 @@ class TaskListScreenState extends State<TaskListScreen>
     );
     if (!mounted || result == null) return;
     if (result is SingleTask) {
-      final taskId = await provider.addTask(result.name, url: result.url, isInbox: result.addToInbox);
+      // Bug fix: when pinning on add, defer notifyListeners until after the
+      // pin is saved to DB. Otherwise refreshSnapshots() (triggered by
+      // notifyListeners) races with _pinNewTaskInTodays5 and overwrites the
+      // pin via _persist() before the pin is saved.
+      final needsPin = result.pinInTodays5 || parentIsPinned;
+      final taskId = await provider.addTask(result.name, url: result.url, isInbox: result.addToInbox, deferNotify: needsPin);
       if (result.pinInTodays5 && mounted) {
         await _pinNewTaskInTodays5(taskId);
       } else if (parentIsPinned && mounted) {
@@ -366,6 +371,8 @@ class TaskListScreenState extends State<TaskListScreen>
         // appears immediately without waiting for a tab switch.
         await _transferPinToChild(parentId, taskId);
       }
+      // If we deferred notification, trigger it now that the pin is persisted.
+      if (needsPin) await provider.refreshAfterMutation();
       if (provider.isRoot && mounted) await _loadInboxCount();
     } else if (result is SwitchToBrainDump) {
       await _brainDump(initialText: result.initialText);

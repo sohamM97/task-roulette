@@ -3827,4 +3827,127 @@ void main() {
       expect(provider.currentParent!.starOrder, 0);
     });
   });
+
+  group('addTask deferNotify', () {
+    test('addTask with deferNotify:true does not call onMutation', () async {
+      await provider.loadRootTasks();
+
+      int mutationCount = 0;
+      provider.onMutation = () => mutationCount++;
+
+      await provider.addTask('Deferred Task', deferNotify: true);
+
+      // onMutation should NOT have been called
+      expect(mutationCount, 0);
+    });
+
+    test('addTask with deferNotify:true does not refresh task list', () async {
+      await provider.loadRootTasks();
+      expect(provider.tasks, isEmpty);
+
+      await provider.addTask('Deferred Task', deferNotify: true);
+
+      // Task list should still be empty because _refreshAfterMutation was skipped
+      expect(provider.tasks, isEmpty);
+    });
+
+    test('addTask with deferNotify:false (default) calls onMutation', () async {
+      await provider.loadRootTasks();
+
+      int mutationCount = 0;
+      provider.onMutation = () => mutationCount++;
+
+      await provider.addTask('Normal Task');
+
+      expect(mutationCount, 1);
+    });
+
+    test('addTask with deferNotify:false refreshes task list', () async {
+      await provider.loadRootTasks();
+
+      await provider.addTask('Normal Task');
+
+      expect(provider.tasks, hasLength(1));
+      expect(provider.tasks.first.name, 'Normal Task');
+    });
+
+    test('addTask with deferNotify:true still inserts task in DB', () async {
+      await provider.loadRootTasks();
+
+      final taskId = await provider.addTask('Deferred Task', deferNotify: true);
+
+      // Task should exist in DB even though listeners weren't notified
+      final task = await db.getTaskById(taskId);
+      expect(task, isNotNull);
+      expect(task!.name, 'Deferred Task');
+    });
+
+    test('addTask with deferNotify:true still creates relationships', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      await provider.loadRootTasks();
+      final parent = provider.tasks.firstWhere((t) => t.id == parentId);
+      await provider.navigateInto(parent);
+
+      final childId = await provider.addTask('Child', deferNotify: true);
+
+      // Relationship should exist in DB
+      final children = await db.getChildren(parentId);
+      expect(children.any((c) => c.id == childId), isTrue);
+    });
+
+    test('refreshAfterMutation completes deferred notification', () async {
+      await provider.loadRootTasks();
+
+      int mutationCount = 0;
+      provider.onMutation = () => mutationCount++;
+
+      await provider.addTask('Deferred Task', deferNotify: true);
+      expect(mutationCount, 0);
+      expect(provider.tasks, isEmpty);
+
+      // Now call refreshAfterMutation to complete the deferred work
+      await provider.refreshAfterMutation();
+
+      expect(mutationCount, 1);
+      expect(provider.tasks, hasLength(1));
+      expect(provider.tasks.first.name, 'Deferred Task');
+    });
+
+    test('deferNotify allows DB writes before listeners fire', () async {
+      // This simulates the pin-on-add bug fix:
+      // 1. addTask with deferNotify:true
+      // 2. Pin the new task in Today's 5 (DB write)
+      // 3. Call refreshAfterMutation()
+      // The key point: step 2 happens without listeners firing in between.
+      await provider.loadRootTasks();
+
+      int mutationCount = 0;
+      provider.onMutation = () => mutationCount++;
+
+      final taskId = await provider.addTask('Pin Me', deferNotify: true);
+
+      // Simulate pinning the task in the DB before listeners fire
+      final today = DateTime.now().toIso8601String().substring(0, 10);
+      await db.saveTodaysFiveState(
+        date: today,
+        taskIds: [taskId],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {taskId},
+      );
+
+      // No listeners fired yet — pin is safely persisted
+      expect(mutationCount, 0);
+
+      // Now trigger notification
+      await provider.refreshAfterMutation();
+      expect(mutationCount, 1);
+
+      // Verify the pin survived (not overwritten by a race condition)
+      final state = await db.loadTodaysFiveState(today);
+      expect(state, isNotNull);
+      expect(state!.taskIds, contains(taskId));
+      expect(state.pinnedIds, contains(taskId));
+    });
+  });
 }

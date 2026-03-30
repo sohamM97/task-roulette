@@ -102,7 +102,12 @@ class TaskProvider extends ChangeNotifier {
     await _refreshAfterMutation();
   }
 
-  Future<int> addTask(String name, {String? url, List<int>? additionalParentIds, bool isInbox = false}) async {
+  /// Adds a task and returns its ID.
+  ///
+  /// When [deferNotify] is true, skips [_refreshAfterMutation] so the caller
+  /// can perform follow-up DB writes (e.g. pinning in Today's 5) before
+  /// listeners fire. The caller MUST call [refreshAfterMutation] afterwards.
+  Future<int> addTask(String name, {String? url, List<int>? additionalParentIds, bool isInbox = false, bool deferNotify = false}) async {
     final task = Task(name: name, url: url, isInbox: isInbox);
     final taskId = await _db.insertTask(task);
 
@@ -118,7 +123,7 @@ class TaskProvider extends ChangeNotifier {
       }
     }
 
-    await _refreshAfterMutation();
+    if (!deferNotify) await _refreshAfterMutation();
     return taskId;
   }
 
@@ -834,6 +839,9 @@ class TaskProvider extends ChangeNotifier {
 
   /// Refreshes the current list and notifies sync that a mutation occurred.
   /// Use this for all DB-mutating methods instead of bare [_refreshCurrentList].
+  /// Public entry point for deferred-notify callers (see [addTask] deferNotify).
+  Future<void> refreshAfterMutation() async => _refreshAfterMutation();
+
   Future<void> _refreshAfterMutation() async {
     await _refreshCurrentList();
     onMutation?.call();

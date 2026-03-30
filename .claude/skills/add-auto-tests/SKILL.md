@@ -34,7 +34,11 @@ If no argument is provided, ask the user which mode they want.
    - Widget tests for new UI components (if testable without async issues — see Caveats)
 6. Run `flutter test` to verify all tests pass.
 7. Update `docs/TEST_COVERAGE.md` with the new tests added.
-8. Report what was added and the new test count.
+8. Report what was added and the new test count. **Categorize each test** in the report:
+   - **Regression** — reproduces the original bug scenario; would have failed before the fix
+   - **Mechanism** — verifies the new code/parameter works correctly
+   - **Baseline** — confirms existing behavior is preserved (no regression)
+   - **Edge case** — boundary conditions, empty states, error paths
 
 ## Mode 2: Coverage Gaps
 
@@ -71,3 +75,4 @@ If no argument is provided, ask the user which mode they want.
 - Always run `flutter analyze` and `flutter test` after writing tests to verify they pass with no warnings.
 - Do NOT commit — just write the tests and report. The user will decide when to commit.
 - If a test reveals an actual bug, flag it to the user immediately.
+- **Bug fix tests must test the bug, not just the fix mechanism.** For every bug fix, write at least one regression test that reproduces the original failure scenario — i.e., a test that would have FAILED before the fix and PASSES after. Don't just test that a new parameter/flag works; simulate the conditions that caused the bug (e.g., concurrent operations, stale state, specific input sequences). The goal is to catch the bug if someone reverts the fix or introduces a similar race. Testing only the mechanism (e.g., "deferNotify skips notification") doesn't guard against the actual regression.
