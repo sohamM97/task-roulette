@@ -3913,6 +3913,43 @@ void main() {
       expect(provider.tasks.first.name, 'Deferred Task');
     });
 
+    // Regression: Before the try/finally fix in task_list_screen.dart, if the
+    // pin operation threw after addTask(deferNotify: true), refreshAfterMutation
+    // was never called — the task existed in DB but the UI stayed stale.
+    // The fix wraps pin operations in try/finally so refreshAfterMutation always
+    // runs. This test verifies the provider-level contract that makes it work.
+    test('refreshAfterMutation recovers task list even after pin failure', () async {
+      await provider.loadRootTasks();
+
+      int mutationCount = 0;
+      provider.onMutation = () => mutationCount++;
+
+      final taskId = await provider.addTask('Pin Me', deferNotify: true);
+
+      // Task is in DB but not in provider's list
+      expect(provider.tasks, isEmpty);
+      expect(mutationCount, 0);
+
+      // Simulate pin operation that throws (e.g. saveTodaysFiveState fails).
+      // In the real code, the finally block catches this.
+      bool pinFailed = false;
+      try {
+        throw Exception('Simulated pin failure');
+      } catch (_) {
+        pinFailed = true;
+      } finally {
+        // This is the critical call — the try/finally fix ensures this always runs
+        await provider.refreshAfterMutation();
+      }
+
+      expect(pinFailed, isTrue);
+      // Despite pin failure, task is now visible in the provider's list
+      expect(provider.tasks, hasLength(1));
+      expect(provider.tasks.first.id, taskId);
+      expect(provider.tasks.first.name, 'Pin Me');
+      expect(mutationCount, 1);
+    });
+
     test('deferNotify allows DB writes before listeners fire', () async {
       // This simulates the pin-on-add bug fix:
       // 1. addTask with deferNotify:true
@@ -3948,6 +3985,44 @@ void main() {
       expect(state, isNotNull);
       expect(state!.taskIds, contains(taskId));
       expect(state.pinnedIds, contains(taskId));
+    });
+
+    // Edge case: multiple deferred adds without intermediate refreshes.
+    // refreshAfterMutation called once at the end should pick up all tasks.
+    test('single refreshAfterMutation picks up multiple deferred tasks', () async {
+      await provider.loadRootTasks();
+
+      final id1 = await provider.addTask('Deferred 1', deferNotify: true);
+      final id2 = await provider.addTask('Deferred 2', deferNotify: true);
+      final id3 = await provider.addTask('Deferred 3', deferNotify: true);
+
+      // None visible yet
+      expect(provider.tasks, isEmpty);
+
+      await provider.refreshAfterMutation();
+
+      // All three should appear
+      expect(provider.tasks, hasLength(3));
+      final ids = provider.tasks.map((t) => t.id).toSet();
+      expect(ids, containsAll([id1, id2, id3]));
+    });
+
+    // Baseline: without the try/finally fix, if refreshAfterMutation is never
+    // called after deferNotify:true, the task is invisible in the UI despite
+    // existing in the DB. This baseline documents why the finally block matters.
+    test('task stays invisible in provider without refreshAfterMutation call', () async {
+      await provider.loadRootTasks();
+
+      final taskId = await provider.addTask('Orphaned', deferNotify: true);
+
+      // Task exists in DB
+      final dbTask = await db.getTaskById(taskId);
+      expect(dbTask, isNotNull);
+      expect(dbTask!.name, 'Orphaned');
+
+      // But provider still shows empty list — this is the stale state the
+      // try/finally fix prevents
+      expect(provider.tasks, isEmpty);
     });
   });
 }
