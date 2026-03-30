@@ -123,6 +123,11 @@ class TaskProvider extends ChangeNotifier {
       }
     }
 
+    // Bug fix: without deferNotify, _refreshAfterMutation() fired immediately
+    // after task insert, triggering notifyListeners -> refreshSnapshots() ->
+    // _persist(), which overwrote the pin before _pinNewTaskInTodays5 could
+    // save it. deferNotify: true skips this call so the caller can persist
+    // the pin first, then call refreshAfterMutation() explicitly.
     if (!deferNotify) await _refreshAfterMutation();
     return taskId;
   }

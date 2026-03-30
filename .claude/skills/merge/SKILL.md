@@ -16,15 +16,16 @@ Merge the current branch's PR after verifying CI and review comments.
 1. Identify the PR — use `$ARGUMENTS` if provided, otherwise run `gh pr view --json number` from the current branch.
 2. Launch **two background agents in parallel**:
    - **CI agent:** Run `gh pr checks` and wait for **all** checks to pass (including `analyze-and-test`, `claude-review`, and any other checks). If any check is still pending, poll every 30 seconds (up to **10 minutes** — `claude-review` can take up to 12 minutes). If a check fails, stop and report the failure. Checks with status `skipping` can be ignored. **Note:** `claude-review` and `codex` are independent review bots — do NOT conflate them. `claude-review` is a GitHub Actions check that posts comments; `codex` (chatgpt-codex-connector[bot]) is a separate bot. One being over quota does NOT mean the other won't run.
-   - **Review comments agent:** Check all three comment endpoints for comments from **any bot** (Codex, Claude, or other reviewers) **on this specific PR number only** — do NOT look at GitHub Actions run history or other PRs. **Poll for up to 10 minutes** (claude-review can take 12+ minutes to complete and post comments):
-     - `gh api repos/{owner}/{repo}/issues/{number}/comments` — where Codex posts review summaries
+   - **Review comments agent:** First wait for the `claude-review` CI check to complete (poll `gh pr checks {number}` every 30 seconds until `claude-review` shows `pass` or `fail` — up to **15 minutes**). Only AFTER `claude-review` has completed, check all three comment endpoints for comments from **any bot** (Codex, Claude, or other reviewers) **on this specific PR number only** — do NOT look at GitHub Actions run history or other PRs:
+     - `gh api repos/{owner}/{repo}/issues/{number}/comments` — where Codex posts review summaries and Claude posts review bodies
      - `gh api repos/{owner}/{repo}/pulls/{number}/comments` — inline review comments (both Codex and Claude post here)
      - `gh api repos/{owner}/{repo}/pulls/{number}/reviews` — review bodies
-     Wait up to 10 minutes for comments to arrive (poll every 60 seconds). Rules:
+     After reading the endpoints, if no `claude[bot]` comments are found yet, poll these endpoints 3 more times at 30-second intervals (claude-review may post comments slightly after the CI check completes). Rules:
      - If bot comments are only about **quota being over**, ignore them — that's fine.
      - If any reviewer has **bugfix or actionable comments** (look for P0/P1/P2 labels, specific code suggestions, or bug reports), address them by default — fix the issues, commit, and push. Only ask the user if the fix is unclear or contentious.
      - If a review completed with **no inline comments** (e.g. Claude's `"No buffered inline comments"`), that's a clean review — no action needed.
-     - If there are **no comments** after 10 minutes, note this so the user can check manually.
+     - If there are **no comments** after the CI check completed and polling, note this so the user can check manually.
+     - **CRITICAL:** Do NOT conclude "no review comments" while `claude-review` CI is still pending or running. The review comments are posted by the CI job — they cannot exist until the job finishes.
 
 Both agents MUST run in parallel (launched in a single message with two Agent tool calls). **Report results as they arrive** — don't wait for both to finish. If any reviewer has actionable comments, address them immediately (even if CI is still pending — CI will re-run after the fix push anyway). Only proceed to Phase 2 once both are resolved.
 

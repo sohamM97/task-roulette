@@ -363,16 +363,23 @@ class TaskListScreenState extends State<TaskListScreen>
       // pin via _persist() before the pin is saved.
       final needsPin = result.pinInTodays5 || parentIsPinned;
       final taskId = await provider.addTask(result.name, url: result.url, isInbox: result.addToInbox, deferNotify: needsPin);
-      if (result.pinInTodays5 && mounted) {
-        await _pinNewTaskInTodays5(taskId);
-      } else if (parentIsPinned && mounted) {
-        // Parent was pinned in Today's 5 and just became non-leaf —
-        // eagerly transfer the pin to the new subtask so the pin icon
-        // appears immediately without waiting for a tab switch.
-        await _transferPinToChild(parentId, taskId);
+      if (needsPin) {
+        try {
+          if (result.pinInTodays5 && mounted) {
+            await _pinNewTaskInTodays5(taskId);
+          } else if (parentIsPinned && mounted) {
+            // Parent was pinned in Today's 5 and just became non-leaf —
+            // eagerly transfer the pin to the new subtask so the pin icon
+            // appears immediately without waiting for a tab switch.
+            await _transferPinToChild(parentId, taskId);
+          }
+        } finally {
+          // If we deferred notification, trigger it now that the pin is persisted.
+          // In a finally block so the provider always refreshes even if pinning
+          // throws — otherwise the task exists in DB but the UI stays stale.
+          await provider.refreshAfterMutation();
+        }
       }
-      // If we deferred notification, trigger it now that the pin is persisted.
-      if (needsPin) await provider.refreshAfterMutation();
       if (provider.isRoot && mounted) await _loadInboxCount();
     } else if (result is SwitchToBrainDump) {
       await _brainDump(initialText: result.initialText);
