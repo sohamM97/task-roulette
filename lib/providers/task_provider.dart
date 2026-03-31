@@ -300,8 +300,11 @@ class TaskProvider extends ChangeNotifier {
 
   /// Re-adds a previously existing parent-child relationship (for undo).
   /// Skips cycle check since the relationship is known to be safe.
+  // CR-fix I-42: was missing _refreshAfterMutation — undo-restored
+  // relationships didn't refresh UI or trigger sync push.
   Future<void> addRelationship(int parentId, int childId) async {
     await _db.addRelationship(parentId, childId);
+    await _refreshAfterMutation();
   }
 
   double _taskWeight(Task t, {Set<int>? scheduleBoostedIds, Map<int, int>? deadlineDaysMap, double normFactor = 1.0}) {
@@ -655,9 +658,11 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Reassigns sequential star_order 0..N-1 for the given task IDs.
+  // CR-fix I-43: was calling onMutation directly — inconsistent with pattern,
+  // sync could fire before provider state refreshed.
   Future<void> reorderStarredTasks(List<int> taskIds) async {
     await _db.reorderStarredTasks(taskIds);
-    onMutation?.call();
+    await _refreshAfterMutation();
   }
 
   /// Toggles someday flag. Mutually exclusive with high priority.
@@ -820,8 +825,11 @@ class TaskProvider extends ChangeNotifier {
       taskById[t.id!] = t;
     }
 
-    // Walk chain from a head, depth-first
+    // Walk chain from a head, depth-first.
+    // CR-fix I-46: visited set prevents infinite recursion if data is corrupted.
+    final visited = <int>{};
     void walkChain(int id, List<Task> out) {
+      if (!visited.add(id)) return; // cycle — break
       final task = taskById[id];
       if (task == null) return;
       out.add(task);

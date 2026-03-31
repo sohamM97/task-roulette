@@ -3228,6 +3228,32 @@ calls in the error path.
 
 ---
 
+## Round 10 Fix (2026-03-31)
+
+### Fixed
+| ID | Title | Fix |
+|----|-------|-----|
+| CR-16 | TextEditingController disposal regressions | `try/finally` in `_renameTask`, `.then(dispose)` in `showEditUrlDialog` |
+| CR-17 | `deleteTaskWithRelationships` missing sync events | Enqueue rel/dep/schedule removal sync entries before delete |
+| I-42 | `addRelationship` missing `_refreshAfterMutation` | Added call |
+| I-43 | `reorderStarredTasks` inconsistent pattern | Replaced `onMutation` with `_refreshAfterMutation` |
+| I-44 | `_persistAndTrim` not awaited in `_togglePinFromSheet` | Added `await`, changed method to async |
+| I-45 | Completion animation `onDone` without mounted check | Added `if (mounted)` guard |
+| I-46 | `walkChain` no cycle detection | Added `visited` set in both `task_provider.dart` and `starred_screen.dart` |
+| I-47 | Token refresh not deduplicated | Added `_refreshFuture` dedup in `AuthService.refreshToken()` |
+| M-35 | `_onReorder` not awaiting async call | Added `await` |
+| M-37 | `showInfoSnackBar` without mounted check in pin error path | Added `if (mounted)` guard |
+
+### Already Fixed
+| ID | Title | Notes |
+|----|-------|-------|
+| M-36 | TextPainter disposal | Both code paths already call `textPainter.dispose()` |
+
+### Not Fixed (deferred)
+| ID | Title | Reason |
+|----|-------|--------|
+| M-34 | Starred screen N+1 queries for tree preview | Low impact — queries parallelized via Future.wait |
+
 ### Items Still Open From All Rounds
 
 | Item | Title | Round | Status |
@@ -3236,3 +3262,4 @@ calls in the error path.
 | M-15 | Refresh token in plaintext SharedPreferences | 5 | Open — needs `flutter_secure_storage` |
 | M-26 | ImportDatabase doesn't refresh Today's 5 | 7 | Acceptable |
 | M-32 | N+1 queries in `deleteTaskAndReparentChildren` | 9 | Open — low impact |
+| M-34 | Starred screen N+1 queries for tree preview | 10 | Deferred — low impact |

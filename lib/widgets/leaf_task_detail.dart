@@ -118,7 +118,8 @@ class LeafTaskDetail extends StatelessWidget {
           ),
         ],
       ),
-    );
+    // CR-fix CR-16: dispose controller after dialog closes to prevent memory leak.
+    ).then((_) => controller.dispose());
   }
 
 

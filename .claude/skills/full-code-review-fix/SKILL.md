@@ -26,6 +26,7 @@ You are fixing issues found during code review of the TaskRoulette Flutter codeb
 5. **Fix each issue**:
    - Read the relevant file(s) before making changes
    - Apply the fix
+   - **Add a comment** on each fix referencing the review item ID and briefly explaining what was wrong (e.g. `// CR-fix I-42: was missing _refreshAfterMutation — undo-restored relationships didn't refresh UI or trigger sync push.`). This makes fixes traceable back to the review.
    - If the fix changes user-facing behavior, note it for the commit message
    - If the recommended fix doesn't make sense after reading the code, use your judgment
 6. **Add test cases**: For each bug fix, add a regression test if one doesn't already exist. Run `flutter test` after each group of fixes.

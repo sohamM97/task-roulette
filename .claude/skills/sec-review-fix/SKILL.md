@@ -15,6 +15,7 @@ You are fixing security vulnerabilities found during the security review of the 
 4. **Fix each issue**:
    - Read the relevant file(s) before making changes
    - Apply the fix with minimal blast radius — don't refactor unrelated code
+   - **Add a comment** on each fix referencing the review item ID and briefly explaining what was wrong (e.g. `// SEC-fix H-3: validate URL scheme to prevent javascript: injection.`). This makes fixes traceable back to the review.
    - For dependency upgrades with breaking changes, note them and ask the user before proceeding
 5. **Add test cases**: For each security fix, add a test verifying the fix (e.g., test that invalid URL schemes are rejected, test that oversized backups are rejected). Run `flutter test` after each group of fixes.
 6. **Build check**: Run `flutter build linux` to verify compilation.

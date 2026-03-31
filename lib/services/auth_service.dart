@@ -191,7 +191,17 @@ class AuthService {
   }
 
   /// Refreshes the Firebase ID token. Returns true on success.
-  Future<bool> refreshToken() async {
+  // CR-fix I-47: deduplicate concurrent refresh calls — if push() and pull()
+  // both need a token refresh simultaneously, they share the same Future
+  // instead of making duplicate HTTP requests.
+  Future<bool>? _refreshFuture;
+
+  Future<bool> refreshToken() {
+    _refreshFuture ??= _doRefreshToken().whenComplete(() => _refreshFuture = null);
+    return _refreshFuture!;
+  }
+
+  Future<bool> _doRefreshToken() async {
     if (_firebaseRefreshToken == null) return false;
     final result = await _refreshFirebaseToken(_firebaseRefreshToken!);
     if (result != null) {

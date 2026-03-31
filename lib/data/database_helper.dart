@@ -1533,6 +1533,63 @@ class DatabaseHelper {
         where: 'task_id = ?', whereArgs: [taskId]);
       final schedules = scheduleMaps.map((m) => TaskSchedule.fromMap(m)).toList();
 
+      // Bug fix: enqueue relationship/dependency removal sync events before
+      // deleting. Before fix: only task deletion was synced, leaving orphan
+      // relationship/dependency docs in Firestore on other devices.
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final relSyncRows = await txn.rawQuery('''
+        SELECT p.sync_id AS parent_sync_id, c.sync_id AS child_sync_id
+        FROM task_relationships tr
+        JOIN tasks p ON p.id = tr.parent_id
+        JOIN tasks c ON c.id = tr.child_id
+        WHERE tr.parent_id = ? OR tr.child_id = ?
+      ''', [taskId, taskId]);
+      for (final row in relSyncRows) {
+        final pSyncId = row['parent_sync_id'] as String?;
+        final cSyncId = row['child_sync_id'] as String?;
+        if (pSyncId != null && cSyncId != null) {
+          await txn.insert('sync_queue', {
+            'entity_type': 'relationship',
+            'action': 'remove',
+            'key1': pSyncId,
+            'key2': cSyncId,
+            'created_at': now,
+          });
+        }
+      }
+      final depSyncRows = await txn.rawQuery('''
+        SELECT t.sync_id AS task_sync_id, d.sync_id AS depends_on_sync_id
+        FROM task_dependencies td
+        JOIN tasks t ON t.id = td.task_id
+        JOIN tasks d ON d.id = td.depends_on_id
+        WHERE td.task_id = ? OR td.depends_on_id = ?
+      ''', [taskId, taskId]);
+      for (final row in depSyncRows) {
+        final tSyncId = row['task_sync_id'] as String?;
+        final dSyncId = row['depends_on_sync_id'] as String?;
+        if (tSyncId != null && dSyncId != null) {
+          await txn.insert('sync_queue', {
+            'entity_type': 'dependency',
+            'action': 'remove',
+            'key1': tSyncId,
+            'key2': dSyncId,
+            'created_at': now,
+          });
+        }
+      }
+      // Enqueue schedule removal sync events
+      for (final schedule in schedules) {
+        if (schedule.syncId != null) {
+          await txn.insert('sync_queue', {
+            'entity_type': 'schedule',
+            'action': 'remove',
+            'key1': schedule.syncId!,
+            'key2': '',
+            'created_at': now,
+          });
+        }
+      }
+
       await txn.delete('task_relationships',
           where: 'parent_id = ? OR child_id = ?',
           whereArgs: [taskId, taskId]);
@@ -1548,7 +1605,7 @@ class DatabaseHelper {
           'action': 'remove',
           'key1': syncId,
           'key2': '',
-          'created_at': DateTime.now().millisecondsSinceEpoch,
+          'created_at': now,
         });
       }
 
