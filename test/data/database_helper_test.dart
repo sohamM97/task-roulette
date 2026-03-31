@@ -2194,6 +2194,86 @@ void main() {
       expect(queue, isEmpty);
     });
 
+    // M-38 Regression: Before fix, deleteTaskSubtree did NOT enqueue schedule
+    // removal sync events, so schedule docs remained as Firestore orphans
+    // after subtree deletion. This test reproduces the original failure.
+    test('deleteTaskSubtree enqueues schedule removal sync events', () async {
+      final rootId = await db.insertTask(Task(name: 'Root'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(rootId, childId);
+      await db.replaceSchedules(rootId, [
+        TaskSchedule(taskId: rootId, dayOfWeek: 1),
+      ]);
+      await db.replaceSchedules(childId, [
+        TaskSchedule(taskId: childId, dayOfWeek: 3),
+        TaskSchedule(taskId: childId, dayOfWeek: 5),
+      ]);
+      await db.drainSyncQueue(); // clear setup entries
+
+      await db.deleteTaskSubtree(rootId);
+
+      final queue = await db.drainSyncQueue();
+      final schedEntries = queue.where((e) => e['entity_type'] == 'schedule').toList();
+      expect(schedEntries.length, 3, reason: 'should enqueue removal for all 3 schedules');
+      for (final entry in schedEntries) {
+        expect(entry['action'], 'remove');
+        expect(entry['key1'], isNotEmpty, reason: 'schedule sync_id should be present');
+      }
+    });
+
+    // M-38 Edge case: schedules without sync_id should be silently skipped
+    // (no sync event enqueued) — only synced schedules need Firestore cleanup.
+    test('deleteTaskSubtree skips schedule sync for unsynced schedules', () async {
+      final rootId = await db.insertTask(Task(name: 'Root'));
+      await db.replaceSchedules(rootId, [
+        TaskSchedule(taskId: rootId, dayOfWeek: 2),
+      ]);
+      await db.drainSyncQueue();
+
+      // Null out schedule sync_id to simulate an unsynced schedule
+      final rawDb = await db.database;
+      await rawDb.update('task_schedules', {'sync_id': null});
+
+      await db.deleteTaskSubtree(rootId);
+
+      final queue = await db.drainSyncQueue();
+      final schedEntries = queue.where((e) => e['entity_type'] == 'schedule').toList();
+      expect(schedEntries, isEmpty, reason: 'unsynced schedules should not enqueue sync events');
+      // Task removal should still be enqueued
+      final taskEntries = queue.where((e) => e['entity_type'] == 'task').toList();
+      expect(taskEntries.length, 1);
+    });
+
+    // M-38 Mechanism: subtree delete with tasks + relationships + dependencies +
+    // schedules enqueues all entity types together in the sync queue.
+    test('deleteTaskSubtree enqueues all entity type removals including schedules', () async {
+      final rootId = await db.insertTask(Task(name: 'Root'));
+      final childId = await db.insertTask(Task(name: 'Child'));
+      final externalBlocker = await db.insertTask(Task(name: 'External'));
+      await db.addRelationship(rootId, childId);
+      await db.addDependency(childId, externalBlocker);
+      await db.replaceSchedules(rootId, [
+        TaskSchedule(taskId: rootId, dayOfWeek: 4),
+      ]);
+      await db.drainSyncQueue();
+
+      await db.deleteTaskSubtree(rootId);
+
+      final queue = await db.drainSyncQueue();
+      final types = queue.map((e) => e['entity_type']).toSet();
+      expect(types, containsAll(['task', 'relationship', 'dependency', 'schedule']),
+          reason: 'all 4 entity types should have removal events');
+
+      final taskEntries = queue.where((e) => e['entity_type'] == 'task').toList();
+      expect(taskEntries.length, 2); // Root + Child
+      final relEntries = queue.where((e) => e['entity_type'] == 'relationship').toList();
+      expect(relEntries.length, 1); // Root→Child
+      final depEntries = queue.where((e) => e['entity_type'] == 'dependency').toList();
+      expect(depEntries.length, 1); // Child depends on External
+      final schedEntries = queue.where((e) => e['entity_type'] == 'schedule').toList();
+      expect(schedEntries.length, 1); // Root's schedule
+    });
+
     test('restoreTask cancels sync deletion and marks task pending', () async {
       final parentId = await db.insertTask(Task(name: 'Parent'));
       final childId = await db.insertTask(Task(name: 'Child'));
