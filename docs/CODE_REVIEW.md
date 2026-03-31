@@ -2833,8 +2833,8 @@ lifecycle safety.
 
 ### Deferred Fix Round Verification (spot-checks)
 
-- [x] M3: `_renameTask` dialog TextEditingController disposal — **REGRESSION**: `controller.dispose()` is NOT present in `task_list_screen.dart`. No dispose call found in the file. See CR-16.
-- [x] M-10: `showEditUrlDialog` TextEditingController disposal — **REGRESSION**: `controller.dispose()` is NOT present in `leaf_task_detail.dart`. No dispose call found in the file. See CR-16.
+- [x] M3: `_renameTask` dialog TextEditingController disposal — verified fixed, `controller.dispose()` in finally block at `task_list_screen.dart:648`
+- [x] M-10: `showEditUrlDialog` TextEditingController disposal — verified fixed, `.then((_) => controller.dispose())` at `leaf_task_detail.dart:122`
 - [x] M6: DAG view recompute on rotation — verified fixed
 - [x] M9: Batch `getChildIdsForParents` — verified fixed
 - [x] M-12: Dead repeating task code removed — verified
@@ -2843,166 +2843,61 @@ lifecycle safety.
 
 ### Items Still Open From Previous Rounds
 
-- I-38 / R-9: `_transferPinToChild` bypasses TaskProvider for Today's 5 mutations — still open (future refactor)
-- M-15: Refresh token stored in plaintext SharedPreferences — still open (needs `flutter_secure_storage`)
-- M-26: `BackupService.importDatabase` doesn't trigger Today's 5 refresh — acceptable
-- M-32: N+1 queries in `deleteTaskAndReparentChildren` nested loop — still open (low impact)
+- I-38 / R-9: `_transferPinToChild` bypasses TaskProvider for Today's 5 mutations — still open (future refactor), direct `DatabaseHelper()` at `task_list_screen.dart:394`
+- M-15: Refresh token in plaintext SharedPreferences — **FIXED**: `flutter_secure_storage` imported and used at `auth_service.dart:6,54,345-349` with migration from legacy plaintext
+- M-26: `BackupService.importDatabase` doesn't trigger Today's 5 refresh — **FIXED**: `provider.loadRootTasks()` at `backup_service.dart:110` refreshes Today's 5 via provider chain
+- M-32: N+1 queries in `deleteTaskAndReparentChildren` nested loop — still open (low impact), loop at `database_helper.dart:2019-2032`
 
 ---
 
 ### Critical
 
-#### CR-16. TextEditingController disposal regressions — M3 and M-10 fixes lost
-**Files:**
-- `lib/screens/task_list_screen.dart:615`
-- `lib/widgets/leaf_task_detail.dart:62`
-
-Both M3 (`_renameTask` dialog) and M-10 (`showEditUrlDialog`) were marked as
-fixed in the Deferred Fix Round, but the fixes are no longer present in the
-codebase. Neither file contains any `controller.dispose()` call. The
-controllers are created as local variables inside the methods and never
-disposed — a memory leak on every dialog open/close cycle.
-
-This is likely a merge regression: the fix was on the `code-review` branch
-but subsequent feature branches (which forked earlier) overwrote the methods
-without the disposal fix.
-
-**Fix for `_renameTask`** (task_list_screen.dart):
-```dart
-Future<void> _renameTask(Task task) async {
-  final controller = TextEditingController(text: task.name);
-  try {
-    final newName = await showDialog<String>(...);
-    if (newName != null && newName.isNotEmpty && newName != task.name && mounted) {
-      await context.read<TaskProvider>().renameTask(task.id!, newName);
-    }
-  } finally {
-    controller.dispose();
-  }
-}
-```
-
-**Fix for `showEditUrlDialog`** (leaf_task_detail.dart):
-```dart
-static void showEditUrlDialog(...) {
-  final controller = TextEditingController(text: currentUrl ?? '');
-  showDialog(...).then((_) => controller.dispose());
-}
-```
+#### CR-16. ~~TextEditingController disposal regressions~~ — **FALSE POSITIVE (verified)**
+**Status:** Invalid. Verification confirmed both disposals ARE present:
+- `task_list_screen.dart:648` — `controller.dispose()` in `finally` block
+- `leaf_task_detail.dart:122` — `.then((_) => controller.dispose())`
+The original review used stale line numbers. No regression occurred.
 
 ---
 
-#### CR-17. `deleteTaskWithRelationships` doesn't enqueue relationship/dependency removal sync events
-**File:** `lib/data/database_helper.dart:1536-1553`
+#### CR-17. ~~`deleteTaskWithRelationships` doesn't enqueue relationship/dependency removal sync events~~ — **FALSE POSITIVE (verified)**
+**Status:** Invalid. Verification confirmed the method correctly enqueues ALL four sync types:
+- Relationship removals (lines 1540-1559)
+- Dependency removals (lines 1560-1579)
+- Schedule removals (lines 1580-1591)
+- Task deletion (lines 1601-1610)
 
-When deleting a single task, the method enqueues only the task deletion to
-`sync_queue` (line 1544-1553). The relationship deletions (line 1536-1538)
-and dependency deletions (line 1539-1541) have **zero** sync queue entries.
-
-Compare with `deleteTaskSubtree` (lines 2112-2146) which correctly enqueues
-removal entries for every relationship and dependency.
-
-```dart
-// Lines 1536-1553:
-await txn.delete('task_relationships', ...);   // no sync_queue entry
-await txn.delete('task_dependencies', ...);    // no sync_queue entry
-await txn.delete('tasks', ...);
-// Only task deletion enqueued:
-if (syncId != null) {
-  await txn.insert('sync_queue', {
-    'entity_type': 'task', 'action': 'remove', ...
-  });
-}
-```
-
-**Impact:** When a task is deleted and the deletion is pushed, only the task
-document is removed from Firestore. The relationship and dependency documents
-remain as orphans. On other devices, the pull logic sees these orphan
-relationships (pointing to a non-existent task) and either:
-- Fails silently when trying to upsert them locally (task doesn't exist)
-- Creates inconsistent state if the diff logic treats them as valid
-
-Over time, Firestore accumulates orphan relationship/dependency documents
-that waste storage and slow down pulls.
-
-**Fix:** Before deleting relationships and dependencies, enumerate them
-with their sync_ids and enqueue removal entries (matching `deleteTaskSubtree`
-pattern):
-```dart
-// Before line 1536, collect sync_ids for relationships
-final relRows = await txn.rawQuery('''
-  SELECT t1.sync_id AS parent_sync_id, t2.sync_id AS child_sync_id
-  FROM task_relationships tr
-  JOIN tasks t1 ON t1.id = tr.parent_id
-  JOIN tasks t2 ON t2.id = tr.child_id
-  WHERE tr.parent_id = ? OR tr.child_id = ?
-''', [taskId, taskId]);
-for (final row in relRows) {
-  final pSyncId = row['parent_sync_id'] as String?;
-  final cSyncId = row['child_sync_id'] as String?;
-  if (pSyncId != null && cSyncId != null) {
-    await txn.insert('sync_queue', {
-      'entity_type': 'relationship', 'action': 'remove',
-      'key1': pSyncId, 'key2': cSyncId,
-      'created_at': now,
-    });
-  }
-}
-// Same pattern for dependencies
-```
+Notably, `deleteTaskWithRelationships` enqueues schedule removals that
+`deleteTaskSubtree` does NOT — a reverse gap worth tracking (see M-38).
 
 ---
 
 ### Important
 
-#### I-42. `addRelationship()` in TaskProvider doesn't call `_refreshAfterMutation()`
-**File:** `lib/providers/task_provider.dart:303-305`
+#### I-42. `addRelationship()` in TaskProvider doesn't call `_refreshAfterMutation()` [FIXED in code-review-fix]
+**File:** `lib/providers/task_provider.dart:305-308`
 
-```dart
-Future<void> addRelationship(int parentId, int childId) async {
-  await _db.addRelationship(parentId, childId);
-}
-```
-
-This method is used by undo operations (restoring a deleted relationship).
-After calling `_db.addRelationship()`, it doesn't call
-`_refreshAfterMutation()`, `notifyListeners()`, or `onMutation?.call()`.
-
-**Impact:**
-1. **Stale UI:** The task list is not refreshed, so restored relationships
-   don't appear until the user navigates away and back
-2. **Sync gap:** `onMutation` is never called, so the relationship addition
-   is never pushed to Firestore
-
-**Fix:**
-```dart
-Future<void> addRelationship(int parentId, int childId) async {
-  await _db.addRelationship(parentId, childId);
-  await _refreshAfterMutation();
-}
-```
+Now calls `await _refreshAfterMutation()` at line 307 with CR-fix comment.
 
 ---
 
-#### I-43. `reorderStarredTasks()` calls `onMutation()` without `notifyListeners()`
-**File:** `lib/providers/task_provider.dart:658-661`
+#### I-43. `reorderStarredTasks()` calls `onMutation()` without `notifyListeners()` [FIXED in code-review-fix]
+**File:** `lib/providers/task_provider.dart:663-666`
 
-```dart
-Future<void> reorderStarredTasks(List<int> taskIds) async {
-  await _db.reorderStarredTasks(taskIds);
-  onMutation?.call();
-}
-```
+Now calls `await _refreshAfterMutation()` at line 665 instead of bare `onMutation?.call()`.
 
-This calls `onMutation` (triggering sync push) but doesn't call
+---
+
+#### ~~I-43 original description for reference~~
+
+This called `onMutation` (triggering sync push) but didn't call
 `notifyListeners()` or `_refreshAfterMutation()`. The starred screen manages
 its own list locally (line 150-155 in `starred_screen.dart`), so the missing
-`notifyListeners` doesn't cause a visual bug. However, the inconsistency
-with the `_refreshAfterMutation()` pattern means sync fires before the
-provider state is refreshed — if any listener responds to the notification
-by reading starred tasks from the provider, they'd get stale data.
+`notifyListeners` didn't cause a visual bug. However, the inconsistency
+with the `_refreshAfterMutation()` pattern meant sync fired before the
+provider state was refreshed.
 
-**Fix:** Use `_refreshAfterMutation()` for consistency:
+**Original fix:** Use `_refreshAfterMutation()` for consistency:
 ```dart
 Future<void> reorderStarredTasks(List<int> taskIds) async {
   await _db.reorderStarredTasks(taskIds);
@@ -3012,129 +2907,35 @@ Future<void> reorderStarredTasks(List<int> taskIds) async {
 
 ---
 
-#### I-44. `_persistAndTrim()` not awaited in `_togglePinFromSheet`
-**File:** `lib/screens/todays_five_screen.dart:773`
+#### I-44. `_persistAndTrim()` not awaited in `_togglePinFromSheet` [FIXED in code-review-fix]
+**File:** `lib/screens/todays_five_screen.dart:777`
 
-```dart
-_persistAndTrim();  // fire-and-forget — Future not awaited
-```
-
-`_persistAndTrim()` is an async method that writes to the database and
-calls `setState()`. Not awaiting it creates a race condition:
-1. Pin toggle fires → `_persistAndTrim()` starts persisting
-2. `refreshSnapshots()` fires (via provider listener) → reads stale DB
-3. `_persistAndTrim()` completes → writes to DB, calls `setState()`
-4. State flickers between pin-toggled and pin-not-toggled
-
-**Fix:** `await _persistAndTrim();`
+Now awaited: `await _persistAndTrim();` with CR-fix I-44 comment at line 749.
 
 ---
 
-#### I-45. `completion_animation.dart` calls `widget.onDone()` without mounted check
-**File:** `lib/widgets/completion_animation.dart:92`
+#### I-45. `completion_animation.dart` calls `widget.onDone()` without mounted check [FIXED in code-review-fix]
+**File:** `lib/widgets/completion_animation.dart:92-96`
 
-```dart
-_controller.forward().then((_) => widget.onDone());
-```
-
-If the widget is disposed during the animation (e.g., user navigates back),
-`_controller.dispose()` cancels the animation, but if the animation
-completes on the same frame as disposal, `widget.onDone()` could fire on a
-disposed widget. The `onDone` callback at `task_list_screen.dart:899` calls
-`_completeTaskWithUndo(task)` — an async method that accesses `context`.
-
-**Fix:**
-```dart
-_controller.forward().then((_) {
-  if (mounted) widget.onDone();
-});
-```
+Now checks `mounted` before calling `widget.onDone()` with CR-fix I-45 comment.
 
 ---
 
-#### I-46. `_reorderByDependencyChains` and `reorderByDependencyChains` have no cycle detection
+#### I-46. `_reorderByDependencyChains` and `reorderByDependencyChains` have no cycle detection [FIXED in code-review-fix]
 **Files:**
-- `lib/providers/task_provider.dart:823-834`
-- `lib/screens/starred_screen.dart:370-380`
+- `lib/providers/task_provider.dart:829-832`
+- `lib/screens/starred_screen.dart:371-374`
 
-Both `walkChain()` implementations recurse through the dependency graph
-without tracking visited nodes. While the dependency data shouldn't contain
-cycles (prevented by `hasPath()` on insertion), corrupted data or future
-bugs could cause infinite recursion and a stack overflow crash.
-
-```dart
-void walkChain(int id, List<Task> out) {
-  final task = taskById[id];
-  if (task == null) return;
-  out.add(task);                    // no visited check
-  final deps = dependents[id];
-  if (deps != null) {
-    for (final depId in deps) {
-      walkChain(depId, out);        // infinite recursion if cycle exists
-    }
-  }
-}
-```
-
-**Fix:** Add a `visited` set to both implementations:
-```dart
-final visited = <int>{};
-void walkChain(int id, List<Task> out) {
-  if (!visited.add(id)) return;  // cycle detected — break
-  final task = taskById[id];
-  if (task == null) return;
-  out.add(task);
-  final deps = dependents[id];
-  if (deps != null) {
-    for (final depId in deps) {
-      walkChain(depId, out);
-    }
-  }
-}
-```
+Both implementations now have a `visited` set with `if (!visited.add(id)) return;`
+cycle guard, with CR-fix I-46 comments.
 
 ---
 
-#### I-47. Token refresh not deduplicated — concurrent callers can race
-**Files:**
-- `lib/services/sync_service.dart:542-549`
-- `lib/services/auth_service.dart:194-202`
+#### I-47. Token refresh not deduplicated — concurrent callers can race [FIXED in code-review-fix]
+**File:** `lib/services/auth_service.dart:194-202`
 
-If `push()` and `pull()` run close together (e.g., user taps "Sync now"
-while periodic pull fires), both call `_getValidToken()`. If the token is
-expired, both call `_authProvider.refreshToken()` concurrently. Each call
-makes an independent HTTP request to Firebase's token endpoint.
-
-Both responses update `_firebaseIdToken` and `_firebaseRefreshToken`
-without synchronization. The second response could overwrite the first
-with a different token, and the first caller's `return` would use the
-overwritten value.
-
-While `_syncing` prevents truly concurrent push/pull, the guard has a
-brief window: `_syncing` is set at the start of `push()`, but if `pull()`
-starts checking the token before `push()` sets `_syncing`, both can be
-in `_getValidToken()` simultaneously.
-
-**Fix:** Deduplicate concurrent refresh calls in `AuthService`:
-```dart
-Future<bool>? _refreshFuture;
-
-Future<bool> refreshToken() {
-  _refreshFuture ??= _doRefreshToken().whenComplete(() => _refreshFuture = null);
-  return _refreshFuture!;
-}
-
-Future<bool> _doRefreshToken() async {
-  if (_firebaseRefreshToken == null) return false;
-  final result = await _refreshFirebaseToken(_firebaseRefreshToken!);
-  if (result != null) {
-    _applyTokenResult(result);
-    await _persistTokens();
-    return true;
-  }
-  return false;
-}
-```
+Now uses `_refreshFuture` cached Future with `??=` pattern to deduplicate concurrent
+refresh calls. `whenComplete` resets the Future after completion. CR-fix I-47 comment present.
 
 ---
 
@@ -3214,17 +3015,14 @@ calls in the error path.
 
 ---
 
-## Round 10 — Suggested Implementation Order
+## Round 10 — Status
 
-1. **CR-16** — Fix TextEditingController disposal regressions in `_renameTask` and `showEditUrlDialog` (5 min, 2 files)
-2. **CR-17** — Enqueue relationship/dependency removal sync events in `deleteTaskWithRelationships` (15 min, `database_helper.dart`)
-3. **I-42** — Add `_refreshAfterMutation()` to `addRelationship()` (1 min, `task_provider.dart`)
-4. **I-43** — Use `_refreshAfterMutation()` in `reorderStarredTasks()` (1 min, `task_provider.dart`)
-5. **I-44** — Await `_persistAndTrim()` in `_togglePinFromSheet` (1 min, `todays_five_screen.dart`)
-6. **I-45** — Add mounted check in completion animation callback (1 min, `completion_animation.dart`)
-7. **I-46** — Add cycle detection in `walkChain()` (2 min, `task_provider.dart` + `starred_screen.dart`)
-8. **I-47** — Deduplicate concurrent token refresh (10 min, `auth_service.dart`)
-9. **Remaining open items** from previous rounds (I-38/R-9, M-15, M-32) — as time permits
+**Both Critical items (CR-16, CR-17) were false positives** — verified during
+Round 10 Verification. The review agents used stale line numbers.
+
+**All Important items (I-42 through I-47) fixed** in the code-review-fix session.
+
+Remaining minor items: M-34 through M-38.
 
 ---
 
@@ -3233,8 +3031,8 @@ calls in the error path.
 ### Fixed
 | ID | Title | Fix |
 |----|-------|-----|
-| CR-16 | TextEditingController disposal regressions | `try/finally` in `_renameTask`, `.then(dispose)` in `showEditUrlDialog` |
-| CR-17 | `deleteTaskWithRelationships` missing sync events | Enqueue rel/dep/schedule removal sync entries before delete |
+| CR-16 | ~~TextEditingController disposal regressions~~ | **FALSE POSITIVE** — disposals already present (line 648 and line 122) |
+| CR-17 | ~~`deleteTaskWithRelationships` missing sync events~~ | **FALSE POSITIVE** — all 4 sync types already enqueued (lines 1540-1610) |
 | I-42 | `addRelationship` missing `_refreshAfterMutation` | Added call |
 | I-43 | `reorderStarredTasks` inconsistent pattern | Replaced `onMutation` with `_refreshAfterMutation` |
 | I-44 | `_persistAndTrim` not awaited in `_togglePinFromSheet` | Added `await`, changed method to async |
@@ -3259,7 +3057,10 @@ calls in the error path.
 | Item | Title | Round | Status |
 |------|-------|-------|--------|
 | I-38 / R-9 | `_transferPinToChild` bypasses TaskProvider | 9 | Open — future refactor |
-| M-15 | Refresh token in plaintext SharedPreferences | 5 | Open — needs `flutter_secure_storage` |
-| M-26 | ImportDatabase doesn't refresh Today's 5 | 7 | Acceptable |
 | M-32 | N+1 queries in `deleteTaskAndReparentChildren` | 9 | Open — low impact |
 | M-34 | Starred screen N+1 queries for tree preview | 10 | Deferred — low impact |
+| M-38 | `deleteTaskSubtree` missing schedule sync entries | 10 | Open |
+
+**Resolved in Round 10 Verification (previously listed as open):**
+- M-15: Refresh token now in `flutter_secure_storage` (auth_service.dart:6,54,345-349)
+- M-26: `provider.loadRootTasks()` at backup_service.dart:110 refreshes Today's 5
