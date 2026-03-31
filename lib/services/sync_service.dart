@@ -24,6 +24,16 @@ class SyncService {
   bool _pullPending = false;
   bool _skipNextPeriodicPull = false;
 
+  /// Every Nth pull does a full reconciliation instead of delta, catching any
+  /// updates that were missed due to lastSyncAt advancing past their updated_at.
+  /// Bug fix: without this, a task updated on device A could be permanently
+  /// invisible to device B's delta pulls if B's lastSyncAt advanced past the
+  /// task's updated_at (e.g. due to quota errors or timing).
+  /// Counter is persisted so it survives app restarts (especially important
+  /// for web where users frequently close/reopen the tab).
+  static const _fullPullInterval = 10;
+  static const _prefsKeyPullCycleCount = 'sync_pull_cycle_count';
+
   static const _prefsKeyLastSyncAt = 'sync_last_sync_at';
   static const _prefsKeyInitialMigrationDone = 'sync_initial_migration_done';
   static const _prefsKeyTodaysFivePersistedAt = 'sync_todays_five_persisted_at';
@@ -450,7 +460,18 @@ class SyncService {
       final uid = _authProvider.uid!;
 
       final prefs = await SharedPreferences.getInstance();
-      final lastSyncAt = prefs.getInt(_prefsKeyLastSyncAt);
+      var lastSyncAt = prefs.getInt(_prefsKeyLastSyncAt);
+
+      // Periodic full pull: every _fullPullInterval cycles, clear lastSyncAt
+      // to force a full reconciliation. Catches updates missed by delta pulls
+      // (e.g. when lastSyncAt advanced past a task's updated_at).
+      // Counter is persisted so it survives app restarts.
+      final pullCycleCount = (prefs.getInt(_prefsKeyPullCycleCount) ?? 0) + 1;
+      await prefs.setInt(_prefsKeyPullCycleCount, pullCycleCount);
+      if (lastSyncAt != null && pullCycleCount % _fullPullInterval == 0) {
+        debugPrint('SyncService: periodic full pull (cycle $pullCycleCount)');
+        lastSyncAt = null;
+      }
 
       // Pull tasks
       final remoteTasks = await _firestore.pullTasksSince(
