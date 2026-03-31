@@ -3059,7 +3059,7 @@ Remaining minor items: M-34 through M-38.
 | I-38 / R-9 | `_transferPinToChild` bypasses TaskProvider | 9 | Open — future refactor |
 | M-32 | N+1 queries in `deleteTaskAndReparentChildren` | 9 | Open — low impact |
 | M-34 | Starred screen N+1 queries for tree preview | 10 | Deferred — low impact |
-| M-38 | `deleteTaskSubtree` missing schedule sync entries | 10 | Open |
+| ~~M-38~~ | ~~`deleteTaskSubtree` missing schedule sync entries~~ | 10 | **Fixed** — CR-fix M-38 at `database_helper.dart:2210-2221` |
 
 **Resolved in Round 10 Verification (previously listed as open):**
 - M-15: Refresh token now in `flutter_secure_storage` (auth_service.dart:6,54,345-349)
