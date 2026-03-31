@@ -1918,6 +1918,129 @@ void main() {
       expect(taskEntries[0]['key1'], isNotEmpty); // sync_id
     });
 
+    // CR-17 Regression: Before fix, deleting a task only enqueued task removal
+    // but not relationship/dependency/schedule removals, leaving orphan docs
+    // in Firestore.
+    test('deleteTaskWithRelationships enqueues relationship removal sync events', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+      await db.drainSyncQueue(); // clear setup entries
+
+      await db.deleteTaskWithRelationships(child);
+
+      final queue = await db.drainSyncQueue();
+      final relEntries = queue.where((e) => e['entity_type'] == 'relationship').toList();
+      expect(relEntries.length, 1, reason: 'should enqueue 1 relationship removal');
+      expect(relEntries[0]['action'], 'remove');
+      expect(relEntries[0]['key1'], isNotEmpty); // parent sync_id
+      expect(relEntries[0]['key2'], isNotEmpty); // child sync_id
+    });
+
+    // CR-17 Regression: dependency removal sync events on delete
+    test('deleteTaskWithRelationships enqueues dependency removal sync events', () async {
+      final task = await db.insertTask(Task(name: 'Task'));
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      await db.addDependency(task, blocker);
+      await db.drainSyncQueue(); // clear setup entries
+
+      await db.deleteTaskWithRelationships(task);
+
+      final queue = await db.drainSyncQueue();
+      final depEntries = queue.where((e) => e['entity_type'] == 'dependency').toList();
+      expect(depEntries.length, 1, reason: 'should enqueue 1 dependency removal');
+      expect(depEntries[0]['action'], 'remove');
+      expect(depEntries[0]['key1'], isNotEmpty); // task sync_id
+      expect(depEntries[0]['key2'], isNotEmpty); // blocker sync_id
+    });
+
+    // CR-17 Regression: schedule removal sync events on delete
+    test('deleteTaskWithRelationships enqueues schedule removal sync events', () async {
+      final id = await db.insertTask(Task(name: 'Scheduled'));
+      await db.replaceSchedules(id, [
+        TaskSchedule(taskId: id, dayOfWeek: 1),
+        TaskSchedule(taskId: id, dayOfWeek: 5),
+      ]);
+      await db.drainSyncQueue(); // clear setup entries
+
+      await db.deleteTaskWithRelationships(id);
+
+      final queue = await db.drainSyncQueue();
+      final schedEntries = queue.where((e) => e['entity_type'] == 'schedule').toList();
+      expect(schedEntries.length, 2, reason: 'should enqueue 2 schedule removals');
+      for (final entry in schedEntries) {
+        expect(entry['action'], 'remove');
+        expect(entry['key1'], isNotEmpty); // schedule sync_id
+      }
+    });
+
+    // CR-17 Mechanism: delete with multiple relationships enqueues all
+    test('deleteTaskWithRelationships enqueues all relationship removals for multi-parent task', () async {
+      final parent1 = await db.insertTask(Task(name: 'Parent 1'));
+      final parent2 = await db.insertTask(Task(name: 'Parent 2'));
+      final child = await db.insertTask(Task(name: 'Multi-parent child'));
+      await db.addRelationship(parent1, child);
+      await db.addRelationship(parent2, child);
+      await db.drainSyncQueue();
+
+      await db.deleteTaskWithRelationships(child);
+
+      final queue = await db.drainSyncQueue();
+      final relEntries = queue.where((e) => e['entity_type'] == 'relationship').toList();
+      expect(relEntries.length, 2, reason: 'should enqueue removal for both parent relationships');
+      for (final entry in relEntries) {
+        expect(entry['action'], 'remove');
+      }
+    });
+
+    // CR-17 Mechanism: task with children — relationships from child side also enqueued
+    test('deleteTaskWithRelationships enqueues child relationship removals for parent task', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child1 = await db.insertTask(Task(name: 'Child 1'));
+      final child2 = await db.insertTask(Task(name: 'Child 2'));
+      await db.addRelationship(parent, child1);
+      await db.addRelationship(parent, child2);
+      await db.drainSyncQueue();
+
+      await db.deleteTaskWithRelationships(parent);
+
+      final queue = await db.drainSyncQueue();
+      final relEntries = queue.where((e) => e['entity_type'] == 'relationship').toList();
+      expect(relEntries.length, 2, reason: 'should enqueue removal for both child relationships');
+    });
+
+    // CR-17 Edge case: task with no relationships/deps/schedules only enqueues task removal
+    test('deleteTaskWithRelationships with no relations only enqueues task removal', () async {
+      final id = await db.insertTask(Task(name: 'Standalone'));
+      await db.drainSyncQueue();
+
+      await db.deleteTaskWithRelationships(id);
+
+      final queue = await db.drainSyncQueue();
+      expect(queue.length, 1, reason: 'only task removal should be enqueued');
+      expect(queue[0]['entity_type'], 'task');
+      expect(queue[0]['action'], 'remove');
+    });
+
+    // CR-17 Mechanism: combined relationships + dependencies + schedules
+    test('deleteTaskWithRelationships enqueues all entity type removals together', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final task = await db.insertTask(Task(name: 'Task'));
+      final blocker = await db.insertTask(Task(name: 'Blocker'));
+      await db.addRelationship(parent, task);
+      await db.addDependency(task, blocker);
+      await db.replaceSchedules(task, [TaskSchedule(taskId: task, dayOfWeek: 3)]);
+      await db.drainSyncQueue();
+
+      await db.deleteTaskWithRelationships(task);
+
+      final queue = await db.drainSyncQueue();
+      final types = queue.map((e) => e['entity_type']).toSet();
+      expect(types, containsAll(['task', 'relationship', 'dependency', 'schedule']));
+      // 1 relationship + 1 dependency + 1 schedule + 1 task = 4 entries
+      expect(queue.length, 4);
+    });
+
     test('drainSyncQueue clears the queue', () async {
       final id1 = await db.insertTask(Task(name: 'Parent'));
       final id2 = await db.insertTask(Task(name: 'Child'));

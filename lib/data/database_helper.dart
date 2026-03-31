@@ -2207,6 +2207,19 @@ class DatabaseHelper {
         'SELECT * FROM task_schedules WHERE task_id IN ($placeholders)',
         subtreeIds.toList());
       final deletedSchedules = scheduleRows.map((m) => TaskSchedule.fromMap(m)).toList();
+      // CR-fix M-38: enqueue schedule removal sync events — without this,
+      // schedule docs remain as orphans in Firestore after subtree deletion.
+      for (final schedule in deletedSchedules) {
+        if (schedule.syncId != null) {
+          await txn.insert('sync_queue', {
+            'entity_type': 'schedule',
+            'action': 'remove',
+            'key1': schedule.syncId!,
+            'key2': '',
+            'created_at': now,
+          });
+        }
+      }
 
       // Delete everything
       await txn.rawDelete(

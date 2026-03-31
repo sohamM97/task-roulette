@@ -4025,4 +4025,84 @@ void main() {
       expect(provider.tasks, isEmpty);
     });
   });
+
+  // I-42 Regression: addRelationship was missing _refreshAfterMutation, so
+  // undo-restored relationships didn't refresh UI or trigger sync push.
+  group('addRelationship triggers refresh and mutation', () {
+    test('addRelationship calls onMutation', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await db.addRelationship(parent, child);
+      // Remove the relationship so we can re-add via provider
+      await db.removeRelationship(parent, child);
+      await provider.loadRootTasks();
+
+      int mutationCount = 0;
+      provider.onMutation = () => mutationCount++;
+
+      await provider.addRelationship(parent, child);
+      expect(mutationCount, 1, reason: 'addRelationship should call onMutation via _refreshAfterMutation');
+    });
+
+    test('addRelationship refreshes task list', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final child = await db.insertTask(Task(name: 'Child'));
+      await provider.loadRootTasks();
+
+      // Both should be root tasks initially
+      expect(provider.tasks.length, 2);
+
+      await provider.addRelationship(parent, child);
+
+      // After adding relationship, child is no longer a root task
+      // _refreshAfterMutation reloads the list
+      expect(provider.tasks.length, 1);
+      expect(provider.tasks.first.id, parent);
+    });
+  });
+
+  // I-43 Regression: reorderStarredTasks was calling onMutation directly
+  // instead of _refreshAfterMutation, so sync could fire before provider
+  // state was refreshed.
+  group('reorderStarredTasks triggers refresh and mutation', () {
+    test('reorderStarredTasks calls onMutation', () async {
+      final id1 = await db.insertTask(Task(name: 'A'));
+      final id2 = await db.insertTask(Task(name: 'B'));
+      await provider.updateTaskStarred(id1, true);
+      await provider.updateTaskStarred(id2, true);
+      await provider.loadRootTasks();
+
+      int mutationCount = 0;
+      provider.onMutation = () => mutationCount++;
+
+      await provider.reorderStarredTasks([id2, id1]);
+      expect(mutationCount, 1, reason: 'reorderStarredTasks should call onMutation via _refreshAfterMutation');
+    });
+  });
+
+  // I-46 Regression: walkChain in _reorderByDependencyChains had no cycle
+  // detection, causing infinite recursion on corrupted data.
+  group('_reorderByDependencyChains cycle detection', () {
+    test('cyclic dependency does not cause stack overflow in provider', () async {
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      await db.addRelationship(parent, a);
+      await db.addRelationship(parent, b);
+      // Create cycle: A blocks B, B blocks A (corrupted data)
+      await db.addDependency(a, b);
+      await db.addDependency(b, a);
+      await provider.loadRootTasks();
+
+      // Navigate into parent to load children with dependencies.
+      // Before I-46 fix, this would stack overflow in _reorderByDependencyChains.
+      // After fix, both tasks are mutual dependents so both get skipped by the
+      // head-detection loop (neither is a pure head), resulting in empty reorder.
+      // The critical assertion is that this completes without hanging/crashing.
+      final parentTask = provider.tasks.firstWhere((t) => t.id == parent);
+      await provider.navigateInto(parentTask);
+      // No assertion on tasks content — the cycle causes both to be skipped.
+      // The test passes by completing without timeout or stack overflow.
+    });
+  });
 }
