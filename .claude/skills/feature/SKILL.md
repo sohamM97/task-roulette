@@ -13,11 +13,12 @@ The user may provide a short feature name (e.g. `pin-for-today`). If not provide
 
 ## Workflow
 
-1. Check that you're on the `main` branch. If not, ask the user if they want to switch to `main` first (there may be uncommitted work).
-2. Run `git status` to check for uncommitted changes. If there are any, **stop** and tell the user to commit first (or offer to run `/commit`).
-3. Pull latest `main` with `git pull`.
-4. Create and switch to a new branch: `feature/<name>` (e.g. `feature/pin-for-today`). Use kebab-case for the name.
-5. Confirm the branch was created successfully. If the user already described the feature, start by exploring the relevant code to understand the current implementation — don't ask what to do next.
+1. **Check for an existing branch first.** Run `git branch -a | grep -i <name>` to see if a `feature/<name>` branch (or similar) already exists locally or on the remote. If it does, ask the user if they want to switch to it (and rebase onto main) instead of creating a new one.
+2. Check that you're on the `main` branch. If not, ask the user if they want to switch to `main` first (there may be uncommitted work).
+3. Run `git status` to check for uncommitted changes. If there are any, **stop** and tell the user to commit first (or offer to run `/commit`).
+4. Pull latest `main` with `git pull`.
+5. Create and switch to a new branch: `feature/<name>` (e.g. `feature/pin-for-today`). Use kebab-case for the name.
+6. Confirm the branch was created successfully. If the user already described the feature, start by exploring the relevant code to understand the current implementation — don't ask what to do next.
 
 ## Rules
 
