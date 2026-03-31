@@ -1186,7 +1186,7 @@ try {
 ### Previous Round Verification
 
 **Round 5 findings — 1 of 2 resolved:**
-- [x] LOW-20: AppBar `launchUrl` try-catch — verified fixed. Shared `launchSafeUrl()` helper extracted in `display_utils.dart:166-182` and used consistently. All `launchUrl` calls now go through this centralized helper.
+- [x] LOW-20: AppBar `launchUrl` try-catch — verified fixed. Shared `launchSafeUrl()` helper extracted in `display_utils.dart:174-190` and used consistently. All `launchUrl` calls now go through this centralized helper.
 
 **Not fixed (1 of 2):**
 - [ ] LOW-15: Firestore Security Rules not version-controlled — no `firestore.rules` or `firebase.json` in the repository. Still only in Firebase console.
@@ -1285,7 +1285,7 @@ For sync_id fields, add a 50-char cap or UUID format validation.
 
 2. **All TextField widgets have `maxLength`.** The new `TriageDialog` search field (`triage_dialog.dart:232`) has `maxLength: 500`. Every user input field across the app is properly bounded: task names (500), brain dump (25,000), URLs (2,048), search fields (500).
 
-3. **`launchSafeUrl` consistently used.** The shared URL launch helper in `display_utils.dart:166-182` is used by all code paths. It validates scheme via `isAllowedUrl()`, wraps in try-catch, and checks `context.mounted`. No direct `launchUrl` calls remain outside this helper.
+3. **`launchSafeUrl` consistently used.** The shared URL launch helper in `display_utils.dart:174-190` is used by all code paths. It validates scheme via `isAllowedUrl()`, wraps in try-catch, and checks `context.mounted`. No direct `launchUrl` calls remain outside this helper.
 
 4. **`SpotlightOverlay` is a pure UI widget.** The new spotlight overlay (`spotlight_overlay.dart`) takes only layout parameters and callbacks — no user data handling, no network calls, no state persistence. Animation timings and scales are hardcoded. No security concerns.
 

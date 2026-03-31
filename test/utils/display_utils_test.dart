@@ -812,12 +812,9 @@ void main() {
         if (file.path.endsWith('display_utils.dart')) continue;
 
         final content = file.readAsStringSync();
+        // SEC-fix: verify files calling debugLog() import it from display_utils.
         if (content.contains('debugLog(') &&
-            !content.contains("import") ||
-            content.contains('debugLog(') &&
-            !content.contains('debugLog')) {
-          // This is a sanity check — Dart would fail to compile anyway,
-          // but we surface it here for clarity.
+            !content.contains('display_utils.dart')) {
           missingImports.add(file.path);
         }
       }
