@@ -13,6 +13,7 @@ import 'screens/task_list_screen.dart';
 import 'screens/todays_five_screen.dart';
 import 'services/notification_service.dart';
 import 'services/sync_service.dart';
+import 'utils/display_utils.dart' show debugLog;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -134,7 +135,9 @@ class _AppShellState extends State<AppShell> {
         syncService.startPeriodicPull();
       }
     } catch (e) {
-      debugPrint('Failed to initialize auth/sync: $e');
+      // SEC-fix LOW-21: use debugLog to prevent leaking auth/sync error
+      // details (keyring paths, Firestore errors) to logcat in release.
+      debugLog('Failed to initialize auth/sync: $e');
     }
   }
 

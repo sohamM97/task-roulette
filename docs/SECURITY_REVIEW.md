@@ -1176,3 +1176,152 @@ try {
 |----------|---------|--------|--------|
 | **LOW** | LOW-15: Version-control Firestore Security Rules | Low | **Still open (Round 3)** |
 | **LOW** | LOW-20: Add try-catch to AppBar `launchUrl` | Trivial | **Fixed** — extracted shared `launchSafeUrl` helper in `display_utils.dart` |
+
+---
+
+## Round 6 (2026-03-31)
+
+**Scope:** Full codebase review after feature additions (roulette rebrand, spotlight overlay, starred view enhancements, dependency chain ordering, triage dialog, deadline suppression, reserved scheduled slots). Verification of Round 5 outstanding items.
+
+### Previous Round Verification
+
+**Round 5 findings — 1 of 2 resolved:**
+- [x] LOW-20: AppBar `launchUrl` try-catch — verified fixed. Shared `launchSafeUrl()` helper extracted in `display_utils.dart:174-190` and used consistently. All `launchUrl` calls now go through this centralized helper.
+
+**Not fixed (1 of 2):**
+- [ ] LOW-15: Firestore Security Rules not version-controlled — no `firestore.rules` or `firebase.json` in the repository. Still only in Firebase console.
+
+**Previously accepted items — status unchanged:**
+- LOW-6: Unencrypted DB at rest — still accepted for threat model
+- LOW-7: Unencrypted backup export — still accepted for threat model
+
+### Findings
+
+#### LOW-21: Ungated `debugPrint` in `main.dart` Auth/Sync Initialization [FIXED in Round 6 fix]
+
+- **Severity:** Low
+- **File:** `lib/main.dart:137`
+- **Code:**
+  ```dart
+  } catch (e) {
+    debugPrint('Failed to initialize auth/sync: $e');
+  }
+  ```
+
+**Description:** `debugPrint` is NOT gated behind `kDebugMode`. This runs in the `_AppShellState.initState()` error handler. The exception `e` could contain `FlutterSecureStorage` errors (including keyring paths on Linux), `FirestoreException` messages, or database initialization details. Unlike `assert`, `debugPrint` is not stripped in release builds — it writes to Android logcat and system stdout. The file currently imports `kIsWeb` from `foundation` but not `kDebugMode`.
+
+All 7 `debugPrint` calls in `auth_service.dart` were correctly gated in Round 3 (MED-7 fix), but this call site in `main.dart` was added later and missed the pattern.
+
+**Recommended Fix:**
+```dart
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
+// ...
+} catch (e) {
+  if (kDebugMode) debugPrint('Failed to initialize auth/sync: $e');
+}
+```
+
+---
+
+#### LOW-22: Three Ungated `debugPrint` Calls in Today's Five Deadline Suppression [FIXED in Round 6 fix]
+
+- **Severity:** Low
+- **File:** `lib/screens/todays_five_screen.dart:164, 771, 775`
+- **Code:**
+  ```dart
+  // Line 164
+  db.purgeOldDeadlineSuppressed(today).catchError(
+      (e) => debugPrint('Failed to purge old suppression rows: $e'));
+
+  // Line 771
+  DatabaseHelper().suppressDeadlineAutoPin(_todayKey(), task.id!).catchError(
+      (e) => debugPrint('Failed to suppress deadline auto-pin: $e'));
+
+  // Line 775
+  DatabaseHelper().unsuppressDeadlineAutoPin(_todayKey(), task.id!).catchError(
+      (e) => debugPrint('Failed to unsuppress deadline auto-pin: $e'));
+  ```
+
+**Description:** Three `debugPrint` calls in `.catchError()` callbacks are NOT gated behind `kDebugMode`. These were introduced as part of the deadline auto-pin suppression feature added after Round 4's fix (LOW-18, which correctly gated the `_loadTodaysTasks` error handler at line 146). The file already imports `kDebugMode` (line 1), so only the guard needs to be added.
+
+The exceptions could contain database error details (file paths, SQL errors, table names) that would be written to Android logcat in release builds.
+
+**Recommended Fix:**
+```dart
+db.purgeOldDeadlineSuppressed(today).catchError(
+    (e) { if (kDebugMode) debugPrint('Failed to purge old suppression rows: $e'); });
+```
+Apply the same pattern to lines 771 and 775.
+
+---
+
+#### INFO-11: `deadlineType` Field Not Length-Validated in Remote Deserialization
+
+- **Severity:** Informational
+- **File:** `lib/services/firestore_service.dart:587`
+- **Code:**
+  ```dart
+  deadlineType: _stringField(fields, 'deadline_type') ?? 'due_by',
+  ```
+
+**Description:** The `deadlineType` field from Firestore is accepted without length validation. Task `name` (500 chars), `url` (2048), `repeat_interval` (50), and `deadline` (10) are all validated, but `deadlineType` is not. This field should only ever be `'due_by'` or `'hard_deadline'` — any other value from a corrupted Firestore document would be stored as-is. In practice this is low-impact since the field is used in a switch statement that defaults safely, but it breaks the pattern of validating all remote string fields.
+
+Similarly, `sync_id` fields in relationships, dependencies, schedules, and Today's 5 entries (`firestore_service.dart:223-226, 253-256, 342-345, 442`) are not length-validated. These are UUID-format strings (~36 chars) but a corrupted document could contain oversized values.
+
+**Recommended Fix (defense-in-depth):**
+```dart
+deadlineType: () {
+  final raw = _stringField(fields, 'deadline_type') ?? 'due_by';
+  return raw.length <= 20 ? raw : 'due_by';
+}(),
+```
+For sync_id fields, add a 50-char cap or UUID format validation.
+
+---
+
+### Positive Security Findings
+
+1. **SQL injection remains clean.** All queries across all files — including new methods for deadline suppression, schedule sync, and dependency chain ordering — continue to use parameterized `?` placeholders. The safe `IN (...)` pattern (`List.filled(length, '?').join(',')`) is consistently used. No string concatenation of user input into SQL.
+
+2. **All TextField widgets have `maxLength`.** The new `TriageDialog` search field (`triage_dialog.dart:232`) has `maxLength: 500`. Every user input field across the app is properly bounded: task names (500), brain dump (25,000), URLs (2,048), search fields (500).
+
+3. **`launchSafeUrl` consistently used.** The shared URL launch helper in `display_utils.dart:174-190` is used by all code paths. It validates scheme via `isAllowedUrl()`, wraps in try-catch, and checks `context.mounted`. No direct `launchUrl` calls remain outside this helper.
+
+4. **`SpotlightOverlay` is a pure UI widget.** The new spotlight overlay (`spotlight_overlay.dart`) takes only layout parameters and callbacks — no user data handling, no network calls, no state persistence. Animation timings and scales are hardcoded. No security concerns.
+
+5. **Backup validation remains robust.** `_validateBackup()` at `database_helper.dart` continues to check file size (100 MB), all expected tables, schema version range (auto-derived from `_dbVersion`), and absence of triggers/views. Pre-import backup to `.db.bak` is still in place.
+
+6. **Secure token storage intact.** `FlutterSecureStorage` for refresh tokens, legacy migration still present, user info (non-sensitive) in SharedPreferences.
+
+7. **All HTTP requests have 30-second timeouts.** Both `firestore_service.dart` and `auth_service.dart` continue to apply timeouts to every HTTP call.
+
+8. **Sync error messages properly sanitized for UI.** `SyncService._userFriendlyError()` maps all exception types (including `FirestoreException` with response bodies) to generic user-facing messages before passing to `setSyncStatus()`. The response body data in `FirestoreException` messages never reaches the UI.
+
+9. **DAG cycle detection on remote sync intact.** Both relationship and dependency pulls validate via `wouldRelationshipCreateCycle()` and `wouldDependencyCreateCycle()` before inserting.
+
+10. **Android manifest well-hardened.** `allowBackup="false"`, explicit `INTERNET` permission, exported components properly scoped, R8/ProGuard enabled with resource shrinking.
+
+11. **No new dependencies added.** `pubspec.yaml` is unchanged since Round 5. All packages from pub.dev with SHA256 integrity hashes.
+
+### OWASP Mobile Top 10 Assessment (Round 6 Update)
+
+| Category | Status | Notes |
+|----------|--------|-------|
+| M1: Improper Credential Usage | **Pass** | Refresh token in secure storage |
+| M2: Inadequate Supply Chain Security | **Pass** | All dependencies current, no known CVEs |
+| M3: Insecure Authentication/Authorization | **Minor** | Firestore rules not version-controlled (LOW-15 still open) |
+| M4: Insufficient Input/Output Validation | **Pass** | All input fields bounded; URL scheme validation in place |
+| M5: Insecure Communication | **Pass** | All API calls HTTPS with 30-second timeouts |
+| M6: Inadequate Privacy Controls | **Pass** | No PII beyond task names; tokens in secure storage |
+| M7: Insufficient Binary Protections | **Pass** | R8/ProGuard enabled |
+| M8: Security Misconfiguration | **Pass** | Android manifest hardened |
+| M9: Insecure Data Storage | **Pass** | Tokens in secure storage, DB sandboxed |
+| M10: Insufficient Cryptography | N/A | App does not use custom cryptography |
+
+### Remaining Priority Action Items
+
+| Priority | Finding | Effort | Status |
+|----------|---------|--------|--------|
+| **LOW** | LOW-15: Version-control Firestore Security Rules | Low | **Deferred** — will set up Firebase CLI properly later |
+| **LOW** | LOW-21: Gate `debugPrint` in `main.dart` behind `kDebugMode` | Trivial | **Fixed** — extracted shared `debugLog()` helper in `display_utils.dart`, replaced all 12 call sites |
+| **LOW** | LOW-22: Gate 3 `debugPrint` calls in Today's 5 behind `kDebugMode` | Trivial | **Fixed** — now use `debugLog()` helper |

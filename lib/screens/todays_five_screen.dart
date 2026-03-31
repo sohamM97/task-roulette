@@ -143,7 +143,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     try {
       await _loadTodaysTasksInner();
     } catch (e) {
-      if (kDebugMode) debugPrint('TodaysFiveScreen: _loadTodaysTasks failed: $e');
+      debugLog('TodaysFiveScreen: _loadTodaysTasks failed: $e');
       if (mounted) setState(() => _loading = false);
     }
   }
@@ -160,8 +160,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     // Load suppressed deadline auto-pin IDs for today + purge old rows
     _deadlineSuppressedIds.clear();
     _deadlineSuppressedIds.addAll(await db.getDeadlineSuppressedIds(today));
+    // SEC-fix LOW-22: use debugLog to prevent leaking DB errors to logcat in release.
     db.purgeOldDeadlineSuppressed(today).catchError(
-        (e) => debugPrint('Failed to purge old suppression rows: $e'));
+        (e) => debugLog('Failed to purge old suppression rows: $e'));
 
     // Try to restore from DB
     final saved = await db.loadTodaysFiveState(today);
@@ -767,12 +768,14 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       // auto-pin so it doesn't get re-pinned on reload/regeneration.
       if (wasPinned && _effectiveDeadlines.containsKey(task.id)) {
         _deadlineSuppressedIds.add(task.id!);
+        // SEC-fix LOW-22: use debugLog to prevent leaking DB errors to logcat in release.
         DatabaseHelper().suppressDeadlineAutoPin(_todayKey(), task.id!).catchError(
-            (e) => debugPrint('Failed to suppress deadline auto-pin: $e'));
+            (e) => debugLog('Failed to suppress deadline auto-pin: $e'));
       } else if (!wasPinned && _deadlineSuppressedIds.contains(task.id)) {
         _deadlineSuppressedIds.remove(task.id!);
+        // SEC-fix LOW-22: use debugLog to prevent leaking DB errors to logcat in release.
         DatabaseHelper().unsuppressDeadlineAutoPin(_todayKey(), task.id!).catchError(
-            (e) => debugPrint('Failed to unsuppress deadline auto-pin: $e'));
+            (e) => debugLog('Failed to unsuppress deadline auto-pin: $e'));
       }
       await _persistAndTrim();
     }
