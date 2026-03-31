@@ -89,7 +89,11 @@ class _CompletionOverlayState extends State<_CompletionOverlay>
       ),
     );
 
-    _controller.forward().then((_) => widget.onDone());
+    // CR-fix I-45: guard against disposed widget — if user navigates back
+    // during animation, onDone could fire on a disposed widget.
+    _controller.forward().then((_) {
+      if (mounted) widget.onDone();
+    });
   }
 
   @override

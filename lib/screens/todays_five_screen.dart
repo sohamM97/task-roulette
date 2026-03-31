@@ -746,14 +746,18 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     );
   }
 
-  void _togglePinFromSheet(Task task) {
+  // CR-fix I-44: await _persistAndTrim to prevent race with refreshSnapshots.
+  // CR-fix M-37: mounted check before snackbar in error path.
+  Future<void> _togglePinFromSheet(Task task) async {
     final wasPinned = _pinnedIds.contains(task.id);
     final result = TodaysFivePinHelper.togglePinInPlace(
       _pinnedIds, task.id!,
     );
     if (result == null) {
-      ScaffoldMessenger.of(context).clearSnackBars();
-      showInfoSnackBar(context, 'Max 5 pinned tasks — unpin one first');
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        showInfoSnackBar(context, 'Max 5 pinned tasks — unpin one first');
+      }
     } else {
       setState(() {
         _pinnedIds.clear();
@@ -770,7 +774,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         DatabaseHelper().unsuppressDeadlineAutoPin(_todayKey(), task.id!).catchError(
             (e) => debugPrint('Failed to unsuppress deadline auto-pin: $e'));
       }
-      _persistAndTrim();
+      await _persistAndTrim();
     }
   }
 

@@ -612,35 +612,40 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   Future<void> _renameTask(Task task) async {
+    // CR-fix CR-16: dispose controller after dialog closes to prevent memory leak.
     final controller = TextEditingController(text: task.name);
-    final newName = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Rename'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: 500,
-          decoration: const InputDecoration(
-            hintText: 'Task name',
-            counterText: '',
+    try {
+      final newName = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Rename'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 500,
+            decoration: const InputDecoration(
+              hintText: 'Task name',
+              counterText: '',
+            ),
+            onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
           ),
-          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+              child: const Text('Rename'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
-            child: const Text('Rename'),
-          ),
-        ],
-      ),
-    );
-    if (newName != null && newName.isNotEmpty && newName != task.name && mounted) {
-      await context.read<TaskProvider>().renameTask(task.id!, newName);
+      );
+      if (newName != null && newName.isNotEmpty && newName != task.name && mounted) {
+        await context.read<TaskProvider>().renameTask(task.id!, newName);
+      }
+    } finally {
+      controller.dispose();
     }
   }
 

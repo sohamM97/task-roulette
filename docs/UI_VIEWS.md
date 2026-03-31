@@ -40,7 +40,8 @@ Reference for manual test instructions. Use these names consistently.
 
 ## Dialogs
 
-- **Add Task dialog** — opened via the + FAB. Text field for name, "Add multiple" toggle, "Inbox" checkbox (root level only, default ON), pin toggle (only when Today's 5 exists and pin slots available). Pin label: "Pin" at root level, "Pin for today" inside a task. Only leaf tasks can appear in Today's 5 — non-leaf tasks are never pinned.
+- **Add Task dialog** — opened via the + FAB. Text field for name, "Add multiple" toggle, "Inbox" checkbox (root level only, default ON — must deselect to create at root level outside inbox), pin toggle (only when Today's 5 exists and pin slots available). Pin label: "Pin" at root level, "Pin for today" inside a task. Only leaf tasks can appear in Today's 5 — non-leaf tasks are never pinned.
+- **Delete task dialog** — appears when deleting a non-leaf task. Options: "Keep sub-tasks" (reparents children to deleted task's parent) or "Delete everything" (deletes entire subtree). Leaf tasks delete immediately with undo snackbar, no dialog.
 - **"This task is pinned" warning dialog** — appears when tapping the + FAB on a task that is pinned in Today's 5. Title: "This task is pinned", body: explains adding a subtask will replace the pinned task with the new subtask. Buttons: "Cancel" / "Add anyway". Shown before the Add Task dialog opens.
 - **Schedule dialog** — opened via the calendar icon on a task card or leaf detail. Has deadline picker (date + "Due by"/"On" toggle), recurrence settings.
 - **Remove deadline dialog** — appears when tapping "Done today" on a task with a deadline. Title: "Remove deadline?", body shows deadline type and date, buttons: "Keep" / "Remove". Dismissing (tap outside) cancels the action entirely.
@@ -48,5 +49,5 @@ Reference for manual test instructions. Use these names consistently.
 ## Common Patterns
 
 - **Snackbar** — appears at bottom after actions. May include "Undo" button (5s timeout) and close icon.
-- **Archive screen** — accessed via the archive icon in the app bar. Shows completed and skipped tasks.
+- **Archive screen** — accessed via the archive icon in the app bar. Shows completed and skipped tasks. Each entry displays task name, completion status ("Completed today" / "Skipped"), parent context ("Was under X"), and inline action icons: trash (permanent delete) and restore (undo clock icon). No tap needed to reveal actions — they're always visible.
 - **Search** — magnifying glass icon in All Tasks app bar. Opens a task picker dialog.

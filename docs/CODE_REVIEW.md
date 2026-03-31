@@ -2806,3 +2806,263 @@ Batch fix of all remaining open items from rounds 1–9.
 |------|--------|
 | M-15 | Needs `flutter_secure_storage` dependency — future |
 | M-26 | Acceptable: `refreshSnapshots()` runs on tab switch |
+
+---
+---
+
+## Round 10 (2026-03-31)
+
+Full codebase review after 155 commits since last round — roulette terminology
+rebrand, starred view enhancements (dependency chain ordering, colour-only
+priority, expanded dialog improvements), pin-on-add bugfix, remove-dependency
+text overflow fix, dependent-task-freed-on-done-today feature, and version
+bumps to 1.2.15. Verified Deferred Fix Round items. Major focus: sync gaps
+in single-task deletion, TextEditingController regressions, and async
+lifecycle safety.
+
+---
+
+### Previous Round Verification
+
+- [x] I-39: `launchUrl` awaited and error handled — verified, `launchSafeUrl` utility used at `leaf_task_detail.dart:55`
+- [x] I-40: `_showRandomResult` goDeeper mounted check — verified, mounted check present
+- [x] I-41: Refresh token URL-encoded — verified via `_refreshFirebaseToken` implementation
+- [x] M-30: `todayDateKey()` shared utility — verified, `_todayKey()` and `_todayDateKey()` consistent
+- [x] M-31: `onMutation` pattern standardized — verified, `_refreshAfterMutation()` extracted; mutation methods use it, navigation methods use `_refreshCurrentList()`
+- [x] M-33: `_brainDump` pin transfer pool — verified present (acceptable, existing children are valid candidates)
+
+### Deferred Fix Round Verification (spot-checks)
+
+- [x] M3: `_renameTask` dialog TextEditingController disposal — verified fixed, `controller.dispose()` in finally block at `task_list_screen.dart:648`
+- [x] M-10: `showEditUrlDialog` TextEditingController disposal — verified fixed, `.then((_) => controller.dispose())` at `leaf_task_detail.dart:122`
+- [x] M6: DAG view recompute on rotation — verified fixed
+- [x] M9: Batch `getChildIdsForParents` — verified fixed
+- [x] M-12: Dead repeating task code removed — verified
+- [x] M-22: `_buildTheme(Brightness)` extracted — verified
+- [x] M-23: `_manuallyToggled` flag — verified
+
+### Items Still Open From Previous Rounds
+
+- I-38 / R-9: `_transferPinToChild` bypasses TaskProvider for Today's 5 mutations — still open (future refactor), direct `DatabaseHelper()` at `task_list_screen.dart:394`
+- M-15: Refresh token in plaintext SharedPreferences — **FIXED**: `flutter_secure_storage` imported and used at `auth_service.dart:6,54,345-349` with migration from legacy plaintext
+- M-26: `BackupService.importDatabase` doesn't trigger Today's 5 refresh — **FIXED**: `provider.loadRootTasks()` at `backup_service.dart:110` refreshes Today's 5 via provider chain
+- M-32: N+1 queries in `deleteTaskAndReparentChildren` nested loop — still open (low impact), loop at `database_helper.dart:2019-2032`
+
+---
+
+### Critical
+
+#### CR-16. ~~TextEditingController disposal regressions~~ — **FALSE POSITIVE (verified)**
+**Status:** Invalid. Verification confirmed both disposals ARE present:
+- `task_list_screen.dart:648` — `controller.dispose()` in `finally` block
+- `leaf_task_detail.dart:122` — `.then((_) => controller.dispose())`
+The original review used stale line numbers. No regression occurred.
+
+---
+
+#### CR-17. `deleteTaskWithRelationships` doesn't enqueue relationship/dependency removal sync events — **[FIXED in Round 10 fix]**
+**Status:** Fixed. The original review was correct — sync queue entries for
+relationships, dependencies, and schedules were missing. The fix commit
+(`0515d53`) added them. The verify session incorrectly marked this as
+FALSE POSITIVE because it checked the code after the fix was already applied.
+The method now correctly enqueues all four sync types:
+- Relationship removals (lines 1540-1559)
+- Dependency removals (lines 1560-1579)
+- Schedule removals (lines 1580-1591)
+- Task deletion (lines 1601-1610)
+
+---
+
+### Important
+
+#### I-42. `addRelationship()` in TaskProvider doesn't call `_refreshAfterMutation()` [FIXED in code-review-fix]
+**File:** `lib/providers/task_provider.dart:305-308`
+
+Now calls `await _refreshAfterMutation()` at line 307 with CR-fix comment.
+
+---
+
+#### I-43. `reorderStarredTasks()` calls `onMutation()` without `notifyListeners()` [FIXED in code-review-fix]
+**File:** `lib/providers/task_provider.dart:663-666`
+
+Now calls `await _refreshAfterMutation()` at line 665 instead of bare `onMutation?.call()`.
+
+---
+
+#### ~~I-43 original description for reference~~
+
+This called `onMutation` (triggering sync push) but didn't call
+`notifyListeners()` or `_refreshAfterMutation()`. The starred screen manages
+its own list locally (line 150-155 in `starred_screen.dart`), so the missing
+`notifyListeners` didn't cause a visual bug. However, the inconsistency
+with the `_refreshAfterMutation()` pattern meant sync fired before the
+provider state was refreshed.
+
+**Original fix:** Use `_refreshAfterMutation()` for consistency:
+```dart
+Future<void> reorderStarredTasks(List<int> taskIds) async {
+  await _db.reorderStarredTasks(taskIds);
+  await _refreshAfterMutation();
+}
+```
+
+---
+
+#### I-44. `_persistAndTrim()` not awaited in `_togglePinFromSheet` [FIXED in code-review-fix]
+**File:** `lib/screens/todays_five_screen.dart:777`
+
+Now awaited: `await _persistAndTrim();` with CR-fix I-44 comment at line 749.
+
+---
+
+#### I-45. `completion_animation.dart` calls `widget.onDone()` without mounted check [FIXED in code-review-fix]
+**File:** `lib/widgets/completion_animation.dart:92-96`
+
+Now checks `mounted` before calling `widget.onDone()` with CR-fix I-45 comment.
+
+---
+
+#### I-46. `_reorderByDependencyChains` and `reorderByDependencyChains` have no cycle detection [FIXED in code-review-fix]
+**Files:**
+- `lib/providers/task_provider.dart:829-832`
+- `lib/screens/starred_screen.dart:371-374`
+
+Both implementations now have a `visited` set with `if (!visited.add(id)) return;`
+cycle guard, with CR-fix I-46 comments.
+
+---
+
+#### I-47. Token refresh not deduplicated — concurrent callers can race [FIXED in code-review-fix]
+**File:** `lib/services/auth_service.dart:194-202`
+
+Now uses `_refreshFuture` cached Future with `??=` pattern to deduplicate concurrent
+refresh calls. `whenComplete` resets the Future after completion. CR-fix I-47 comment present.
+
+---
+
+### Minor
+
+#### M-34. Starred screen N+1 queries for tree preview data
+**File:** `lib/screens/starred_screen.dart:66-91`
+
+`_loadStarredTasks` loads children and grandchildren individually for each
+starred task:
+
+```dart
+final treeEntries = await Future.wait(starred.map((task) async {
+  final children = await provider.getChildren(task.id!);
+  // ...
+  final childEntries = await Future.wait(shownChildren.map((child) async {
+    final grandchildren = await provider.getChildren(child.id!);
+```
+
+For N starred tasks with M children each, this runs N + N*min(M,3) DB
+queries. With 10 starred tasks averaging 5 children, that's 40 queries.
+All queries are parallelized via `Future.wait`, so latency is bounded,
+but DB contention can still cause jank.
+
+**Fix (future):** Add a batch query `getChildrenForMultipleParents(List<int>)`
+to reduce to 2 queries total (one for children, one for grandchildren).
+
+---
+
+#### M-35. `_onReorder` in starred screen calls provider method without await
+**File:** `lib/screens/starred_screen.dart:155`
+
+```dart
+context.read<TaskProvider>().reorderStarredTasks(taskIds);
+```
+
+The async `reorderStarredTasks` is called without `await`. If the DB write
+fails, the error is silently swallowed. The local `setState` (line 150-153)
+has already optimistically updated the UI, so a DB failure leaves the UI
+and DB out of sync.
+
+**Fix:**
+```dart
+void _onReorder(int oldIndex, int newIndex) async {
+  if (oldIndex < newIndex) newIndex--;
+  setState(() {
+    final task = _starredTasks.removeAt(oldIndex);
+    _starredTasks.insert(newIndex, task);
+  });
+  final taskIds = _starredTasks.map((t) => t.id!).toList();
+  await context.read<TaskProvider>().reorderStarredTasks(taskIds);
+}
+```
+
+---
+
+#### M-36. `_chipsOverflow` TextPainter disposal inconsistent
+**File:** `lib/screens/todays_five_screen.dart`
+
+Round 8 noted M-29 (TextPainter disposal) as "ALREADY FIXED", but verify
+that `TextPainter.dispose()` is consistently called in all code paths.
+Any path that creates a TextPainter for measurement without disposing it
+leaks native resources.
+
+---
+
+#### M-37. `showInfoSnackBar` used outside of `_togglePinFromSheet` before mounted check
+**File:** `lib/screens/todays_five_screen.dart:755-756`
+
+In the `else` branch of `_togglePinFromSheet`, `showInfoSnackBar` is called
+after an async operation (`TodaysFivePinHelper.togglePinInPlace`) without a
+`mounted` check. If the widget is disposed during the async operation,
+accessing `context` via `showInfoSnackBar` could crash.
+
+**Fix:** Add `if (!mounted) return;` before `ScaffoldMessenger` / snackbar
+calls in the error path.
+
+---
+
+## Round 10 — Status
+
+**CR-16 was a false positive** (disposals already present). **CR-17 was correctly
+identified and fixed** — the verify session incorrectly marked it false positive
+because it checked after the fix was applied.
+
+**All Important items (I-42 through I-47) fixed** in the code-review-fix session.
+
+Remaining minor items: M-34 through M-38.
+
+---
+
+## Round 10 Fix (2026-03-31)
+
+### Fixed
+| ID | Title | Fix |
+|----|-------|-----|
+| CR-16 | ~~TextEditingController disposal regressions~~ | **FALSE POSITIVE** — disposals already present (line 648 and line 122) |
+| CR-17 | `deleteTaskWithRelationships` missing sync events | Added rel/dep/schedule removal sync queue entries before delete |
+| I-42 | `addRelationship` missing `_refreshAfterMutation` | Added call |
+| I-43 | `reorderStarredTasks` inconsistent pattern | Replaced `onMutation` with `_refreshAfterMutation` |
+| I-44 | `_persistAndTrim` not awaited in `_togglePinFromSheet` | Added `await`, changed method to async |
+| I-45 | Completion animation `onDone` without mounted check | Added `if (mounted)` guard |
+| I-46 | `walkChain` no cycle detection | Added `visited` set in both `task_provider.dart` and `starred_screen.dart` |
+| I-47 | Token refresh not deduplicated | Added `_refreshFuture` dedup in `AuthService.refreshToken()` |
+| M-35 | `_onReorder` not awaiting async call | Added `await` |
+| M-37 | `showInfoSnackBar` without mounted check in pin error path | Added `if (mounted)` guard |
+
+### Already Fixed
+| ID | Title | Notes |
+|----|-------|-------|
+| M-36 | TextPainter disposal | Both code paths already call `textPainter.dispose()` |
+
+### Not Fixed (deferred)
+| ID | Title | Reason |
+|----|-------|--------|
+| M-34 | Starred screen N+1 queries for tree preview | Low impact — queries parallelized via Future.wait |
+
+### Items Still Open From All Rounds
+
+| Item | Title | Round | Status |
+|------|-------|-------|--------|
+| I-38 / R-9 | `_transferPinToChild` bypasses TaskProvider | 9 | Open — future refactor |
+| M-32 | N+1 queries in `deleteTaskAndReparentChildren` | 9 | Open — low impact |
+| M-34 | Starred screen N+1 queries for tree preview | 10 | Deferred — low impact |
+| ~~M-38~~ | ~~`deleteTaskSubtree` missing schedule sync entries~~ | 10 | **Fixed** — CR-fix M-38 at `database_helper.dart:2210-2221` |
+
+**Resolved in Round 10 Verification (previously listed as open):**
+- M-15: Refresh token now in `flutter_secure_storage` (auth_service.dart:6,54,345-349)
+- M-26: `provider.loadRootTasks()` at backup_service.dart:110 refreshes Today's 5

@@ -145,14 +145,15 @@ class StarredScreenState extends State<StarredScreen>
     );
   }
 
-  void _onReorder(int oldIndex, int newIndex) {
+  // CR-fix M-35: await the async call so DB errors aren't silently swallowed.
+  Future<void> _onReorder(int oldIndex, int newIndex) async {
     if (oldIndex < newIndex) newIndex--;
     setState(() {
       final task = _starredTasks.removeAt(oldIndex);
       _starredTasks.insert(newIndex, task);
     });
     final taskIds = _starredTasks.map((t) => t.id!).toList();
-    context.read<TaskProvider>().reorderStarredTasks(taskIds);
+    await context.read<TaskProvider>().reorderStarredTasks(taskIds);
   }
 
   AppBar _buildAppBar(BuildContext context) {
@@ -367,7 +368,10 @@ List<Task> reorderByDependencyChains(
     taskById[t.id!] = t;
   }
 
+  // CR-fix I-46: visited set prevents infinite recursion if data is corrupted.
+  final visited = <int>{};
   void walkChain(int id, List<Task> out) {
+    if (!visited.add(id)) return; // cycle — break
     final task = taskById[id];
     if (task == null) return;
     out.add(task);

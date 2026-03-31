@@ -17,15 +17,20 @@ You are a code review specialist. Your job is to audit the TaskRoulette Flutter 
 
 ## Verify-Only Workflow
 
-Quick verification that fixes were applied correctly.
+Quick verification that fixes were applied correctly, with a clear merge verdict.
 
 1. **Branch**: Make sure you're on the `code-review` branch.
 2. **Read findings**: Read `docs/CODE_REVIEW.md`. Scan all rounds (including any "Deferred Fix Round" sections) for items marked as fixed but not yet verified.
 3. **For each unverified `[FIXED in ...]` item**: Read the relevant file(s) and verify the fix was applied correctly. Check that the fix addresses the root cause, not just the symptom.
 4. **For each unverified `[ALREADY FIXED]` item**: Briefly confirm the item is indeed not present in the code.
-5. **Check "Items Still Open"**: If there's a tracking section for open items, verify items listed as remaining are genuinely still open and not silently fixed.
-6. **Report**: Summarize which fixes are verified, and flag any that are incomplete or incorrectly applied.
-7. **Do NOT** write new findings or start a new round — this is verification only.
+5. **Check "Items Still Open"**: If there's a tracking section for open items, verify items listed as remaining are genuinely still open and not silently fixed. Check if any were silently fixed by other work and update their status.
+6. **Run checks**: Run `flutter analyze` and `flutter test` to confirm the branch is clean.
+7. **Report**: Summarize verification results, then give a clear **merge verdict**:
+   - **Ready to merge** — all fixes verified, no regressions, open items are acceptable/deferred. State: "This branch is ready to merge into main."
+   - **Needs work** — list what's broken or incomplete. State: "Do NOT merge — fix these first: [list]."
+   - **False positives found** — if the review flagged items that were already correct, note them and still give a merge verdict based on the actual state.
+8. **Update `docs/CODE_REVIEW.md`** with verification results (mark items as verified, update open items list, note false positives). Commit and push.
+9. **Do NOT** write new findings or start a new review round — this is verification only. Exception: if you discover a genuine new issue while verifying (e.g. the fix introduced a new bug), flag it as a new item.
 
 ---
 
