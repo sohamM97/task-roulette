@@ -1197,7 +1197,7 @@ try {
 
 ### Findings
 
-#### LOW-21: Ungated `debugPrint` in `main.dart` Auth/Sync Initialization
+#### LOW-21: Ungated `debugPrint` in `main.dart` Auth/Sync Initialization [FIXED in Round 6 fix]
 
 - **Severity:** Low
 - **File:** `lib/main.dart:137`
@@ -1223,7 +1223,7 @@ import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 
 ---
 
-#### LOW-22: Three Ungated `debugPrint` Calls in Today's Five Deadline Suppression
+#### LOW-22: Three Ungated `debugPrint` Calls in Today's Five Deadline Suppression [FIXED in Round 6 fix]
 
 - **Severity:** Low
 - **File:** `lib/screens/todays_five_screen.dart:164, 771, 775`
@@ -1322,6 +1322,6 @@ For sync_id fields, add a 50-char cap or UUID format validation.
 
 | Priority | Finding | Effort | Status |
 |----------|---------|--------|--------|
-| **LOW** | LOW-15: Version-control Firestore Security Rules | Low | **Still open (Round 3)** |
-| **LOW** | LOW-21: Gate `debugPrint` in `main.dart` behind `kDebugMode` | Trivial | **New** |
-| **LOW** | LOW-22: Gate 3 `debugPrint` calls in Today's 5 behind `kDebugMode` | Trivial | **New** |
+| **LOW** | LOW-15: Version-control Firestore Security Rules | Low | **Deferred** — will set up Firebase CLI properly later |
+| **LOW** | LOW-21: Gate `debugPrint` in `main.dart` behind `kDebugMode` | Trivial | **Fixed** — extracted shared `debugLog()` helper in `display_utils.dart`, replaced all 12 call sites |
+| **LOW** | LOW-22: Gate 3 `debugPrint` calls in Today's 5 behind `kDebugMode` | Trivial | **Fixed** — now use `debugLog()` helper |

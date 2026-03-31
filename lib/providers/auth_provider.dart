@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../services/auth_service.dart';
+import '../utils/display_utils.dart' show debugLog;
 
 enum SyncStatus { idle, syncing, synced, error }
 
@@ -50,7 +51,7 @@ class AuthProvider extends ChangeNotifier {
       return success;
     } catch (e) {
       // Transient failure (network error, timeout) — don't sign out
-      if (kDebugMode) debugPrint('AuthProvider: token refresh failed: $e');
+      debugLog('AuthProvider: token refresh failed: $e');
       return false;
     }
   }

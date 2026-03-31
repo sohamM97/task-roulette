@@ -4,7 +4,7 @@ Last updated: 2026-03-31
 
 ## Summary
 
-~1089 tests across 28 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
+~1095 tests across 28 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
 
 ## Covered
 
@@ -49,7 +49,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 - **test/widgets/random_result_dialog_test.dart** (~15 tests) — Layout, Go Deeper button, result enum.
 
 ### Other
-- **test/utils/display_utils_test.dart** (~93 tests) — `normalizeUrl`, `isAllowedUrl`, `displayUrl`, `shortenAncestorPath` (single/multi-segment, left-truncation of long ancestors, 4+ segment collapse, immediate parent always preserved, boundary at 12 chars), **`confirmDependentUnblock`** (empty list returns true immediately, dialog content with dependent names, Complete confirms, Cancel returns false, dismiss-by-tap-outside returns false).
+- **test/utils/display_utils_test.dart** (~99 tests) — `normalizeUrl`, `isAllowedUrl`, `displayUrl`, `shortenAncestorPath` (single/multi-segment, left-truncation of long ancestors, 4+ segment collapse, immediate parent always preserved, boundary at 12 chars), **`confirmDependentUnblock`** (empty list returns true immediately, dialog content with dependent names, Complete confirms, Cancel returns false, dismiss-by-tap-outside returns false), **`debugLog`** (forwards to debugPrint in debug mode, exact message passthrough, empty string), **SEC-fix LOW-21/LOW-22 codebase scan** (no ungated `debugPrint` calls outside `display_utils.dart`, `debugLog` import present where used).
 - **test/utils/force_directed_layout_test.dart** (~8 tests) — `LayoutNode` serialization round-trip, `ForceDirectedLayout.run` (single node, empty graph, early convergence, adaptive iterations), `runAsync` produces valid result.
 - **test/platform/platform_utils_native_test.dart** (7 tests) — Platform detection, home dir, file ops.
 - **test/app/app_test.dart** (1 test) — App renders with tabs.

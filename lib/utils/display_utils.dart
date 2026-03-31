@@ -1,6 +1,14 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+/// Debug-only logging helper. Gated behind [kDebugMode] so the call (and the
+/// string interpolation) is tree-shaken in release builds, preventing error
+/// details from leaking to Android logcat. Use instead of raw `debugPrint`.
+void debugLog(String message) {
+  if (kDebugMode) debugPrint(message);
+}
 
 /// Icon used for the archive/completed-tasks screen.
 const IconData archiveIcon = Icons.inventory_2_outlined;

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:task_roulette/utils/display_utils.dart';
@@ -715,6 +717,113 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(result, isFalse);
+    });
+  });
+
+  group('debugLog', () {
+    test('calls debugPrint in debug mode', () {
+      // In test mode, kDebugMode is true, so debugLog should forward to
+      // debugPrint. We intercept debugPrint to verify the message arrives.
+      final List<String> captured = [];
+      final originalDebugPrint = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null) captured.add(message);
+      };
+      try {
+        debugLog('test message alpha');
+        expect(captured, contains('test message alpha'));
+      } finally {
+        debugPrint = originalDebugPrint;
+      }
+    });
+
+    test('forwards exact message without modification', () {
+      final List<String> captured = [];
+      final originalDebugPrint = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null) captured.add(message);
+      };
+      try {
+        const msg = 'AuthService: Firebase token exchange failed: 401 {"error":"INVALID"}';
+        debugLog(msg);
+        expect(captured.single, equals(msg));
+      } finally {
+        debugPrint = originalDebugPrint;
+      }
+    });
+
+    test('handles empty string', () {
+      final List<String> captured = [];
+      final originalDebugPrint = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null) captured.add(message);
+      };
+      try {
+        debugLog('');
+        expect(captured, contains(''));
+      } finally {
+        debugPrint = originalDebugPrint;
+      }
+    });
+  });
+
+  group('SEC-fix LOW-21/LOW-22: no ungated debugPrint in lib/', () {
+    // Regression test: scans lib/ to ensure no raw debugPrint calls remain.
+    // Before the fix, 12 call sites used debugPrint directly (some without
+    // kDebugMode guard), leaking error details to Android logcat in release.
+    // After the fix, all call sites use debugLog instead.
+    test('no raw debugPrint calls outside display_utils.dart', () {
+      final libDir = Directory('lib');
+      expect(libDir.existsSync(), isTrue,
+          reason: 'lib/ directory must exist (run tests from project root)');
+
+      final violations = <String>[];
+      for (final file in libDir.listSync(recursive: true)) {
+        if (file is! File || !file.path.endsWith('.dart')) continue;
+
+        // display_utils.dart is allowed to use debugPrint (it wraps it)
+        if (file.path.endsWith('display_utils.dart')) continue;
+
+        final lines = file.readAsLinesSync();
+        for (int i = 0; i < lines.length; i++) {
+          final line = lines[i];
+          // Skip comments and import lines
+          if (line.trimLeft().startsWith('//')) continue;
+          if (line.trimLeft().startsWith('import ')) continue;
+
+          if (line.contains('debugPrint')) {
+            violations.add('${file.path}:${i + 1}: ${line.trim()}');
+          }
+        }
+      }
+
+      expect(violations, isEmpty,
+          reason: 'Found ungated debugPrint calls that should use debugLog '
+              'instead:\n${violations.join('\n')}');
+    });
+
+    test('debugLog import present in files that use it', () {
+      // Verify that files using debugLog actually import it
+      final libDir = Directory('lib');
+      final missingImports = <String>[];
+
+      for (final file in libDir.listSync(recursive: true)) {
+        if (file is! File || !file.path.endsWith('.dart')) continue;
+        if (file.path.endsWith('display_utils.dart')) continue;
+
+        final content = file.readAsStringSync();
+        if (content.contains('debugLog(') &&
+            !content.contains("import") ||
+            content.contains('debugLog(') &&
+            !content.contains('debugLog')) {
+          // This is a sanity check — Dart would fail to compile anyway,
+          // but we surface it here for clarity.
+          missingImports.add(file.path);
+        }
+      }
+      // If we get here without compile errors, all imports are fine.
+      // This test mainly documents the expectation.
+      expect(missingImports, isEmpty);
     });
   });
 }

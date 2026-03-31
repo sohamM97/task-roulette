@@ -1,6 +1,7 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import '../utils/display_utils.dart' show debugLog;
 import '../platform/platform_utils.dart'
     if (dart.library.io) '../platform/platform_utils_native.dart' as platform;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -100,7 +101,7 @@ class AuthService {
         return true;
       }
     } catch (e) {
-      if (kDebugMode) debugPrint('AuthService: silent sign-in failed: $e');
+      debugLog('AuthService: silent sign-in failed: $e');
     }
     return false;
   }
@@ -148,10 +149,8 @@ class AuthService {
     final uid = firebaseResult['localId'] as String? ?? '';
 
     final resolvedPhoto = photoUrl ?? firebaseResult['photoUrl'] as String?;
-    if (kDebugMode) {
-      debugPrint('AuthService: photoUrl from plugin=$photoUrl, '
-          'from firebase=${firebaseResult['photoUrl']}, resolved=$resolvedPhoto');
-    }
+    debugLog('AuthService: photoUrl from plugin=$photoUrl, '
+        'from firebase=${firebaseResult['photoUrl']}, resolved=$resolvedPhoto');
     _user = AuthUser(
       uid: uid,
       displayName: displayName ?? firebaseResult['displayName'] as String?,
@@ -185,7 +184,7 @@ class AuthService {
       try {
         await GoogleSignIn().signOut();
       } catch (e) {
-        if (kDebugMode) debugPrint('AuthService: Google sign-out failed: $e');
+        debugLog('AuthService: Google sign-out failed: $e');
       }
     }
   }
@@ -239,7 +238,7 @@ class AuthService {
       final token = auth.idToken ?? auth.accessToken;
       final tokenType = auth.idToken != null ? 'idToken' : 'accessToken';
       if (token == null || token.isEmpty) {
-        if (kDebugMode) debugPrint('AuthService: Google sign-in succeeded but no token available');
+        debugLog('AuthService: Google sign-in succeeded but no token available');
         return null;
       }
       return {
@@ -250,7 +249,7 @@ class AuthService {
         'photoUrl': account.photoUrl ?? '',
       };
     } catch (e) {
-      if (kDebugMode) debugPrint('AuthService: Mobile sign-in error: $e');
+      debugLog('AuthService: Mobile sign-in error: $e');
       return null;
     }
   }
@@ -292,7 +291,7 @@ class AuthService {
         'photoUrl': payload['picture'] as String? ?? '',
       };
     } catch (e) {
-      if (kDebugMode) debugPrint('AuthService: desktop sign-in failed: $e');
+      debugLog('AuthService: desktop sign-in failed: $e');
       return null;
     }
   }
@@ -322,7 +321,7 @@ class AuthService {
     if (response.statusCode == 200) {
       return json.decode(response.body) as Map<String, dynamic>;
     }
-    if (kDebugMode) debugPrint('AuthService: Firebase token exchange failed: ${response.statusCode} ${response.body}');
+    debugLog('AuthService: Firebase token exchange failed: ${response.statusCode} ${response.body}');
     return null;
   }
 
