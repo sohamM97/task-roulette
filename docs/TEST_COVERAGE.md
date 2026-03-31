@@ -4,7 +4,7 @@ Last updated: 2026-03-31
 
 ## Summary
 
-~1095 tests across 28 test files. Models and data layer are well-covered. Task card at 100%. Screens and services have significant gaps.
+~1326 tests across 34 test files. Models and data layer are well-covered. Task card at 100%. Triage dialog at 93%. Screens and services have remaining gaps.
 
 ## Covered
 
@@ -30,6 +30,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 - **test/screens/starred_screen_test.dart** (27 tests) — Empty state, card display (single/multiple/subtitle/in-progress/tree preview/badge count), long-press navigation, drag handle, **tap expanded view** (dialog open, lazy-expand direct children on tap, collapse hides grandchildren, "No sub-tasks" leaf, star icon confirmation dialog, cancel keeps starred, confirm unstar + undo snackbar, undo re-stars, long-press tree node navigates, tap leaf navigates directly, dismiss by tapping outside, **child count badge**, **no chevron on leaves**, **header navigate icon**, **leaf navigate icon**). **starOrder preservation** (explicit starOrder on re-star, appends to end without).
 - **test/screens/starred_screen_reorder_test.dart** (12 tests) — `reorderByDependencyChains`: empty deps no-op, single blocker→dependent pair, blocked-before-blocker reorder, transitive chain (A→B→C), reverse-order chain, unrelated tasks preserved, multiple dependents per blocker, empty task list, single task, missing task IDs in deps, independent chains, deep 4-task chain.
 - **test/screens/starred_screen_child_text_style_test.dart** (6 tests) — `childTextStyle`: blocked dimming, high-priority accent tint (no bold), normal style, blocked precedence over priority, priority 1 treated as high, custom fontSize.
+- **test/screens/task_list_screen_test.dart** (21 tests) — Root state (title, empty state, FABs, flare FAB visibility, task graph button, star button hidden, task cards in grid), navigation (AppBar title changes, back button show/hide/returns to root, breadcrumb with chevrons, task graph hidden when non-root, link FAB shown non-root, star button shown non-root), leaf detail (navigating into leaf shows detail), inbox (inbox section shown at root), link button (shown with URL+children, hidden without URL).
 - **test/screens/task_list_screen_overflow_menu_test.dart** (7 tests) — Overflow menu: root shows export/import only (no task items), non-root with children shows Rename/Do after/Schedule/Delete/export/import, leaf shows "Also show under..." instead of Rename/Do after, "Add link" vs "Edit link" based on URL presence, divider count (2 for non-root, 1 for root on non-web).
 
 ### Services (minimal)
@@ -47,6 +48,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 - **test/widgets/completion_animation_test.dart** (3 tests) — Overlay render, checkmark, IgnorePointer.
 - **test/widgets/profile_icon_test.dart** (2 tests) — Hidden when unconfigured, sync badge.
 - **test/widgets/random_result_dialog_test.dart** (~15 tests) — Layout, Go Deeper button, result enum.
+- **test/widgets/triage_dialog_test.dart** (25 tests, **93.4% coverage**) — TriageResult model (default/parent/keepAtTopLevel constructors), dialog title with task name, remaining count badge show/hide, search bar presence, "Keep at top level" option (display and returns keepAtTopLevel result), suggestion cards (with parent context, tap returns parent), auto-browse fallback (no suggestions), Browse/Suggestions button toggle, browse view (root tasks excluding self/inbox, navigate into shows children+back button, back returns to parent, "Here" files under current parent, check button files directly, "No sub-tasks here" for empty, "Show all N items" for >6), search (filter by name, filter by parent name, "No matching tasks", clear button resets, tap result returns parent).
 
 ### Other
 - **test/utils/display_utils_test.dart** (~99 tests) — `normalizeUrl`, `isAllowedUrl`, `displayUrl`, `shortenAncestorPath` (single/multi-segment, left-truncation of long ancestors, 4+ segment collapse, immediate parent always preserved, boundary at 12 chars), **`confirmDependentUnblock`** (empty list returns true immediately, dialog content with dependent names, Complete confirms, Cancel returns false, dismiss-by-tap-outside returns false), **`debugLog`** (forwards to debugPrint in debug mode, exact message passthrough, empty string), **SEC-fix LOW-21/LOW-22 codebase scan** (no ungated `debugPrint` calls outside `display_utils.dart`, `debugLog` import present where used).
@@ -57,7 +59,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 ## NOT Covered
 
 ### Screens (high priority)
-- **task_list_screen.dart** (1122 lines) — PARTIAL (overflow menu only, 7 tests). Main nav screen: task hierarchy, search, filtering, add/rename/delete, link/unlink, context menu. Still untested: search, task card interactions, add/delete dialogs, leaf detail view, navigation, drag reorder.
+- **task_list_screen.dart** (1122 lines) — PARTIAL (28 tests, 27.1% coverage). Root state, navigation, breadcrumbs, FABs, inbox section, link button, leaf detail view, overflow menu. Still untested: search dialog invocation, add/rename/delete flows, drag reorder, spotlight overlay, inbox expand/collapse, star toggle action.
 - **dag_view_screen.dart** (797 lines) — NO TESTS. Force-directed graph, node selection, pinch-to-zoom/pan.
 
 ### Services (high priority)
@@ -71,6 +73,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 ### Widgets (incomplete)
 - **leaf_task_detail.dart** — 52 tests but ~77% coverage. NOT tested: URL opening (requires url_launcher mock), editUrlDialog submit/remove flows.
 - **schedule_dialog.dart** — 87.4% coverage. NOT tested: Save navigation result (requires bottom sheet host), `show` static method.
+- **triage_dialog.dart** — 93.4% coverage. NOT tested: `_buildTaskCard` trailing widget variants, error catch paths.
 - **add_task_dialog.dart** — Only partial coverage in `small_widgets_test.dart`.
 - **brain_dump_dialog.dart** — Only partial coverage in `small_widgets_test.dart`.
 
