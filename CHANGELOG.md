@@ -1,5 +1,57 @@
 # Changelog
 
+## v1.3.0 — Starred tasks, deadlines & inbox triage (2026-03-31)
+
+### Starred Tasks
+- **Star any task** to bookmark it for quick access in the new Starred tab.
+- **Tree preview** on starred cards — see children at a glance, with colour-coded priority and dimmed blocked tasks.
+- **Expanded view** — tap a card to browse the full subtree, with lazy-expand for children and direct navigation.
+- **Drag to reorder** starred cards, with dependency chain ordering to keep related tasks together.
+
+### Deadlines
+- **Optional deadlines** with two modes — "Due by" (complete before date) and "On" (do on specific date).
+- **Weight boost** — tasks approaching their deadline get up to 8x higher chance of appearing in Today's 5.
+- **Auto-pin** — deadline tasks are automatically pinned in Today's 5 when they're due. Unpinning is respected and not overridden.
+- **Proximity colouring** — deadline indicators turn from grey to amber to red as the date approaches.
+- **Inherited deadlines** — child tasks inherit the nearest ancestor's deadline if they don't have their own.
+
+### Inbox & Smart Triage
+- **Inbox section** at the top of All Tasks — new tasks are marked as inbox items by default.
+- **Smart Triage dialog** — AI-scored suggestions for where to file an inbox task, with browse and search fallbacks.
+- **Brain dump toggle** — quick-add multiple tasks at once, all landing in the inbox.
+- **Batch triage** — file multiple inbox tasks in sequence with a remaining counter.
+
+### Today's 5 Improvements
+- **Reserved scheduled slots** — tasks with active schedules are guaranteed representation in Today's 5 (up to 4 reserved slots, always keeping at least 1 general pool slot).
+- **Spotlight animation** — random task pick now highlights the selected card with a spotlight overlay. Spin Again and Spin Deeper buttons for exploring further.
+- **Roulette terminology** — "respin" renamed to "reroll", double-dice icons for the random pick button.
+- **Swap task fix** — swap now correctly applies normalization, schedule boost, and diversity penalty.
+
+### Dependencies
+- **Tappable dependency link** on leaf pages — tap to navigate to the blocker, long-press to edit via picker.
+- **Auto-remove dependencies** on complete or skip — dependent tasks are unblocked automatically, with undo support restoring the dependency.
+- **Hourglass icon** on task cards when a task is blocked by a dependency.
+
+### UI & Polish
+- **Redesigned Today's 5 cards** — neutral backgrounds, thicker progress bar, stronger done state.
+- **Redesigned starred cards** — painted tree lines, subtitles, accent bars, count badge.
+- **Deadline calendar** — uses `table_calendar` with greyed-out adjacent-month days instead of the default date picker.
+- **Undo snackbar** duration increased to 5 seconds for easier tapping on mobile.
+- **Deadline removal prompt** — asks whether to clear the deadline when marking a task "Done today".
+
+### Data & Sync
+- **Starred fields synced** to Firestore (`is_starred`, `star_order`).
+- **Deadline fields synced** to Firestore (`deadline`, `deadline_type`).
+- **Schedule sync** for subtree delete — removing a task subtree now enqueues schedule removal sync events.
+- **Deadline auto-pin suppression** — synced correctly across devices.
+
+### Quality
+- **1326 automated tests** — up from 831, with new coverage for triage dialog (93%), task list screen navigation, starred screen, deadline logic, reserved slots, dependency removal, and more.
+- **Code review Round 10** and **Security review Round 6** — all actionable findings fixed.
+- All `debugPrint` calls gated behind a DRY `debugLog` helper.
+
+---
+
 ## v1.2.0 — Web platform, scheduled priorities & DAG overhaul (2026-03-12)
 
 ### Web Platform
