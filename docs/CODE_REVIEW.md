@@ -2860,15 +2860,16 @@ The original review used stale line numbers. No regression occurred.
 
 ---
 
-#### CR-17. ~~`deleteTaskWithRelationships` doesn't enqueue relationship/dependency removal sync events~~ — **FALSE POSITIVE (verified)**
-**Status:** Invalid. Verification confirmed the method correctly enqueues ALL four sync types:
+#### CR-17. `deleteTaskWithRelationships` doesn't enqueue relationship/dependency removal sync events — **[FIXED in Round 10 fix]**
+**Status:** Fixed. The original review was correct — sync queue entries for
+relationships, dependencies, and schedules were missing. The fix commit
+(`0515d53`) added them. The verify session incorrectly marked this as
+FALSE POSITIVE because it checked the code after the fix was already applied.
+The method now correctly enqueues all four sync types:
 - Relationship removals (lines 1540-1559)
 - Dependency removals (lines 1560-1579)
 - Schedule removals (lines 1580-1591)
 - Task deletion (lines 1601-1610)
-
-Notably, `deleteTaskWithRelationships` enqueues schedule removals that
-`deleteTaskSubtree` does NOT — a reverse gap worth tracking (see M-38).
 
 ---
 
@@ -3017,8 +3018,9 @@ calls in the error path.
 
 ## Round 10 — Status
 
-**Both Critical items (CR-16, CR-17) were false positives** — verified during
-Round 10 Verification. The review agents used stale line numbers.
+**CR-16 was a false positive** (disposals already present). **CR-17 was correctly
+identified and fixed** — the verify session incorrectly marked it false positive
+because it checked after the fix was applied.
 
 **All Important items (I-42 through I-47) fixed** in the code-review-fix session.
 
@@ -3032,7 +3034,7 @@ Remaining minor items: M-34 through M-38.
 | ID | Title | Fix |
 |----|-------|-----|
 | CR-16 | ~~TextEditingController disposal regressions~~ | **FALSE POSITIVE** — disposals already present (line 648 and line 122) |
-| CR-17 | ~~`deleteTaskWithRelationships` missing sync events~~ | **FALSE POSITIVE** — all 4 sync types already enqueued (lines 1540-1610) |
+| CR-17 | `deleteTaskWithRelationships` missing sync events | Added rel/dep/schedule removal sync queue entries before delete |
 | I-42 | `addRelationship` missing `_refreshAfterMutation` | Added call |
 | I-43 | `reorderStarredTasks` inconsistent pattern | Replaced `onMutation` with `_refreshAfterMutation` |
 | I-44 | `_persistAndTrim` not awaited in `_togglePinFromSheet` | Added `await`, changed method to async |
