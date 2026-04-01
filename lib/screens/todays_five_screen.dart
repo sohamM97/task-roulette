@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/database_helper.dart';
 import '../data/todays_five_pin_helper.dart';
+import '../data/xp_config.dart';
 import '../models/task.dart';
 import '../providers/auth_provider.dart';
+import '../providers/progression_provider.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/sync_service.dart';
@@ -805,8 +807,20 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
   Future<void> _markInProgress(Task task) async {
     final provider = context.read<TaskProvider>();
-    await provider.startTask(task.id!);
+    final progression = context.read<ProgressionProvider>();
+    // Skip default XP in startTask — award with Today's 5 bonuses here
+    await provider.startTask(task.id!, awardXp: false);
     await _refreshTaskSnapshot(task.id!);
+    if (!mounted) return;
+    // Award XP for starting with Today's 5 bonuses
+    await progression.awardXpWithBonuses(
+      eventType: XpEventType.taskStarted,
+      baseXp: XpAmounts.taskStarted,
+      taskId: task.id!,
+      isInTodaysFive: true,
+      isHighPriority: task.priority == 1,
+      isPinned: false, // see _markTaskDone
+    );
     if (!mounted) return;
     setState(() {});
     ScaffoldMessenger.of(context).clearSnackBars();
@@ -815,14 +829,31 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
   /// Runs the shared "Done today" / "Done for good!" action for [task] and
   /// keeps its [DoneOutcome], so tapping the done card later can reverse it.
+  /// Awards XP (with Today's 5 bonuses) when the mark lands; the snackbar's
+  /// undo revokes it.
   Future<void> _markTaskDone(Task task, DoneChoice choice) async {
     final id = task.id!;
     final workedOn = choice == DoneChoice.today;
+    final progression = context.read<ProgressionProvider>();
+    final eventType =
+        workedOn ? XpEventType.workedOn : XpEventType.taskComplete;
     Future<void> onChanged(bool isDone) async {
       if (!mounted) return;
       if (isDone) {
         await _markDone(id, workedOn: workedOn);
+        await progression.awardXpWithBonuses(
+          eventType: eventType,
+          baseXp: workedOn ? XpAmounts.workedOn : XpAmounts.taskComplete,
+          taskId: id,
+          isInTodaysFive: true,
+          isHighPriority: task.priority == 1,
+          // Every Today's 5 member is implicitly pinned, so a pinned bonus
+          // would only repeat the Today's 5 bonus.
+          isPinned: false,
+        );
+        _maybeAwardAllComplete(progression);
       } else {
+        await progression.revokeXp(eventType, id);
         await _unmarkDone(id, workedOn: workedOn);
       }
     }
@@ -831,6 +862,20 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final outcome = await action(context, task, onChanged: onChanged);
     if (outcome != null && _completedIds.contains(id)) {
       _doneOutcomes[id] = outcome;
+    }
+  }
+
+  /// Awards the "all Today's 5 complete" bonus if every task in the selection
+  /// is now done (completed or worked-on).
+  void _maybeAwardAllComplete(ProgressionProvider progression) {
+    final allDone = _todaysTasks.isNotEmpty &&
+        _todaysTasks.every((t) =>
+            _completedIds.contains(t.id) || _workedOnIds.contains(t.id));
+    if (allDone && _todaysTasks.length >= 5) {
+      progression.awardXp(
+        XpEventType.todaysFiveComplete,
+        XpAmounts.allTodaysFiveComplete,
+      );
     }
   }
 
@@ -904,6 +949,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       }
     }
 
+    if (!mounted) return;
+    final progression = context.read<ProgressionProvider>();
+    await progression.revokeXp(XpEventType.workedOn, task.id!);
+    await progression.revokeXp(XpEventType.taskComplete, task.id!);
     if (!mounted) return;
     await _unmarkDone(task.id!, workedOn: wasWorkedOn);
     if (!mounted) return;

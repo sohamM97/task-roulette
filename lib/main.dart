@@ -6,9 +6,11 @@ import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 import 'platform/platform_utils.dart'
     if (dart.library.io) 'platform/platform_utils_native.dart' as platform;
 import 'providers/auth_provider.dart';
+import 'providers/progression_provider.dart';
 import 'providers/task_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/starred_screen.dart';
+import 'screens/stats_screen.dart';
 import 'screens/task_list_screen.dart';
 import 'screens/todays_five_screen.dart';
 // import 'services/notification_service.dart'; // Disabled — see notification_service.dart header.
@@ -56,6 +58,7 @@ class TaskRouletteApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => TaskProvider()),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => ProgressionProvider()),
         ProxyProvider<AuthProvider, SyncService>(
           update: (_, auth, previous) => previous ?? SyncService(auth),
           dispose: (_, sync) => sync.dispose(),
@@ -90,12 +93,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   static const _tabStarred = 0;
   static const _tabToday = 1;
   static const _tabAllTasks = 2;
+  static const _tabStats = 3;
   static const _defaultTab = _tabStarred;
 
   int _currentIndex = _defaultTab;
   final _todaysFiveKey = GlobalKey<TodaysFiveScreenState>();
   final _starredKey = GlobalKey<StarredScreenState>();
   final _taskListKey = GlobalKey<TaskListScreenState>();
+  final _statsKey = GlobalKey<StatsScreenState>();
   final _pageController = PageController(initialPage: _defaultTab);
 
   @override
@@ -137,13 +142,30 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final authProvider = context.read<AuthProvider>();
     final syncService = context.read<SyncService>();
     final taskProvider = context.read<TaskProvider>();
+    final progressionProvider = context.read<ProgressionProvider>();
 
     // Load root tasks early so TaskListScreen doesn't need to call it
     // in initState (which would race with navigateToTask from Today's 5).
     taskProvider.loadRootTasks();
 
+    // Initialize progression system (runs backfill on first launch after v24)
+    progressionProvider.init();
+
     // Wire up mutation callback so sync triggers on local changes
     taskProvider.onMutation = () => syncService.schedulePush();
+
+    // Wire up XP callback so progression updates on task actions from All Tasks.
+    // Today's 5 screen handles its own XP awards (it has pinned/Today's 5 context).
+    taskProvider.onXpEarned = (eventType, xpAmount, taskId, {isHighPriority = false}) {
+      progressionProvider.awardXpWithBonuses(
+        eventType: eventType,
+        baseXp: xpAmount,
+        taskId: taskId ?? 0,
+        isInTodaysFive: false, // All Tasks context — never in Today's 5
+        isHighPriority: isHighPriority,
+        isPinned: false,
+      );
+    };
 
     // Wire up data-changed callback so UI refreshes on remote changes
     syncService.onDataChanged = () {
@@ -186,6 +208,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             _todaysFiveKey.currentState?.refreshSnapshots();
           } else if (index == _tabAllTasks) {
             _taskListKey.currentState?.loadTodaysFiveIds();
+          } else if (index == _tabStats) {
+            _statsKey.currentState?.refresh();
           }
           setState(() {
             _currentIndex = index;
@@ -218,6 +242,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             },
           ),
           TaskListScreen(key: _taskListKey),
+          StatsScreen(key: _statsKey),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -246,6 +271,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             icon: Icon(Icons.list_outlined),
             selectedIcon: Icon(Icons.list),
             label: 'All Tasks',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.bar_chart_outlined),
+            selectedIcon: Icon(Icons.bar_chart),
+            label: 'Stats',
           ),
         ],
       ),

@@ -272,6 +272,25 @@ class _FakeFirestoreService extends FirestoreService {
   Future<List<Map<String, dynamic>>> pullSchedulesSince(
       String uid, String idToken, int lastSyncAt) async => schedulesSince;
 
+  /// What [pullAllXpEvents] reads from "the cloud".
+  List<Map<String, dynamic>> allXpEvents = const [];
+
+  @override
+  Future<List<Map<String, dynamic>>> pullAllXpEvents(
+      String uid, String idToken) async => allXpEvents;
+
+  @override
+  Future<void> pushXpEvents(String uid, String idToken,
+      List<Map<String, dynamic>> xpEvents) async {
+    _record('pushXpEvents', [xpEvents.length.toString()]);
+  }
+
+  @override
+  Future<void> deleteXpEvent(
+      String uid, String idToken, String xpEventSyncId) async {
+    _record('deleteXpEvent', [xpEventSyncId]);
+  }
+
   @override
   Future<({List<Map<String, dynamic>> entries, List<String> suppressedSyncIds, int updatedAt})?>
       pullTodaysFive(String uid, String idToken, String date) async {

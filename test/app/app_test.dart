@@ -39,10 +39,10 @@ void main() {
   }
 
   group('AppShell bottom nav', () {
-    // Baseline — confirms the app boots and all three tabs are present in
+    // Baseline — confirms the app boots and all four tabs are present in
     // the bottom NavigationBar. (Scoped to the NavigationBar because
     // "Starred" also appears as the AppBar title of the StarredScreen.)
-    testWidgets('renders all three bottom-nav tabs', (tester) async {
+    testWidgets('renders all four bottom-nav tabs', (tester) async {
       await pumpApp(tester);
 
       final inBar = find.descendant(
@@ -57,18 +57,19 @@ void main() {
       expect(labels.contains('Starred'), isTrue);
       expect(labels.contains('Today'), isTrue);
       expect(labels.contains('All Tasks'), isTrue);
+      expect(labels.contains('Stats'), isTrue);
     });
 
     // Regression — the reorder put Starred at index 0; if a future change
     // shuffles the destinations or constants without updating the build()
     // order, this catches it.
-    testWidgets('destinations are in Starred, Today, All Tasks order',
+    testWidgets('destinations are in Starred, Today, All Tasks, Stats order',
         (tester) async {
       await pumpApp(tester);
 
       expect(
         bottomNavLabels(tester),
-        equals(<String>['Starred', 'Today', 'All Tasks']),
+        equals(<String>['Starred', 'Today', 'All Tasks', 'Stats']),
       );
     });
 
