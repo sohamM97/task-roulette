@@ -7,6 +7,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:task_roulette/data/database_helper.dart';
 import 'package:task_roulette/models/task.dart';
 import 'package:task_roulette/providers/auth_provider.dart';
+import 'package:task_roulette/providers/progression_provider.dart';
 import 'package:task_roulette/providers/task_provider.dart';
 import 'package:task_roulette/providers/theme_provider.dart';
 import 'package:task_roulette/screens/todays_five_screen.dart';
@@ -38,7 +39,9 @@ void main() {
     await db.reset();
     await db.database;
     provider = TaskProvider();
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({
+      'progression_backfill_done': true,
+    });
   });
 
   tearDown(() async {
@@ -51,6 +54,7 @@ void main() {
       providers: [
         ChangeNotifierProvider.value(value: provider),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => ProgressionProvider()),
         ChangeNotifierProvider.value(value: authProvider),
         Provider<SyncService>(
           create: (_) => SyncService(authProvider),
@@ -700,6 +704,7 @@ void main() {
         'todays5_ids': [id1.toString(), id2.toString(), id3.toString()],
         'todays5_completed': [id1.toString()],
         'todays5_worked_on': [id1.toString()],
+        'progression_backfill_done': true,
       });
 
       await pumpAndLoad(tester, buildTestWidget());

@@ -8,6 +8,7 @@ import '../models/task.dart';
 import '../models/task_relationship.dart';
 import 'todays_five_pin_helper.dart' show maxSlots;
 import '../models/task_schedule.dart';
+import 'xp_config.dart';
 import '../platform/platform_utils.dart'
     if (dart.library.io) '../platform/platform_utils_native.dart' as platform;
 
@@ -177,6 +178,21 @@ class DatabaseHelper {
         ''');
         await db.execute('CREATE INDEX idx_task_schedules_task_id ON task_schedules(task_id)');
         await db.execute('CREATE UNIQUE INDEX idx_task_schedules_sync_id ON task_schedules(sync_id)');
+        await db.execute('''
+          CREATE TABLE xp_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            xp_amount INTEGER NOT NULL,
+            task_id INTEGER,
+            date TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            sync_id TEXT,
+            FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+          )
+        ''');
+        await db.execute('CREATE INDEX idx_xp_events_date ON xp_events(date)');
+        await db.execute('CREATE INDEX idx_xp_events_event_type ON xp_events(event_type)');
+        await db.execute('CREATE UNIQUE INDEX idx_xp_events_sync_id ON xp_events(sync_id)');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -365,6 +381,23 @@ class DatabaseHelper {
             )
           ''');
         }
+        if (oldVersion < 24) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS xp_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              event_type TEXT NOT NULL,
+              xp_amount INTEGER NOT NULL,
+              task_id INTEGER,
+              date TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              sync_id TEXT,
+              FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+            )
+          ''');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_xp_events_date ON xp_events(date)');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_xp_events_event_type ON xp_events(event_type)');
+          await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_xp_events_sync_id ON xp_events(sync_id)');
+        }
       },
     );
   }
@@ -377,7 +410,7 @@ class DatabaseHelper {
   }
 
   static const _maxBackupSizeBytes = 100 * 1024 * 1024; // 100 MB
-  static const _dbVersion = 23;
+  static const _dbVersion = 24;
   static const _expectedTables = ['tasks', 'task_relationships', 'task_dependencies'];
 
   /// Validates that [sourcePath] is a valid TaskRoulette backup.
@@ -3360,5 +3393,428 @@ class DatabaseHelper {
       where: 'id = ?', whereArgs: [taskId]);
     if (rows.isEmpty) return false;
     return (rows.first['is_schedule_override'] as int) == 1;
+  }
+
+  // --- XP / Progression methods ---
+
+  /// Inserts an XP event. Returns the inserted row ID.
+  Future<int> insertXpEvent({
+    required String eventType,
+    required int xpAmount,
+    int? taskId,
+    required String date,
+  }) async {
+    final db = await database;
+    return db.insert('xp_events', {
+      'event_type': eventType,
+      'xp_amount': xpAmount,
+      'task_id': taskId,
+      'date': date,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+      'sync_id': _uuid.v4(),
+    });
+  }
+
+  /// Deletes XP event(s) for a specific task, event type, and date.
+  /// Used for undo (e.g. uncompleting a task revokes the XP).
+  Future<int> deleteXpEventsForTask(int taskId, String eventType, String date) async {
+    final db = await database;
+    return db.delete('xp_events',
+      where: 'task_id = ? AND event_type = ? AND date = ?',
+      whereArgs: [taskId, eventType, date]);
+  }
+
+  /// Deletes all XP bonus events for a task on a given date (all bonus types).
+  Future<int> deleteXpBonusesForTask(int taskId, String date) async {
+    final db = await database;
+    return db.delete('xp_events',
+      where: 'task_id = ? AND date = ? AND event_type IN (?, ?, ?)',
+      whereArgs: [
+        taskId, date,
+        XpEventType.todaysFiveBonus,
+        XpEventType.highPriorityBonus,
+        XpEventType.pinnedBonus,
+      ]);
+  }
+
+  /// Returns total XP earned (all time).
+  Future<int> getTotalXp() async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT COALESCE(SUM(xp_amount), 0) AS total FROM xp_events');
+    return (result.first['total'] as int?) ?? 0;
+  }
+
+  /// Returns daily XP sums for a week (Mon–Sun).
+  /// [mondayDate] is the Monday in YYYY-MM-DD format.
+  /// Returns a list of 7 ints (index 0 = Monday).
+  Future<List<int>> getXpForWeek(String mondayDate) async {
+    final monday = DateTime.parse(mondayDate);
+    final sunday = monday.add(const Duration(days: 6));
+    final sundayDate = _dateKey(sunday);
+
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT date, SUM(xp_amount) AS total
+      FROM xp_events
+      WHERE date >= ? AND date <= ?
+      GROUP BY date
+      ORDER BY date ASC
+    ''', [mondayDate, sundayDate]);
+
+    final weekXp = List.filled(7, 0);
+    for (final row in rows) {
+      final date = DateTime.parse(row['date'] as String);
+      final dayIndex = date.weekday - 1; // Monday=0, Sunday=6
+      weekXp[dayIndex] = (row['total'] as int?) ?? 0;
+    }
+    return weekXp;
+  }
+
+  /// Returns daily completion + worked-on counts for a week (Mon–Sun).
+  /// Counts tasks completed (completed_at) OR worked on (last_worked_at) each day.
+  /// Returns a list of 7 ints (index 0 = Monday).
+  Future<List<int>> getCompletionsForWeek(String mondayDate) async {
+    final monday = DateTime.parse(mondayDate);
+    final mondayMs = monday.millisecondsSinceEpoch;
+    final nextMondayMs = monday.add(const Duration(days: 7)).millisecondsSinceEpoch;
+
+    final db = await database;
+    // Count tasks completed each day
+    final completedRows = await db.rawQuery('''
+      SELECT DATE(completed_at / 1000, 'unixepoch', 'localtime') AS day, COUNT(*) AS cnt
+      FROM tasks
+      WHERE completed_at >= ? AND completed_at < ?
+      GROUP BY day
+    ''', [mondayMs, nextMondayMs]);
+
+    // Count tasks worked-on each day (via last_worked_at, excluding already-counted completions)
+    final workedRows = await db.rawQuery('''
+      SELECT DATE(last_worked_at / 1000, 'unixepoch', 'localtime') AS day, COUNT(*) AS cnt
+      FROM tasks
+      WHERE last_worked_at >= ? AND last_worked_at < ?
+        AND (completed_at IS NULL OR completed_at < ? OR completed_at >= ?)
+      GROUP BY day
+    ''', [mondayMs, nextMondayMs, mondayMs, nextMondayMs]);
+
+    final weekCounts = List.filled(7, 0);
+    for (final row in completedRows) {
+      final day = row['day'] as String?;
+      if (day == null) continue;
+      final date = DateTime.parse(day);
+      final idx = date.weekday - 1;
+      if (idx >= 0 && idx < 7) weekCounts[idx] += (row['cnt'] as int?) ?? 0;
+    }
+    for (final row in workedRows) {
+      final day = row['day'] as String?;
+      if (day == null) continue;
+      final date = DateTime.parse(day);
+      final idx = date.weekday - 1;
+      if (idx >= 0 && idx < 7) weekCounts[idx] += (row['cnt'] as int?) ?? 0;
+    }
+    return weekCounts;
+  }
+
+  /// Returns current and best active-day streaks.
+  /// An "active day" is any date with at least one xp_event.
+  Future<({int current, int best})> getActiveDaysStreak() async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT DISTINCT date FROM xp_events ORDER BY date DESC
+    ''');
+
+    if (rows.isEmpty) return (current: 0, best: 0);
+
+    final dates = rows.map((r) => DateTime.parse(r['date'] as String)).toList();
+    final today = DateTime.now();
+    final todayKey = _dateKey(today);
+    final yesterdayKey = _dateKey(today.subtract(const Duration(days: 1)));
+
+    // Current streak: consecutive days ending today or yesterday (grace period)
+    var currentStreak = 0;
+    final firstDate = _dateKey(dates.first);
+    if (firstDate == todayKey || firstDate == yesterdayKey) {
+      currentStreak = 1;
+      for (var i = 1; i < dates.length; i++) {
+        final expected = dates[i - 1].subtract(const Duration(days: 1));
+        if (_dateKey(dates[i]) == _dateKey(expected)) {
+          currentStreak++;
+        } else {
+          break;
+        }
+      }
+    }
+
+    // Best streak: longest consecutive run in the full history
+    var bestStreak = 1;
+    var runLength = 1;
+    for (var i = 1; i < dates.length; i++) {
+      final expected = dates[i - 1].subtract(const Duration(days: 1));
+      if (_dateKey(dates[i]) == _dateKey(expected)) {
+        runLength++;
+        if (runLength > bestStreak) bestStreak = runLength;
+      } else {
+        runLength = 1;
+      }
+    }
+    if (currentStreak > bestStreak) bestStreak = currentStreak;
+
+    return (current: currentStreak, best: bestStreak);
+  }
+
+  /// Returns number of active days in the given week (0–7).
+  Future<int> getWeekActiveDays(String mondayDate) async {
+    final monday = DateTime.parse(mondayDate);
+    final sundayDate = _dateKey(monday.add(const Duration(days: 6)));
+
+    final db = await database;
+    final result = await db.rawQuery('''
+      SELECT COUNT(DISTINCT date) AS cnt
+      FROM xp_events
+      WHERE date >= ? AND date <= ?
+    ''', [mondayDate, sundayDate]);
+    return (result.first['cnt'] as int?) ?? 0;
+  }
+
+  /// Backfills XP events from historical task and Today's 5 data.
+  /// Idempotent: clears all existing xp_events first, then re-inserts.
+  /// Should be called inside a transaction or guarded by a SharedPreferences flag.
+  Future<void> backfillXpEvents() async {
+    final db = await database;
+    await db.transaction((txn) async {
+      // Clear any partial backfill
+      await txn.delete('xp_events');
+
+      final now = DateTime.now().millisecondsSinceEpoch;
+
+      // 1. Task completions → task_complete (20 XP each)
+      //    Cross-reference todays_five_state to award Today's 5 and pinned bonuses.
+      final completedTasks = await txn.rawQuery('''
+        SELECT id, completed_at, priority FROM tasks WHERE completed_at IS NOT NULL
+      ''');
+      for (final task in completedTasks) {
+        final taskId = task['id'] as int;
+        final completedAt = task['completed_at'] as int;
+        final date = _dateKeyFromEpoch(completedAt);
+        final priority = (task['priority'] as int?) ?? 0;
+
+        await txn.insert('xp_events', {
+          'event_type': XpEventType.taskComplete,
+          'xp_amount': XpAmounts.taskComplete,
+          'task_id': taskId,
+          'date': date,
+          'created_at': now,
+          'sync_id': _uuid.v4(),
+        });
+
+        // High priority bonus
+        if (priority == 1) {
+          await txn.insert('xp_events', {
+            'event_type': XpEventType.highPriorityBonus,
+            'xp_amount': XpAmounts.highPriorityBonus,
+            'task_id': taskId,
+            'date': date,
+            'created_at': now,
+            'sync_id': _uuid.v4(),
+          });
+        }
+
+        // Check if this task was in Today's 5 on its completion date
+        // Bug fix: previously completions from Today's 5 didn't get bonus XP
+        // during backfill. Now we cross-reference todays_five_state for accuracy.
+        final todaysFiveCheck = await txn.rawQuery('''
+          SELECT is_pinned FROM todays_five_state
+          WHERE task_id = ? AND date = ?
+        ''', [taskId, date]);
+        if (todaysFiveCheck.isNotEmpty) {
+          await txn.insert('xp_events', {
+            'event_type': XpEventType.todaysFiveBonus,
+            'xp_amount': XpAmounts.todaysFiveBonus,
+            'task_id': taskId,
+            'date': date,
+            'created_at': now,
+            'sync_id': _uuid.v4(),
+          });
+          // Pinned bonus
+          final wasPinned = (todaysFiveCheck.first['is_pinned'] as int?) == 1;
+          if (wasPinned) {
+            await txn.insert('xp_events', {
+              'event_type': XpEventType.pinnedBonus,
+              'xp_amount': XpAmounts.pinnedBonus,
+              'task_id': taskId,
+              'date': date,
+              'created_at': now,
+              'sync_id': _uuid.v4(),
+            });
+          }
+        }
+      }
+
+      // 2. Task starts → task_started (5 XP each, only non-completed)
+      final startedTasks = await txn.rawQuery('''
+        SELECT id, started_at, priority FROM tasks
+        WHERE started_at IS NOT NULL AND completed_at IS NULL
+      ''');
+      for (final task in startedTasks) {
+        final startedAt = task['started_at'] as int;
+        final date = _dateKeyFromEpoch(startedAt);
+
+        await txn.insert('xp_events', {
+          'event_type': XpEventType.taskStarted,
+          'xp_amount': XpAmounts.taskStarted,
+          'task_id': task['id'] as int,
+          'date': date,
+          'created_at': now,
+          'sync_id': _uuid.v4(),
+        });
+      }
+
+      // 3. Today's 5 worked-on → worked_on (10 XP each)
+      final workedOnRows = await txn.rawQuery('''
+        SELECT DISTINCT task_id, date FROM todays_five_state WHERE is_worked_on = 1
+      ''');
+      for (final row in workedOnRows) {
+        final taskId = row['task_id'] as int;
+        final date = row['date'] as String;
+
+        // Check if task was also in a pinned slot
+        final pinnedCheck = await txn.rawQuery('''
+          SELECT is_pinned FROM todays_five_state
+          WHERE task_id = ? AND date = ? AND is_pinned = 1
+        ''', [taskId, date]);
+
+        await txn.insert('xp_events', {
+          'event_type': XpEventType.workedOn,
+          'xp_amount': XpAmounts.workedOn,
+          'task_id': taskId,
+          'date': date,
+          'created_at': now,
+          'sync_id': _uuid.v4(),
+        });
+
+        // Today's 5 bonus (it was in Today's 5 since it's in todays_five_state)
+        await txn.insert('xp_events', {
+          'event_type': XpEventType.todaysFiveBonus,
+          'xp_amount': XpAmounts.todaysFiveBonus,
+          'task_id': taskId,
+          'date': date,
+          'created_at': now,
+          'sync_id': _uuid.v4(),
+        });
+
+        // Pinned bonus
+        if (pinnedCheck.isNotEmpty) {
+          await txn.insert('xp_events', {
+            'event_type': XpEventType.pinnedBonus,
+            'xp_amount': XpAmounts.pinnedBonus,
+            'task_id': taskId,
+            'date': date,
+            'created_at': now,
+            'sync_id': _uuid.v4(),
+          });
+        }
+      }
+
+      // 4. Today's 5 all-complete days → todays_five_complete (30 XP each)
+      //    A day counts as "all complete" if every task in the selection is
+      //    either completed or worked-on.
+      final allCompleteDays = await txn.rawQuery('''
+        SELECT date FROM todays_five_state
+        GROUP BY date
+        HAVING COUNT(*) >= 5
+          AND COUNT(*) = SUM(CASE WHEN is_completed = 1 OR is_worked_on = 1 THEN 1 ELSE 0 END)
+      ''');
+      for (final row in allCompleteDays) {
+        await txn.insert('xp_events', {
+          'event_type': XpEventType.todaysFiveComplete,
+          'xp_amount': XpAmounts.allTodaysFiveComplete,
+          'task_id': null,
+          'date': row['date'] as String,
+          'created_at': now,
+          'sync_id': _uuid.v4(),
+        });
+      }
+    });
+  }
+
+  /// Returns all XP events that have sync_ids (for Firestore push).
+  Future<List<Map<String, dynamic>>> getXpEventsForSync() async {
+    final db = await database;
+    return db.rawQuery('''
+      SELECT xe.*, t.sync_id AS task_sync_id
+      FROM xp_events xe
+      LEFT JOIN tasks t ON xe.task_id = t.id
+      WHERE xe.sync_id IS NOT NULL
+    ''');
+  }
+
+  /// Upserts an XP event from Firestore (pull). Matches on sync_id.
+  Future<void> upsertXpEventFromRemote({
+    required String syncId,
+    required String eventType,
+    required int xpAmount,
+    int? taskId,
+    required String date,
+    required int createdAt,
+  }) async {
+    final db = await database;
+    final existing = await db.query('xp_events',
+      where: 'sync_id = ?', whereArgs: [syncId]);
+    if (existing.isEmpty) {
+      await db.insert('xp_events', {
+        'event_type': eventType,
+        'xp_amount': xpAmount,
+        'task_id': taskId,
+        'date': date,
+        'created_at': createdAt,
+        'sync_id': syncId,
+      });
+    }
+  }
+
+  /// Deletes all XP events (used by replaceLocalWithCloud).
+  Future<void> deleteAllXpEvents() async {
+    final db = await database;
+    await db.delete('xp_events');
+  }
+
+  /// Returns an XP event by sync_id (for individual push from sync queue).
+  Future<Map<String, dynamic>?> getXpEventBySyncId(String syncId) async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT xe.*, t.sync_id AS task_sync_id
+      FROM xp_events xe
+      LEFT JOIN tasks t ON xe.task_id = t.id
+      WHERE xe.sync_id = ?
+    ''', [syncId]);
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  /// Returns all XP event sync_ids (for reconciliation during pull).
+  Future<Set<String>> getAllXpEventSyncIds() async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      'SELECT sync_id FROM xp_events WHERE sync_id IS NOT NULL');
+    return rows.map((r) => r['sync_id'] as String).toSet();
+  }
+
+  /// Deletes an XP event by sync_id (used during pull reconciliation).
+  Future<void> deleteXpEventBySyncId(String syncId) async {
+    final db = await database;
+    await db.delete('xp_events', where: 'sync_id = ?', whereArgs: [syncId]);
+  }
+
+  /// Returns YYYY-MM-DD date key from epoch milliseconds.
+  static String _dateKeyFromEpoch(int epochMs) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(epochMs);
+    return _dateKey(dt);
+  }
+
+  /// Returns YYYY-MM-DD date key from DateTime.
+  static String _dateKey(DateTime dt) {
+    return '${dt.year.toString().padLeft(4, '0')}-'
+        '${dt.month.toString().padLeft(2, '0')}-'
+        '${dt.day.toString().padLeft(2, '0')}';
   }
 }

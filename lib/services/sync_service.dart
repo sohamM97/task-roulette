@@ -123,6 +123,12 @@ class SyncService {
         await _firestore.pushSchedules(uid, idToken, schedules);
       }
 
+      // Push all xp_events
+      final xpEventsInit = await _db.getXpEventsForSync();
+      if (xpEventsInit.isNotEmpty) {
+        await _firestore.pushXpEvents(uid, idToken, xpEventsInit);
+      }
+
       // Mark all tasks as synced
       final taskIds = allTasks.where((t) => t.id != null).map((t) => t.id!).toList();
       await _db.markTasksSynced(taskIds);
@@ -191,6 +197,19 @@ class SyncService {
         await _db.upsertScheduleFromRemote(schedule);
       }
 
+      // Pull all xp_events
+      final remoteXpEventsReplace = await _firestore.pullAllXpEvents(uid, idToken);
+      for (final xpEvent in remoteXpEventsReplace) {
+        await _db.upsertXpEventFromRemote(
+          syncId: xpEvent['sync_id'] as String,
+          eventType: xpEvent['event_type'] as String,
+          xpAmount: xpEvent['xp_amount'] as int,
+          taskId: null,
+          date: xpEvent['date'] as String,
+          createdAt: xpEvent['created_at'] as int,
+        );
+      }
+
       // Pull Today's 5 state
       final dateKey = _todayDateKey();
       final remote5 = await _firestore.pullTodaysFive(uid, idToken, dateKey);
@@ -245,6 +264,11 @@ class SyncService {
         final syncId = sched['sync_id'] as String;
         await _firestore.deleteSchedule(uid, idToken, syncId);
       }
+      final remoteXpEventsCloud = await _firestore.pullAllXpEvents(uid, idToken);
+      for (final xpEvent in remoteXpEventsCloud) {
+        final syncId = xpEvent['sync_id'] as String;
+        await _firestore.deleteXpEvent(uid, idToken, syncId);
+      }
 
       // Now push all local data to cloud
       final allTasks = await _db.getAllTasksWithSyncId();
@@ -260,6 +284,12 @@ class SyncService {
       final schedules = await _db.getAllSchedulesWithTaskSyncIds();
       if (schedules.isNotEmpty) {
         await _firestore.pushSchedules(uid, idToken, schedules);
+      }
+
+      // Push all xp_events
+      final xpEventsCloud = await _db.getXpEventsForSync();
+      if (xpEventsCloud.isNotEmpty) {
+        await _firestore.pushXpEvents(uid, idToken, xpEventsCloud);
       }
 
       // Mark all tasks as synced
@@ -367,8 +397,23 @@ class SyncService {
             } else if (action == 'remove') {
               await _firestore.deleteSchedule(uid, idToken, key1);
             }
+          case 'xp_event':
+            if (action == 'add') {
+              final data = await _db.getXpEventBySyncId(key1);
+              if (data != null) {
+                await _firestore.pushXpEvents(uid, idToken, [data]);
+              }
+            } else if (action == 'remove') {
+              await _firestore.deleteXpEvent(uid, idToken, key1);
+            }
         }
         await _db.deleteSyncQueueEntry(entryId);
+      }
+
+      // Push all xp_events (bulk push like tasks — not queue-based)
+      final xpEvents = await _db.getXpEventsForSync();
+      if (xpEvents.isNotEmpty) {
+        await _firestore.pushXpEvents(uid, idToken, xpEvents);
       }
 
       // Push Today's 5 state
@@ -493,6 +538,32 @@ class SyncService {
         if (!remoteScheduleIds.contains(localSyncId) &&
             !pendingScheduleKeys.contains(localSyncId)) {
           await _db.deleteScheduleBySyncId(localSyncId);
+          anyChange = true;
+        }
+      }
+
+      // Pull xp_events
+      final remoteXpEvents = await _firestore.pullAllXpEvents(uid, idToken);
+      for (final xpEvent in remoteXpEvents) {
+        await _db.upsertXpEventFromRemote(
+          syncId: xpEvent['sync_id'] as String,
+          eventType: xpEvent['event_type'] as String,
+          xpAmount: xpEvent['xp_amount'] as int,
+          taskId: null, // task_id resolved locally via task_sync_id if needed
+          date: xpEvent['date'] as String,
+          createdAt: xpEvent['created_at'] as int,
+        );
+      }
+      // Remove local xp_events not in remote (skip pending push)
+      final remoteXpEventIds = remoteXpEvents
+          .map((e) => e['sync_id'] as String)
+          .toSet();
+      final pendingXpEventKeys = await _db.getPendingSyncAddKeys('xp_event');
+      final localXpEventIds = await _db.getAllXpEventSyncIds();
+      for (final localSyncId in localXpEventIds) {
+        if (!remoteXpEventIds.contains(localSyncId) &&
+            !pendingXpEventKeys.contains(localSyncId)) {
+          await _db.deleteXpEventBySyncId(localSyncId);
           anyChange = true;
         }
       }

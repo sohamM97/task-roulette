@@ -28,6 +28,7 @@ class FirestoreService {
   String _dependenciesPath(String uid) => '$_baseUrl/users/$uid/dependencies';
   String _todaysFivePath(String uid) => '$_baseUrl/users/$uid/todays_five';
   String _schedulesPath(String uid) => '$_baseUrl/users/$uid/schedules';
+  String _xpEventsPath(String uid) => '$_baseUrl/users/$uid/xp_events';
 
   // --- Push ---
 
@@ -346,6 +347,98 @@ class FirestoreService {
           'schedule_type': _stringField(fields, 'schedule_type') ?? 'weekly',
           'day_of_week': _intFieldNullable(fields, 'day_of_week'),
           'updated_at': _intFieldNullable(fields, 'updated_at'),
+        });
+      }
+      pageToken = body['nextPageToken'] as String?;
+    } while (pageToken != null);
+    return results;
+  }
+
+  // --- XP Events ---
+
+  /// Pushes xp_events to Firestore using batch commit (up to 500 per batch).
+  Future<void> pushXpEvents(
+    String uid,
+    String idToken,
+    List<Map<String, dynamic>> xpEvents,
+  ) async {
+    if (xpEvents.isEmpty) return;
+    for (var i = 0; i < xpEvents.length; i += 500) {
+      final batch = xpEvents.skip(i).take(500).toList();
+      final writes = batch.map((e) {
+        final syncId = e['sync_id'] as String;
+        final fields = <String, dynamic>{
+          'event_type': {'stringValue': e['event_type'] as String},
+          'xp_amount': {'integerValue': (e['xp_amount'] as int).toString()},
+          'date': {'stringValue': e['date'] as String},
+          'created_at': {'integerValue': (e['created_at'] as int).toString()},
+        };
+        if (e['task_sync_id'] != null) {
+          fields['task_sync_id'] = {'stringValue': e['task_sync_id'] as String};
+        }
+        return {
+          'update': {
+            'name': 'projects/$_projectId/databases/(default)/documents/users/$uid/xp_events/$syncId',
+            'fields': fields,
+          },
+        };
+      }).toList();
+
+      final commitUrl = Uri.parse(
+        'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
+      );
+      final response = await http.post(
+        commitUrl,
+        headers: _headers(idToken),
+        body: json.encode({'writes': writes}),
+      ).timeout(_httpTimeout);
+      if (response.statusCode != 200) {
+        throw FirestoreException('Push xp_events failed: ${response.statusCode} ${response.body}');
+      }
+    }
+  }
+
+  /// Deletes an xp_event document from Firestore.
+  Future<void> deleteXpEvent(
+    String uid,
+    String idToken,
+    String xpEventSyncId,
+  ) async {
+    final url = Uri.parse('${_xpEventsPath(uid)}/$xpEventSyncId');
+    final response = await http.delete(url, headers: _headers(idToken)).timeout(_httpTimeout);
+    if (response.statusCode != 200 && response.statusCode != 404) {
+      throw FirestoreException('Delete xp_event failed: ${response.statusCode} ${response.body}');
+    }
+  }
+
+  /// Pulls all xp_events from Firestore.
+  Future<List<Map<String, dynamic>>> pullAllXpEvents(
+    String uid,
+    String idToken,
+  ) async {
+    final results = <Map<String, dynamic>>[];
+    String? pageToken;
+    do {
+      var url = '${_xpEventsPath(uid)}?pageSize=300';
+      if (pageToken != null) url += '&pageToken=$pageToken';
+      final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
+      if (response.statusCode != 200) {
+        throw FirestoreException('Pull xp_events failed: ${response.statusCode}');
+      }
+      final body = json.decode(response.body) as Map<String, dynamic>;
+      final docs = body['documents'] as List<dynamic>? ?? [];
+      for (final doc in docs) {
+        final fields = (doc as Map<String, dynamic>)['fields'] as Map<String, dynamic>?;
+        if (fields == null) continue;
+        final docName = doc['name'] as String;
+        final syncId = docName.split('/').last;
+        results.add({
+          'sync_id': syncId,
+          'event_type': _stringField(fields, 'event_type') ?? '',
+          'xp_amount': _intField(fields, 'xp_amount'),
+          'task_sync_id': _stringField(fields, 'task_sync_id'),
+          'date': _stringField(fields, 'date') ?? '',
+          'created_at': _intField(fields, 'created_at'),
         });
       }
       pageToken = body['nextPageToken'] as String?;

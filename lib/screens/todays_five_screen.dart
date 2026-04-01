@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/database_helper.dart';
 import '../data/todays_five_pin_helper.dart';
+import '../data/xp_config.dart';
 import '../models/task.dart';
 import '../providers/auth_provider.dart';
+import '../providers/progression_provider.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/sync_service.dart';
@@ -793,8 +795,20 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
   Future<void> _markInProgress(Task task) async {
     final provider = context.read<TaskProvider>();
-    await provider.startTask(task.id!);
+    final progression = context.read<ProgressionProvider>();
+    // Skip default XP in startTask — award with Today's 5 bonuses here
+    await provider.startTask(task.id!, awardXp: false);
     await _refreshTaskSnapshot(task.id!);
+    if (!mounted) return;
+    // Award XP for starting with Today's 5 bonuses
+    await progression.awardXpWithBonuses(
+      eventType: XpEventType.taskStarted,
+      baseXp: XpAmounts.taskStarted,
+      taskId: task.id!,
+      isInTodaysFive: true,
+      isHighPriority: task.priority == 1,
+      isPinned: _pinnedIds.contains(task.id),
+    );
     if (!mounted) return;
     setState(() {});
     ScaffoldMessenger.of(context).clearSnackBars();
@@ -803,6 +817,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
   Future<void> _workedOnTask(Task task) async {
     final provider = context.read<TaskProvider>();
+    final progression = context.read<ProgressionProvider>();
     final wasStarted = task.isStarted;
     final previousLastWorkedAt = task.lastWorkedAt;
     _preWorkedOnLastWorkedAt[task.id!] = previousLastWorkedAt;
@@ -819,11 +834,24 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     await showCompletionAnimation(context);
     if (!mounted) return;
     await provider.markWorkedOn(task.id!);
-    if (!wasStarted) await provider.startTask(task.id!);
+    // Skip XP for auto-start — XP is for the worked-on action, not the start
+    if (!wasStarted) await provider.startTask(task.id!, awardXp: false);
     if (removeDeadline) {
       await provider.updateTaskDeadline(task.id!, null);
     }
     await _markDone(task.id!, workedOn: true, autoStarted: !wasStarted);
+    if (!mounted) return;
+    // Award XP for "Done today" with Today's 5 bonuses
+    await progression.awardXpWithBonuses(
+      eventType: XpEventType.workedOn,
+      baseXp: XpAmounts.workedOn,
+      taskId: task.id!,
+      isInTodaysFive: true,
+      isHighPriority: task.priority == 1,
+      isPinned: _pinnedIds.contains(task.id),
+    );
+    // Check if all Today's 5 are now done
+    _maybeAwardAllComplete(progression);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     showInfoSnackBar(context, '"${task.name}" — nice work! We\'ll remind you again soon.', onUndo: () async {
@@ -834,6 +862,8 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         await provider.updateTaskDeadline(task.id!, task.deadline!, deadlineType: task.deadlineType);
       }
       if (!mounted) return;
+      // Revoke XP on undo
+      await progression.revokeXp(XpEventType.workedOn, task.id!);
       _explicitlyUncompletedIds.add(task.id!);
       await _unmarkDone(task.id!, workedOn: true, autoStarted: !wasStarted);
     });
@@ -841,6 +871,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
   Future<void> _completeNormalTask(Task task) async {
     final provider = context.read<TaskProvider>();
+    final progression = context.read<ProgressionProvider>();
 
     // Check if completing this task will free any dependents — confirm first.
     final dependentNames = await provider.getDependentTaskNames(task.id!);
@@ -853,10 +884,24 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final removedDeps = await provider.completeTaskOnly(task.id!);
     await _markDone(task.id!, workedOn: false, autoStarted: false);
     if (!mounted) return;
+    // Award XP for "Done for good" with Today's 5 bonuses
+    await progression.awardXpWithBonuses(
+      eventType: XpEventType.taskComplete,
+      baseXp: XpAmounts.taskComplete,
+      taskId: task.id!,
+      isInTodaysFive: true,
+      isHighPriority: task.priority == 1,
+      isPinned: _pinnedIds.contains(task.id),
+    );
+    // Check if all Today's 5 are now done
+    _maybeAwardAllComplete(progression);
+    if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     showInfoSnackBar(context, '"${task.name}" done!', onUndo: () async {
       await provider.uncompleteTask(task.id!, restoredDeps: removedDeps);
       if (!mounted) return;
+      // Revoke XP on undo
+      await progression.revokeXp(XpEventType.taskComplete, task.id!);
       await _unmarkDone(task.id!, workedOn: false, autoStarted: false);
     });
   }
@@ -865,6 +910,21 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   /// Always shows bottom sheet: "Done today" vs "Done for good!"
   Future<void> _handleTaskDone(Task task) async {
     _showTaskOptions(task);
+  }
+
+  /// Awards the "all Today's 5 complete" bonus if every task in the selection
+  /// is now done (completed or worked-on). Guarded: only fires once per day
+  /// by checking if the event already exists.
+  void _maybeAwardAllComplete(ProgressionProvider progression) {
+    final allDone = _todaysTasks.isNotEmpty &&
+        _todaysTasks.every((t) =>
+            _completedIds.contains(t.id) || _workedOnIds.contains(t.id));
+    if (allDone && _todaysTasks.length >= 5) {
+      progression.awardXp(
+        XpEventType.todaysFiveComplete,
+        XpAmounts.allTodaysFiveComplete,
+      );
+    }
   }
 
   /// If [task] is no longer a leaf, replaces it in [_todaysTasks] with

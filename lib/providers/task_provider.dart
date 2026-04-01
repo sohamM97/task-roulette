@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../data/database_helper.dart';
+import '../data/xp_config.dart';
 import '../models/task.dart';
 import '../models/task_relationship.dart';
 import '../models/task_schedule.dart';
@@ -19,6 +20,11 @@ class TaskProvider extends ChangeNotifier {
   /// Callback invoked after every local mutation, used by SyncService
   /// to schedule a debounced push.
   void Function()? onMutation;
+
+  /// Callback invoked when XP should be awarded/revoked.
+  /// Parameters: (eventType, xpAmount, taskId, isHighPriority).
+  /// Wired to ProgressionProvider in main.dart.
+  void Function(String eventType, int xpAmount, int? taskId, {bool isHighPriority})? onXpEarned;
 
   List<Task> _tasks = [];
   List<Task> get tasks => _tasks;
@@ -228,6 +234,11 @@ class TaskProvider extends ChangeNotifier {
         : _tasks.firstWhere((t) => t.id == taskId,
             orElse: () => throw StateError('Task $taskId not found in current list'));
     final removedDeps = await _db.completeTask(taskId);
+    // Award XP for completing from All Tasks (non-Today's-5 context)
+    onXpEarned?.call(
+      XpEventType.taskComplete, XpAmounts.taskComplete, taskId,
+      isHighPriority: task.priority == 1,
+    );
     onMutation?.call();
     await navigateBack();
     return (task: task, removedDeps: removedDeps);
@@ -500,13 +511,22 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Marks a task as started (in progress).
-  Future<void> startTask(int taskId) async {
+  /// [awardXp] controls whether XP is awarded. Set to false when auto-starting
+  /// from Today's 5 "Done today" (the screen handles XP itself).
+  Future<void> startTask(int taskId, {bool awardXp = true}) async {
     await _db.startTask(taskId);
     // Update _currentParent in place so the leaf detail view reflects the change
     // immediately without needing to navigate away and back.
     if (_currentParent?.id == taskId) {
       _currentParent = _currentParent!.copyWith(
         startedAt: () => DateTime.now().millisecondsSinceEpoch,
+      );
+    }
+    if (awardXp) {
+      final task = await _db.getTaskById(taskId);
+      onXpEarned?.call(
+        XpEventType.taskStarted, XpAmounts.taskStarted, taskId,
+        isHighPriority: task?.priority == 1,
       );
     }
     await _refreshAfterMutation();
