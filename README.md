@@ -8,6 +8,12 @@
 
 > **Note:** This app was vibe-coded — planned and ideated by a human, implemented with AI assistance.
 
+> ## ⏸ Development paused indefinitely (2026-04-21)
+>
+> Work on this repo has been stopped. The DAG-based structure (tasks under multiple parents, drill-down trees, nested groups) turned out to be **counterproductive**. Instead of reducing decision fatigue, it produced the opposite: opening the app felt like opening an infinite-scroll social feed — a wall of content, brain trash, no direction.
+>
+> The core premise needs a rethink before any further work happens here. When development resumes, expect a ground-up redesign rather than incremental fixes on top of the current model.
+
 ## Quick Start
 
 **Prerequisites:** [Flutter SDK and Linux dependencies](#prerequisites) must be installed first.
