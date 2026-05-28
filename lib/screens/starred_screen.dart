@@ -5,6 +5,7 @@ import '../data/database_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../utils/display_utils.dart';
+import '../widgets/add_task_dialog.dart';
 import '../widgets/profile_icon.dart';
 import '../providers/theme_provider.dart';
 import 'completed_tasks_screen.dart';
@@ -794,12 +795,25 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
   final Map<int, List<_TreeNode>> _childrenCache = {};
   /// IDs of tasks that are blocked by a dependency.
   final Set<int> _blockedIds = {};
+  /// True if the starred task is currently pinned in Today's 5.
+  /// Drives the "this task is pinned" warning before adding a subtask
+  /// (mirrors `task_list_screen.dart`'s `_warnIfPinned`).
+  bool _starredTaskPinnedInTodays5 = false;
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
     _loadDirectChildren();
+    _loadTodays5PinState();
+  }
+
+  Future<void> _loadTodays5PinState() async {
+    final result = await DatabaseHelper().getTodaysFiveTaskAndPinIds(todayDateKey());
+    if (!mounted) return;
+    setState(() {
+      _starredTaskPinnedInTodays5 = result.pinnedIds.contains(widget.task.id);
+    });
   }
 
   Future<void> _loadDirectChildren() async {
@@ -925,6 +939,99 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     }
   }
 
+  /// Opens AddTaskDialog and creates a child of the starred task. If the
+  /// starred task is pinned in Today's 5, first shows the "this task is
+  /// pinned" warning (mirrors `task_list_screen.dart`'s flow) and, after
+  /// creation, transfers the pin to the new subtask so the Today's 5 pin
+  /// indicator doesn't silently disappear when the parent goes non-leaf.
+  Future<void> _addSubtask() async {
+    if (_starredTaskPinnedInTodays5) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('This task is pinned'),
+          content: Text(
+            '"${widget.task.name}" is in your Today\'s 5 and pinned. '
+            'Adding a subtask will replace it with the new subtask.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Add anyway'),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true || !mounted) return;
+    }
+
+    final result = await showDialog<AddTaskResult>(
+      context: context,
+      builder: (_) => const AddTaskDialog(),
+    );
+    if (!mounted || result is! SingleTask) return;
+
+    final provider = context.read<TaskProvider>();
+    // atRoot: true ignores the All Tasks tab's _currentParent; the only
+    // parent for the new task is the starred one (via additionalParentIds).
+    // deferNotify when we need to do follow-up DB writes (pin transfer)
+    // before listeners fire — same race documented in TaskProvider.addTask.
+    final needsPinTransfer = _starredTaskPinnedInTodays5;
+    final newId = await provider.addTask(
+      result.name,
+      url: result.url,
+      atRoot: true,
+      additionalParentIds: [widget.task.id!],
+      deferNotify: needsPinTransfer,
+    );
+
+    if (needsPinTransfer) {
+      try {
+        await _transferPinToNewChild(widget.task.id!, newId);
+      } finally {
+        await provider.refreshAfterMutation();
+      }
+      // After transfer, the starred task is no longer pinned (the pin moved).
+      _starredTaskPinnedInTodays5 = false;
+    }
+
+    if (!mounted) return;
+    // Invalidate cached children so the new subtask appears, then reload.
+    _childrenCache.remove(widget.task.id);
+    _expanded.clear();
+    await _loadDirectChildren();
+  }
+
+  /// Mirrors `task_list_screen.dart`'s `_transferPinToChild`. Replaces the
+  /// parent's slot in Today's 5 with the new child and moves the pin.
+  Future<void> _transferPinToNewChild(int parentId, int childId) async {
+    final today = todayDateKey();
+    final db = DatabaseHelper();
+    final saved = await db.loadTodaysFiveState(today);
+    if (saved == null) return;
+
+    final taskIds = List<int>.from(saved.taskIds);
+    final pinnedIds = Set<int>.from(saved.pinnedIds);
+
+    final idx = taskIds.indexOf(parentId);
+    if (idx < 0) return;
+    taskIds[idx] = childId;
+    if (pinnedIds.remove(parentId)) {
+      pinnedIds.add(childId);
+    }
+    await db.saveTodaysFiveState(
+      date: today,
+      taskIds: taskIds,
+      completedIds: saved.completedIds,
+      workedOnIds: saved.workedOnIds,
+      pinnedIds: pinnedIds,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -967,6 +1074,15 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
+              ),
+              IconButton(
+                icon: Icon(Icons.add, size: 20,
+                    color: onSurface.withAlpha(140)),
+                onPressed: _addSubtask,
+                tooltip: 'Add subtask',
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                padding: EdgeInsets.zero,
               ),
               IconButton(
                 icon: Icon(Icons.open_in_new_rounded, size: 18,

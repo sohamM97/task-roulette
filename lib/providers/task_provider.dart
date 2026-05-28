@@ -107,17 +107,21 @@ class TaskProvider extends ChangeNotifier {
   /// When [deferNotify] is true, skips [_refreshAfterMutation] so the caller
   /// can perform follow-up DB writes (e.g. pinning in Today's 5) before
   /// listeners fire. The caller MUST call [refreshAfterMutation] afterwards.
-  Future<int> addTask(String name, {String? url, List<int>? additionalParentIds, bool isInbox = false, bool deferNotify = false}) async {
+  Future<int> addTask(String name, {String? url, List<int>? additionalParentIds, bool isInbox = false, bool deferNotify = false, bool atRoot = false}) async {
     final task = Task(name: name, url: url, isInbox: isInbox);
     final taskId = await _db.insertTask(task);
 
-    if (_currentParent != null) {
+    // [atRoot] forces a root-level insert regardless of current navigation
+    // state. Used by callers in other tabs (Today's 5, Starred dialog) so
+    // the new task isn't silently nested under whatever parent the All
+    // Tasks tab last drilled into.
+    if (!atRoot && _currentParent != null) {
       await _db.addRelationship(_currentParent!.id!, taskId);
     }
 
     if (additionalParentIds != null) {
       for (final parentId in additionalParentIds) {
-        if (parentId != _currentParent?.id) {
+        if (atRoot || parentId != _currentParent?.id) {
           await _db.addRelationship(parentId, taskId);
         }
       }
