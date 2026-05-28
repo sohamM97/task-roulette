@@ -4,7 +4,7 @@ Reference for manual test instructions. Use these names consistently.
 
 ## Navigation
 
-- **Bottom nav bar** — 3 tabs: "Today", "Starred", "All Tasks". Swiping also switches tabs.
+- **Bottom nav bar** — 3 tabs: "Starred", "Today", "All Tasks". Swiping also switches tabs. **Starred is the default landing tab** (leftmost).
 
 ## Tabs
 

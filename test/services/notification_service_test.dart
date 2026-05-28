@@ -1,3 +1,22 @@
+// Notification code is currently disabled (2026-05-28). See the header in
+// lib/services/notification_service.dart. The tests below are block-commented
+// because the symbols under test no longer exist in the compiled source.
+// A single skipped placeholder satisfies the test runner, which fails with
+// exit-79 ("no tests found") on a file with no registered tests. Restore
+// alongside the service if/when notifications are re-enabled.
+
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  test(
+    'notification service tests are disabled — see file header',
+    () {},
+    skip: 'NotificationService is commented out (broken on user setup, '
+        '2026-05-28). Restore this file alongside the service.',
+  );
+}
+
+/*
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
@@ -144,3 +163,4 @@ void main() {
     });
   });
 }
+*/
