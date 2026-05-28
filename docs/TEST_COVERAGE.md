@@ -4,7 +4,7 @@ Last updated: 2026-05-28
 
 ## Summary
 
-~1333 tests across 34 test files. Models and data layer are well-covered. Task card at 100%. Triage dialog at 93%. Screens and services have remaining gaps.
+~1320 tests across 33 active test files. Models and data layer are well-covered. Task card at 100%. Triage dialog at 93%. Screens and services have remaining gaps. `notification_service_test.dart` is block-commented out because the notification service itself is disabled.
 
 ## Covered
 
@@ -34,7 +34,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 - **test/screens/task_list_screen_overflow_menu_test.dart** (7 tests) — Overflow menu: root shows export/import only (no task items), non-root with children shows Rename/Do after/Schedule/Delete/export/import, leaf shows "Also show under..." instead of Rename/Do after, "Add link" vs "Edit link" based on URL presence, divider count (2 for non-root, 1 for root on non-web).
 
 ### Services (minimal)
-- **test/services/notification_service_test.dart** (13 tests) — `nextEightAM` (before/after/at 8 AM, midnight, month/year rollover, DST spring-forward, timezone preservation), `onNotificationTap` callback (null default, set and invoke, pendingTap drain on register, no spurious invoke without pending).
+- **test/services/notification_service_test.dart** — DISABLED. Block-commented out alongside `lib/services/notification_service.dart` (notifications were broken on the user's setup and the feature is currently turned off). Restore alongside the service if/when notifications come back. Previously covered: `nextEightAM` and `onNotificationTap` callback paths (13 tests).
 - **test/services/firestore_service_test.dart** (~34 tests) — `taskToFirestoreFields` (all fields), `taskFromFirestoreDoc` (parsing, sync_id extraction), relationship doc parsing, **deadline** (include/omit in Firestore fields, parse from doc, reject >10 chars, round-trip), **deadline type** (`deadline_type` include/omit, parse, default, round-trip), **starred fields** (is_starred/star_order serialization, omission when false/null, parsing, defaults).
 
 ### Widgets (good)
@@ -80,7 +80,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 ### Low priority (not worth testing)
 - **theme/app_colors.dart** — Just constants.
 - **platform/platform_utils.dart** — Conditional import wrapper, tested via `platform_utils_native_test.dart`.
-- **main.dart** — 8 tests cover AppShell bottom-nav tab order, default landing tab, and inter-tab navigation. Still not tested: dark mode toggle, notification-tap → Today navigation (requires NotificationService mocking), full app lifecycle.
+- **main.dart** — 8 tests cover AppShell bottom-nav tab order, default landing tab, and inter-tab navigation. Still not tested: dark mode toggle, full app lifecycle. (Notification-tap → Today navigation path is currently disabled — see service file header.)
 
 ## Testing Caveats
 
