@@ -28,7 +28,8 @@ void main() {
       expect(result.taskIds, [1, 2, 3, 4, 5]); // unchanged
     });
 
-    test('unpin a pinned task', () {
+    test('unpin an undone task removes it from the list', () {
+      // Manual model: unpinning an undone task = remove from Today's 5.
       final state = _state(
         taskIds: [1, 2, 3],
         pinnedIds: {1, 3},
@@ -36,7 +37,22 @@ void main() {
       final result = TodaysFivePinHelper.togglePin(state, 1);
       expect(result, isNotNull);
       expect(result!.pinnedIds, {3});
-      expect(result.taskIds, [1, 2, 3]);
+      // Task 1 is not completed → removed from taskIds
+      expect(result.taskIds, [2, 3]);
+    });
+
+    test('unpin a completed task keeps it in the list', () {
+      // Manual model: completed tasks stay so progress isn't lost.
+      final state = _state(
+        taskIds: [1, 2, 3],
+        completedIds: {1},
+        pinnedIds: {1, 3},
+      );
+      final result = TodaysFivePinHelper.togglePin(state, 1);
+      expect(result, isNotNull);
+      expect(result!.pinnedIds, {3});
+      // Task 1 is completed → stays in taskIds despite unpin
+      expect(result.taskIds, contains(1));
     });
 
     test('pin external task replaces last unpinned undone slot', () {
@@ -153,16 +169,17 @@ void main() {
       expect(result.taskIds.length, 6);
     });
 
-    test('unpin does not shrink list at exactly 5 tasks', () {
+    test('unpin removes undone task even at exactly 5 tasks', () {
+      // Manual model: unpin = remove from list (unless completed).
       final state = _state(
         taskIds: [1, 2, 3, 4, 5],
         pinnedIds: {3},
       );
       final result = TodaysFivePinHelper.togglePin(state, 3);
       expect(result, isNotNull);
-      // Still 5 — no shrink
-      expect(result!.taskIds.length, 5);
-      expect(result.taskIds, contains(3));
+      // Task 3 is unpinned and undone → removed from taskIds.
+      expect(result!.taskIds, isNot(contains(3)));
+      expect(result.pinnedIds, isEmpty);
     });
 
     test('unpin does not remove completed task even when over 5', () {

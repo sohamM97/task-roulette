@@ -9,33 +9,11 @@ import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/sync_service.dart';
 import '../utils/display_utils.dart';
+import '../widgets/add_task_dialog.dart';
 import '../widgets/completion_animation.dart';
+import '../widgets/pick_task_for_today_dialog.dart';
 import '../widgets/profile_icon.dart';
-import '../widgets/task_picker_dialog.dart';
 import 'completed_tasks_screen.dart';
-
-/// Data needed for weighted task selection, shared by generation and swap.
-class _SelectionContext {
-  final List<Task> allLeaves;
-  final List<int> leafIds;
-  final Set<int> blockedIds;
-  final Set<int> scheduleBoostedIds;
-  final Map<int, int> deadlineDaysMap;
-  final NormalizationData normData;
-  /// Maps scheduled-source task ID → list of its leaf descendants active today.
-  /// Used by the reserved-slot algorithm in _generateNewSet.
-  final Map<int, List<int>> scheduledSourceToLeafMap;
-
-  _SelectionContext({
-    required this.allLeaves,
-    required this.leafIds,
-    required this.blockedIds,
-    required this.scheduleBoostedIds,
-    required this.deadlineDaysMap,
-    required this.normData,
-    required this.scheduledSourceToLeafMap,
-  });
-}
 
 class TodaysFiveScreen extends StatefulWidget {
   final void Function(Task task)? onNavigateToTask;
@@ -76,11 +54,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   /// Other tasks completed/worked-on today, outside the Today's 5 set.
   List<Task> _otherDoneToday = [];
   bool _otherDoneExpanded = false;
-  /// Tracks manually pinned tasks — protected from refresh until explicitly swapped.
-  final Set<int> _pinnedIds = {};
-  /// Deadline task IDs the user explicitly unpinned today. Persisted to DB
-  /// so auto-pin doesn't override user intent across reloads/regeneration.
-  final Set<int> _deadlineSuppressedIds = {};
   bool _loading = true;
   /// The date key that was last loaded, used to detect midnight rollover.
   String _loadedDateKey = '';
@@ -130,7 +103,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   Future<void> _reloadFromDb() async {
     _completedIds.clear();
     _workedOnIds.clear();
-    _pinnedIds.clear();
     _autoStartedIds.clear();
     _preWorkedOnLastWorkedAt.clear();
     _explicitlyUncompletedIds.clear();
@@ -157,130 +129,68 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     // Migrate SharedPreferences → DB (idempotent, safe to call every time)
     await db.migrateTodaysFiveFromPrefs();
 
-    // Load suppressed deadline auto-pin IDs for today + purge old rows
-    _deadlineSuppressedIds.clear();
-    _deadlineSuppressedIds.addAll(await db.getDeadlineSuppressedIds(today));
-    // SEC-fix LOW-22: use debugLog to prevent leaking DB errors to logcat in release.
-    db.purgeOldDeadlineSuppressed(today).catchError(
-        (e) => debugLog('Failed to purge old suppression rows: $e'));
-
-    // Try to restore from DB
+    // Manual-only model: no auto-selection. If no state exists for today,
+    // Today's 5 starts empty and the user pins tasks from All Tasks.
     final saved = await db.loadTodaysFiveState(today);
-    if (saved != null && saved.taskIds.isNotEmpty) {
-      final ctx = await _fetchSelectionContext();
-      final allLeaves = ctx.allLeaves;
-      final leafIdSet = allLeaves.map((t) => t.id!).toSet();
-      final savedCompletedIds = Set<int>.from(saved.completedIds);
-      final savedWorkedOnIds = Set<int>.from(saved.workedOnIds);
-      final savedPinnedIds = Set<int>.from(saved.pinnedIds);
-      final tasks = <Task>[];
-      for (final id in saved.taskIds) {
-        if (leafIdSet.contains(id)) {
-          // Still a leaf — restore from fresh data
-          final match = allLeaves.where((t) => t.id == id);
-          if (match.isNotEmpty) {
-            tasks.add(match.first);
-            // Detect external completion (e.g. worked-on from All Tasks)
-            if (match.first.isWorkedOnToday && !savedCompletedIds.contains(id)) {
-              savedCompletedIds.add(id);
-            }
-          }
-        } else {
-          // No longer a leaf — check if completed/done externally
-          final fresh = await db.getTaskById(id);
-          if (fresh != null) {
-            if (savedCompletedIds.contains(id) || fresh.isCompleted || fresh.isWorkedOnToday) {
-              savedCompletedIds.add(id);
-              tasks.add(fresh);
-            } else if (savedPinnedIds.contains(id)) {
-              // Pinned task became non-leaf — try to slot in a leaf descendant
-              final descendants = await db.getLeafDescendants(id);
-              final currentIds = tasks.map((t) => t.id).toSet();
-              final descLeafIds = descendants.map((d) => d.id!).toList();
-              final descBlockedIds = await provider.getBlockedChildIds(descLeafIds);
-              final eligibleDesc = descendants.where(
-                (d) => !currentIds.contains(d.id) && !descBlockedIds.contains(d.id),
-              ).toList();
-              if (eligibleDesc.isNotEmpty) {
-                // Bug fix: previously called pickWeightedN without schedule/
-                // deadline/norm params, silently dropping 2.5x schedule boost
-                // and up to 8x deadline boost during pinned-descendant replacement.
-                final picked = provider.pickWeightedN(eligibleDesc, 1,
-                    scheduleBoostedIds: ctx.scheduleBoostedIds,
-                    deadlineDaysMap: ctx.deadlineDaysMap,
-                    normData: ctx.normData);
-                if (picked.isNotEmpty) {
-                  tasks.add(picked.first);
-                  savedPinnedIds.remove(id);
-                  savedPinnedIds.add(picked.first.id!);
-                }
-              } else {
-                savedPinnedIds.remove(id);
-                // Will be backfilled randomly below
-              }
-            }
-          }
-        }
-      }
-      // Backfill if some non-done tasks are no longer leaves
-      if (tasks.length < 5) {
-        final currentIds = tasks.map((t) => t.id).toSet();
-        final eligible = allLeaves.where(
-          (t) => !currentIds.contains(t.id) && !ctx.blockedIds.contains(t.id),
-        ).toList();
-        // Bug fix: previously only passed normData, silently dropping
-        // 2.5x schedule boost and up to 8x deadline boost during backfill.
-        final replacements = provider.pickWeightedN(
-          eligible, 5 - tasks.length,
-          scheduleBoostedIds: ctx.scheduleBoostedIds,
-          deadlineDaysMap: ctx.deadlineDaysMap,
-          normData: ctx.normData,
-        );
-        tasks.addAll(replacements);
-      }
-      // Only keep completed/worked-on IDs for tasks still in the list
-      final taskIdSet = tasks.map((t) => t.id).toSet();
-      final validCompletedIds = savedCompletedIds
-          .where((id) => taskIdSet.contains(id))
-          .toSet();
-      final validWorkedOnIds = savedWorkedOnIds
-          .where((id) => taskIdSet.contains(id))
-          .toSet();
-      // Keep pinned IDs for tasks still in the list (including transferred pins)
-      final validPinnedIds = savedPinnedIds
-          .where((id) => taskIdSet.contains(id))
-          .toSet();
+    if (saved == null || saved.taskIds.isEmpty) {
       if (!mounted) return;
-      _todaysTasks = tasks;
       await _loadOtherDoneToday();
-      await _loadTaskPaths();
       if (!mounted) return;
-      setState(() {
-        _completedIds.addAll(validCompletedIds);
-        _workedOnIds.addAll(validWorkedOnIds);
-        _pinnedIds.addAll(validPinnedIds);
-        _loading = false;
-      });
-      await _persist();
+      setState(() => _loading = false);
       return;
     }
 
-    await _generateNewSet(autoPin: true);
+    final allLeaves = await provider.getAllLeafTasks();
+    final leafIdSet = allLeaves.map((t) => t.id!).toSet();
+    final savedCompletedIds = Set<int>.from(saved.completedIds);
+    final savedWorkedOnIds = Set<int>.from(saved.workedOnIds);
+    final tasks = <Task>[];
+    for (final id in saved.taskIds) {
+      if (leafIdSet.contains(id)) {
+        // Still a leaf — restore from fresh data
+        final match = allLeaves.where((t) => t.id == id).firstOrNull;
+        if (match != null) {
+          tasks.add(match);
+          if (match.isWorkedOnToday && !savedCompletedIds.contains(id)) {
+            savedCompletedIds.add(id);
+          }
+        }
+      } else {
+        // No longer a leaf — keep only if completed/done. Otherwise drop it
+        // (manual model: no auto-replacement with a descendant).
+        final fresh = await db.getTaskById(id);
+        if (fresh != null &&
+            (savedCompletedIds.contains(id) || fresh.isCompleted || fresh.isWorkedOnToday)) {
+          savedCompletedIds.add(id);
+          tasks.add(fresh);
+        }
+      }
+    }
+    // Only keep state for tasks still in the list
+    final taskIdSet = tasks.map((t) => t.id).toSet();
+    final validCompletedIds = savedCompletedIds.where(taskIdSet.contains).toSet();
+    final validWorkedOnIds = savedWorkedOnIds.where(taskIdSet.contains).toSet();
+    if (!mounted) return;
+    _todaysTasks = tasks;
+    await _loadOtherDoneToday();
+    await _loadTaskPaths();
+    if (!mounted) return;
+    setState(() {
+      _completedIds.addAll(validCompletedIds);
+      _workedOnIds.addAll(validWorkedOnIds);
+      _loading = false;
+    });
+    await _persist();
   }
 
   /// Re-fetches task snapshots from DB without regenerating the set.
-  /// Called when switching back to the Today tab to pick up changes
-  /// made in All Tasks (e.g. unstarting a task, toggling pins).
-  /// If the current set is empty, generates a new set instead (handles
-  /// the case where the app started with no tasks and user added some).
+  /// Called when switching back to the Today tab to pick up changes made
+  /// in All Tasks (e.g. unstarting a task, toggling pins). Manual-only model:
+  /// tasks that become non-leaf or deleted are dropped — no auto-replacement.
   Future<void> refreshSnapshots() async {
-    // Midnight rollover: date changed since last load → generate fresh set
+    // Midnight rollover: date changed since last load → reload from DB
     if (_todayKey() != _loadedDateKey) {
       await _reloadFromDb();
-      return;
-    }
-    if (_todaysTasks.isEmpty) {
-      await _generateNewSet(autoPin: true);
       return;
     }
 
@@ -292,8 +202,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     if (saved != null) {
       final inMemoryTaskIds = _todaysTasks.map((t) => t.id!).toSet();
       final savedTaskIds = saved.taskIds.toSet();
-      if (!setEquals(saved.pinnedIds, _pinnedIds) ||
-          !setEquals(savedTaskIds, inMemoryTaskIds)) {
+      if (!setEquals(savedTaskIds, inMemoryTaskIds)) {
         // Preserve session-only undo state (not persisted to DB)
         final prevAutoStarted = Set<int>.from(_autoStartedIds);
         final prevPreWorkedOn = Map<int, int?>.from(_preWorkedOnLastWorkedAt);
@@ -304,16 +213,21 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       }
     }
 
+    if (_todaysTasks.isEmpty) {
+      // Nothing to refresh — but still update the "+N others done today" badge.
+      if (!mounted) return;
+      await _loadOtherDoneToday();
+      if (!mounted) return;
+      setState(() {});
+      return;
+    }
+
     if (!mounted) return;
     final provider = context.read<TaskProvider>();
-    // Fetch only leaf list upfront — needed to determine which tasks are still
-    // valid leaves. Full selection context (schedule boost, deadline boost,
-    // norm, blocked) is fetched lazily below, only if pickWeightedN is needed.
     final allLeaves = await provider.getAllLeafTasks();
     final leafIdSet = allLeaves.map((t) => t.id!).toSet();
     final db = DatabaseHelper();
     final refreshed = <Task>[];
-    _SelectionContext? ctx; // fetched lazily when pickWeightedN is needed
     for (final t in _todaysTasks) {
       if (leafIdSet.contains(t.id)) {
         // Still a leaf — re-fetch fresh data
@@ -329,61 +243,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           }
         }
       } else {
-        // No longer a leaf — check if completed/done externally
+        // No longer a leaf — keep only if completed/done. Otherwise drop it
+        // (manual model: no auto-replacement with a descendant).
         final fresh = await db.getTaskById(t.id!);
-        if (fresh != null) {
-          if (_completedIds.contains(t.id) || fresh.isCompleted || fresh.isWorkedOnToday) {
-            // Keep for progress tracking
-            _completedIds.add(fresh.id!);
-            refreshed.add(fresh);
-          } else if (_pinnedIds.contains(t.id)) {
-            // Pinned task became non-leaf — try to slot in a leaf descendant
-            final descendants = await db.getLeafDescendants(t.id!);
-            final currentIds = refreshed.map((r) => r.id).toSet();
-            final descLeafIds = descendants.map((d) => d.id!).toList();
-            final descBlockedIds = await provider.getBlockedChildIds(descLeafIds);
-            final eligibleDesc = descendants.where(
-              (d) => !currentIds.contains(d.id) && !descBlockedIds.contains(d.id),
-            ).toList();
-            if (eligibleDesc.isNotEmpty) {
-              // Bug fix: previously called pickWeightedN without schedule/
-              // deadline/norm params, silently dropping 2.5x schedule boost
-              // and up to 8x deadline boost during pinned-descendant replacement.
-              ctx ??= await _fetchSelectionContext();
-              final picked = provider.pickWeightedN(eligibleDesc, 1,
-                  scheduleBoostedIds: ctx.scheduleBoostedIds,
-                  deadlineDaysMap: ctx.deadlineDaysMap,
-                  normData: ctx.normData);
-              if (picked.isNotEmpty) {
-                refreshed.add(picked.first);
-                _pinnedIds.remove(t.id);
-                _pinnedIds.add(picked.first.id!);
-              }
-            } else {
-              _pinnedIds.remove(t.id);
-              // Will be backfilled randomly below
-            }
-          }
-          // Otherwise: became non-leaf without being done — will be backfilled
+        if (fresh != null &&
+            (_completedIds.contains(t.id) || fresh.isCompleted || fresh.isWorkedOnToday)) {
+          _completedIds.add(fresh.id!);
+          refreshed.add(fresh);
         }
       }
-    }
-    // Backfill replacements for non-done tasks that became non-leaf/deleted
-    if (refreshed.length < _todaysTasks.length) {
-      ctx ??= await _fetchSelectionContext();
-      final currentIds = refreshed.map((t) => t.id).toSet();
-      final eligible = ctx.allLeaves.where(
-        (t) => !currentIds.contains(t.id) && !ctx!.blockedIds.contains(t.id),
-      ).toList();
-      // Bug fix: previously only passed normData, silently dropping
-      // 2.5x schedule boost and up to 8x deadline boost during backfill.
-      final replacements = provider.pickWeightedN(
-        eligible, _todaysTasks.length - refreshed.length,
-        scheduleBoostedIds: ctx.scheduleBoostedIds,
-        deadlineDaysMap: ctx.deadlineDaysMap,
-        normData: ctx.normData,
-      );
-      refreshed.addAll(replacements);
     }
     // Clean up completed IDs: remove if task left the list, or was
     // uncompleted externally (e.g. restored from archive)
@@ -394,14 +262,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     });
     // Keep workedOnIds in sync — remove if no longer in completed set
     _workedOnIds.removeWhere((id) => !_completedIds.contains(id));
-    // Clean pinned IDs: remove if task left the list or is no longer a leaf.
-    // Keep pins on completed tasks — they're not in leafIdSet (getAllLeafTasks
-    // excludes completed) but should retain their pinned indicator.
-    _pinnedIds.removeWhere((id) {
-      if (!refreshed.any((t) => t.id == id)) return true; // not in list
-      if (_completedIds.contains(id)) return false; // keep pin on done tasks
-      return !leafIdSet.contains(id); // no longer a leaf
-    });
     if (!mounted) return;
     _todaysTasks = refreshed;
     await _loadOtherDoneToday();
@@ -411,167 +271,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     await _persistAndTrim();
   }
 
-  /// Fetches all data needed for weighted task selection (normalization,
-  /// schedule boosts, deadline data, blocked IDs). Shared by generation
-  /// and swap to keep selection logic consistent.
-  Future<_SelectionContext> _fetchSelectionContext() async {
-    final provider = context.read<TaskProvider>();
-    final allLeaves = await provider.getAllLeafTasks();
-    final leafIds = allLeaves.map((t) => t.id!).toList();
-    final blockedIds = await provider.getBlockedChildIds(leafIds);
-    final scheduleBoostedIds = await provider.getScheduleBoostedLeafIds();
-    final deadlineDaysMap = await provider.getDeadlineBoostedLeafData();
-    final normData = await provider.getNormalizationData(leafIds);
-    final scheduledSourceToLeafMap = await provider.getScheduledSourceToLeafMap();
-    return _SelectionContext(
-      allLeaves: allLeaves,
-      leafIds: leafIds,
-      blockedIds: blockedIds,
-      scheduleBoostedIds: scheduleBoostedIds,
-      deadlineDaysMap: deadlineDaysMap,
-      normData: normData,
-      scheduledSourceToLeafMap: scheduledSourceToLeafMap,
-    );
-  }
-
-  /// Bug fix: Previously, deadline-due tasks were never auto-pinned during
-  /// generation — only when explicitly setting a deadline from All Tasks.
-  /// Before: 'on' deadline tasks got neither weight boost nor auto-pin when
-  /// Today's 5 was first generated, so they were unlikely to appear.
-  /// After: [autoPin] = true on first generation force-pins deadline-due
-  /// tasks. Rerolls ("New set") don't auto-pin to avoid whack-a-mole.
-  Future<void> _generateNewSet({bool autoPin = false}) async {
-    // Clear stale per-session tracking sets from previous day
-    _workedOnIds.clear();
-    _autoStartedIds.clear();
-    _preWorkedOnLastWorkedAt.clear();
-
-    final provider = context.read<TaskProvider>();
-    final ctx = await _fetchSelectionContext();
-
-    // Keep done + pinned tasks, only replace the rest
-    final kept = _todaysTasks.where(
-      (t) => _completedIds.contains(t.id) || _pinnedIds.contains(t.id),
-    ).toList();
-    // Clean pinned IDs for tasks no longer in the kept set
-    _pinnedIds.removeWhere((id) => !kept.any((t) => t.id == id));
-    final keptIds = kept.map((t) => t.id).toSet();
-
-    // On first generation of the day, auto-pin deadline-due tasks.
-    // Not on rerolls ("New set") — that would cause whack-a-mole where
-    // unpinning one deadline task just pins another on next reroll.
-    if (autoPin) {
-      final deadlinePinIds = await provider.getDeadlinePinLeafIds();
-      final leafById = {for (final t in ctx.allLeaves) t.id!: t};
-      for (final id in deadlinePinIds) {
-        if (keptIds.contains(id)) continue;
-        if (_deadlineSuppressedIds.contains(id)) continue;
-        if (ctx.blockedIds.contains(id)) continue;
-        final task = leafById[id];
-        if (task == null) continue;
-        if (_pinnedIds.length >= maxPins) break;
-        kept.add(task);
-        keptIds.add(id);
-        _pinnedIds.add(id);
-      }
-    }
-
-    final leafById = {for (final t in ctx.allLeaves) t.id!: t};
-
-    // --- Reserved slots: guarantee representation for scheduled sources ---
-    // For each distinct source with a schedule for today, reserve 1 slot by
-    // picking a leaf from that source. This ensures scheduled tasks appear
-    // regardless of how many descendants they have (probabilistic boosts are
-    // unreliable when normalization penalizes large hierarchies).
-    //
-    // Rules:
-    //  - Cap at min(sources, 4) reserved — always leave ≥1 general-pool slot
-    //    when 2+ sources are available (variety matters per ADHD research).
-    //  - If only 1 slot remains, give it to a scheduled source (user scheduled it).
-    //  - Sources are shuffled so no source always gets first pick.
-    //  - Reserved picks are NOT pinned — user can swap them freely.
-    //  - Reserved picks' roots are seeded into existingRootPickCounts so the
-    //    general pool penalises picking the same root again.
-    final reserved = <Task>[];
-    final reservedIds = <int>{};
-    final slotsAvailable = (5 - kept.length).clamp(0, 5);
-    if (slotsAvailable > 0 && ctx.scheduledSourceToLeafMap.isNotEmpty) {
-      final sources = ctx.scheduledSourceToLeafMap.keys.toList()..shuffle();
-      // Reserve up to min(sources, 4), but never consume all slots unless
-      // there's only 1 slot left (in which case still reserve it).
-      final maxReserved = slotsAvailable == 1
-          ? 1
-          : sources.length.clamp(0, (slotsAvailable - 1).clamp(0, 4));
-      for (final sourceId in sources) {
-        if (reserved.length >= maxReserved) break;
-        final candidateIds = ctx.scheduledSourceToLeafMap[sourceId]!;
-        // Prefer exclusive leaf (not already reserved by another source).
-        // If all candidates are already reserved (shared DAG leaves), fall back
-        // to the full eligible pool — the pick won't add a duplicate.
-        final exclusiveCandidates = candidateIds
-            .where((id) => !ctx.blockedIds.contains(id) && !keptIds.contains(id) &&
-                !reservedIds.contains(id))
-            .map((id) => leafById[id])
-            .whereType<Task>()
-            .toList();
-        final candidates = exclusiveCandidates.isNotEmpty
-            ? exclusiveCandidates
-            : candidateIds
-                .where((id) => !ctx.blockedIds.contains(id) && !keptIds.contains(id))
-                .map((id) => leafById[id])
-                .whereType<Task>()
-                .toList();
-        if (candidates.isEmpty) continue;
-        final pick = provider.pickWeightedN(candidates, 1,
-            scheduleBoostedIds: ctx.scheduleBoostedIds,
-            deadlineDaysMap: ctx.deadlineDaysMap,
-            normData: ctx.normData);
-        if (pick.isNotEmpty && !reservedIds.contains(pick.first.id)) {
-          reserved.add(pick.first);
-          reservedIds.add(pick.first.id!);
-        }
-      }
-    }
-
-    // Seed diversity penalty with roots already represented by kept + reserved,
-    // so the general pool penalises picking the same root categories again.
-    final rootPickCounts = <int, int>{};
-    for (final task in [...kept, ...reserved]) {
-      final roots = ctx.normData.leafToRoots[task.id] ?? <int>{};
-      for (final r in roots) {
-        rootPickCounts[r] = (rootPickCounts[r] ?? 0) + 1;
-      }
-    }
-
-    final eligible = ctx.allLeaves.where(
-      (t) => !ctx.blockedIds.contains(t.id) &&
-          !keptIds.contains(t.id) &&
-          !reservedIds.contains(t.id),
-    ).toList();
-
-    final slotsToFill = (5 - kept.length - reserved.length).clamp(0, 5);
-    final picked = provider.pickWeightedN(eligible, slotsToFill,
-        scheduleBoostedIds: ctx.scheduleBoostedIds,
-        deadlineDaysMap: ctx.deadlineDaysMap,
-        normData: ctx.normData,
-        existingRootPickCounts: rootPickCounts.isEmpty ? null : rootPickCounts);
-    if (!mounted) return;
-    _todaysTasks = [...kept, ...reserved, ...picked];
-    await _loadOtherDoneToday();
-    await _loadTaskPaths();
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-    });
-    await _persist();
-  }
-
-  /// Trims excess unpinned undone tasks and persists. Calls setState if
-  /// the list actually shrank so the UI updates immediately.
+  /// Trims excess undone tasks past the cap and persists. Calls setState if
+  /// the list actually shrank so the UI updates immediately. With the
+  /// implicit-pin model every member is pinned, so this is effectively
+  /// only a safety net for legacy state carrying unpinned slots.
   Future<void> _persistAndTrim() async {
     final currentIds = _todaysTasks.map((t) => t.id!).toList();
+    final pinnedIds = currentIds.toSet();
     final trimmedIds = TodaysFivePinHelper.trimExcess(
-      currentIds, _completedIds, _pinnedIds,
+      currentIds, _completedIds, pinnedIds,
     );
     if (trimmedIds.length < currentIds.length) {
       final trimmedSet = trimmedIds.toSet();
@@ -582,12 +290,14 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   }
 
   Future<void> _persist() async {
+    final currentIds = _todaysTasks.map((t) => t.id!).toList();
     await DatabaseHelper().saveTodaysFiveState(
       date: _todayKey(),
-      taskIds: _todaysTasks.map((t) => t.id!).toList(),
+      taskIds: currentIds,
       completedIds: _completedIds,
       workedOnIds: _workedOnIds,
-      pinnedIds: _pinnedIds,
+      // Implicit-pin model: every member of taskIds is pinned by definition.
+      pinnedIds: currentIds.toSet(),
     );
     if (mounted) {
       context.read<SyncService>().schedulePush();
@@ -670,10 +380,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     await _persistAndTrim();
   }
 
-  /// Shows a bottom sheet: "In progress" / "Done today" / "Done for good!" / Pin/Unpin
+  /// Shows a bottom sheet: "In progress" / "Done today" / "Done for good!" /
+  /// "Remove from Today's 5".
   void _showTaskOptions(Task task) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isPinned = _pinnedIds.contains(task.id);
     showModalBottomSheet(
       context: context,
       builder: (ctx) => SafeArea(
@@ -720,26 +430,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                     _stopWorking(task);
                   },
                 ),
-              if (isPinned)
-                ListTile(
-                  leading: Icon(Icons.push_pin_outlined, color: colorScheme.onSurfaceVariant),
-                  title: const Text('Unpin'),
-                  subtitle: const Text('Remove from must do'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _togglePinFromSheet(task);
-                  },
-                )
-              else if (_pinnedIds.length < maxPins)
-                ListTile(
-                  leading: Icon(Icons.push_pin, color: colorScheme.tertiary),
-                  title: const Text('Pin'),
-                  subtitle: const Text('Mark as must do'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _togglePinFromSheet(task);
-                  },
-                ),
+              ListTile(
+                leading: Icon(Icons.close, color: colorScheme.onSurfaceVariant),
+                title: const Text("Remove from Today’s 5"),
+                subtitle: const Text("Take this off today’s list"),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _confirmRemoveFromTodaysFive(task);
+                },
+              ),
             ],
           ),
         ),
@@ -747,38 +446,34 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     );
   }
 
-  // CR-fix I-44: await _persistAndTrim to prevent race with refreshSnapshots.
-  // CR-fix M-37: mounted check before snackbar in error path.
-  Future<void> _togglePinFromSheet(Task task) async {
-    final wasPinned = _pinnedIds.contains(task.id);
-    final result = TodaysFivePinHelper.togglePinInPlace(
-      _pinnedIds, task.id!,
+  /// Shows an "are you sure?" confirmation, then removes [task] from
+  /// Today's 5. Implicit-pin model: every task in Today's 5 is pinned,
+  /// so removal is the only "unpin" action.
+  Future<void> _confirmRemoveFromTodaysFive(Task task) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Remove from Today’s 5?"),
+        content: Text('"${task.name}" will be taken off today’s list. You can add it back any time.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
     );
-    if (result == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        showInfoSnackBar(context, 'Max 5 pinned tasks — unpin one first');
-      }
-    } else {
-      setState(() {
-        _pinnedIds.clear();
-        _pinnedIds.addAll(result);
-      });
-      // Track deadline suppression: if user unpins a deadline task, suppress
-      // auto-pin so it doesn't get re-pinned on reload/regeneration.
-      if (wasPinned && _effectiveDeadlines.containsKey(task.id)) {
-        _deadlineSuppressedIds.add(task.id!);
-        // SEC-fix LOW-22: use debugLog to prevent leaking DB errors to logcat in release.
-        DatabaseHelper().suppressDeadlineAutoPin(_todayKey(), task.id!).catchError(
-            (e) => debugLog('Failed to suppress deadline auto-pin: $e'));
-      } else if (!wasPinned && _deadlineSuppressedIds.contains(task.id)) {
-        _deadlineSuppressedIds.remove(task.id!);
-        // SEC-fix LOW-22: use debugLog to prevent leaking DB errors to logcat in release.
-        DatabaseHelper().unsuppressDeadlineAutoPin(_todayKey(), task.id!).catchError(
-            (e) => debugLog('Failed to unsuppress deadline auto-pin: $e'));
-      }
-      await _persistAndTrim();
-    }
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _todaysTasks.removeWhere((t) => t.id == task.id);
+      _completedIds.remove(task.id);
+      _workedOnIds.remove(task.id);
+    });
+    await _persist();
   }
 
   Future<void> _stopWorking(Task task) async {
@@ -867,44 +562,27 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     _showTaskOptions(task);
   }
 
-  /// If [task] is no longer a leaf, replaces it in [_todaysTasks] with
-  /// a randomly picked eligible leaf (or removes it if none available).
-  /// Calls setState if a replacement happens.
-  Future<void> _replaceIfNoLongerLeaf(Task task) async {
+  /// If [task] is no longer a leaf (e.g. user added subtasks), removes it
+  /// from [_todaysTasks] and unpins it. Manual model: no auto-replacement.
+  Future<void> _removeIfNoLongerLeaf(Task task) async {
     final provider = context.read<TaskProvider>();
-    final ctx = await _fetchSelectionContext();
-    final leafIdSet = ctx.allLeaves.map((t) => t.id!).toSet();
+    final allLeaves = await provider.getAllLeafTasks();
+    final leafIdSet = allLeaves.map((t) => t.id!).toSet();
     if (leafIdSet.contains(task.id)) return;
 
     final idx = _todaysTasks.indexWhere((t) => t.id == task.id);
     if (idx < 0) return;
 
-    final currentIds = _todaysTasks.map((t) => t.id).toSet();
-    final eligible = ctx.allLeaves.where(
-      (t) => !currentIds.contains(t.id) && !ctx.blockedIds.contains(t.id),
-    ).toList();
-    // Bug fix: previously called pickWeightedN without any optional params,
-    // silently dropping schedule boost (2.5x), deadline boost (up to 8x),
-    // and normalization during non-leaf replacement.
-    final replacements = provider.pickWeightedN(eligible, 1,
-        scheduleBoostedIds: ctx.scheduleBoostedIds,
-        deadlineDaysMap: ctx.deadlineDaysMap,
-        normData: ctx.normData);
     if (!mounted) return;
-    _pinnedIds.remove(task.id);
     setState(() {
-      if (replacements.isNotEmpty) {
-        _todaysTasks[idx] = replacements.first;
-      } else {
-        _todaysTasks.removeAt(idx);
-      }
+      _todaysTasks.removeAt(idx);
     });
   }
 
   /// Uncompletes a task that was marked done in Today's 5.
   /// Correctly reverts "Done today" (unmark worked-on + unstart) vs
   /// "Done for good!" (uncomplete). If the task is no longer a leaf,
-  /// swaps it out immediately.
+  /// removes it from Today's 5 (no auto-replacement in manual mode).
   Future<void> _handleUncomplete(Task task) async {
     final provider = context.read<TaskProvider>();
 
@@ -930,59 +608,18 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     _explicitlyUncompletedIds.add(task.id!);
     await _unmarkDone(task.id!, workedOn: wasWorkedOn, autoStarted: wasAutoStarted);
     if (!mounted) return;
-    await _replaceIfNoLongerLeaf(task);
+    await _removeIfNoLongerLeaf(task);
 
     if (!mounted) return;
     final wasRemoved = !_todaysTasks.any((t) => t.id == task.id);
     ScaffoldMessenger.of(context).clearSnackBars();
     showInfoSnackBar(context, wasRemoved
-        ? '"${task.name}" restored and removed from Today\'s 5 (all slots are pinned).'
+        ? '"${task.name}" restored and removed from Today\'s 5 (it has subtasks now).'
         : '"${task.name}" restored.');
   }
 
-  Future<void> _confirmNewSet() async {
-    final replaceableCount = _todaysTasks.where(
-      (t) => !_completedIds.contains(t.id) && !_pinnedIds.contains(t.id),
-    ).length;
-    final pinnedCount = _todaysTasks.where(
-      (t) => _pinnedIds.contains(t.id) && !_completedIds.contains(t.id),
-    ).length;
-    final String message;
-    if (replaceableCount == 0) {
-      message = 'All tasks are done or pinned — nothing to reroll.';
-    } else if (pinnedCount > 0) {
-      message = 'Reroll $replaceableCount undone ${replaceableCount == 1 ? 'task' : 'tasks'}? '
-          'Done and pinned tasks will stay.';
-    } else if (replaceableCount == _todaysTasks.length) {
-      message = 'Reroll all tasks with a fresh set of 5?';
-    } else {
-      message = 'Reroll $replaceableCount undone ${replaceableCount == 1 ? 'task' : 'tasks'}? '
-          'Done tasks will stay.';
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Reroll all?'),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          if (replaceableCount > 0)
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Reroll'),
-            ),
-        ],
-      ),
-    );
-    if (confirmed == true) await _generateNewSet();
-  }
-
-  Future<void> _confirmSwapTask(int index) async {
-    final task = _todaysTasks[index];
-    final isPinned = _pinnedIds.contains(task.id);
+  /// Bottom sheet for the FAB: "Create new task" / "Pick existing task".
+  void _showAddToTodaysSheet() {
     final colorScheme = Theme.of(context).colorScheme;
     showModalBottomSheet(
       context: context,
@@ -992,43 +629,34 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (isPinned)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: Row(
-                    children: [
-                      Icon(Icons.push_pin, size: 16, color: colorScheme.tertiary),
-                      const SizedBox(width: 6),
-                      Text(
-                        'This task was manually pinned.',
-                        style: TextStyle(
-                          color: colorScheme.onSurfaceVariant,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    "Add to Today’s 5",
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
+              ),
               ListTile(
-                leading: Icon(spinIcon, color: colorScheme.onSurfaceVariant),
-                title: const Text('Roulette spin'),
-                subtitle: const Text('Spin the wheel for a new task'),
+                leading: Icon(Icons.add_circle_outline, color: colorScheme.primary),
+                title: const Text('Create new task'),
+                subtitle: const Text('Make a fresh task and pin it'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  if (isPinned) {
-                    _confirmUnpinAndSwap(index);
-                  } else {
-                    _swapTask(index);
-                  }
+                  _handleCreateNewForToday();
                 },
               ),
               ListTile(
-                leading: Icon(Icons.checklist, color: colorScheme.primary),
-                title: const Text('Place your bet'),
-                subtitle: const Text('Hand-pick a task for this slot'),
+                leading: Icon(Icons.search, color: colorScheme.tertiary),
+                title: const Text('Pick existing task'),
+                subtitle: const Text('Search or browse your tasks'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  _pickAndPinTask(index);
+                  _handlePickExistingForToday();
                 },
               ),
             ],
@@ -1038,163 +666,92 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     );
   }
 
-  /// Shows extra confirmation when randomly replacing a pinned task.
-  Future<void> _confirmUnpinAndSwap(int index) async {
-    final task = _todaysTasks[index];
-    final confirmed = await showDialog<bool>(
+  /// Create-new flow: opens AddTaskDialog (no pin toggle — pin is implicit),
+  /// inserts the task at root, then pins it.
+  Future<void> _handleCreateNewForToday() async {
+    if (_todaysTasks.length >= maxPins) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      showInfoSnackBar(context, "Today’s 5 is full — remove one first");
+      return;
+    }
+    final result = await showDialog<AddTaskResult>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Reroll pinned task?'),
-        content: Text('"${task.name}" was manually pinned. Reroll this slot?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Reroll'),
-          ),
-        ],
-      ),
+      builder: (_) => const AddTaskDialog(showPinOption: false, showInboxOption: true),
     );
-    if (confirmed == true) {
-      _pinnedIds.remove(task.id);
-      await _swapTask(index);
+    if (!mounted || result == null) return;
+    if (result is! SingleTask) return; // brain dump not offered for this flow
+
+    final provider = context.read<TaskProvider>();
+    // deferNotify so we can pin before refreshSnapshots fires and overwrites
+    // (same race fixed in task_list_screen for the All Tasks tab pin flow).
+    final taskId = await provider.addTask(
+      result.name,
+      url: result.url,
+      isInbox: result.addToInbox,
+      atRoot: true,
+      deferNotify: true,
+    );
+    try {
+      if (mounted) await _pinTaskInTodaysFive(taskId, isNew: true);
+    } finally {
+      await provider.refreshAfterMutation();
     }
   }
 
-  /// Opens TaskPickerDialog to let the user choose a task for a slot, then pins it.
-  Future<void> _pickAndPinTask(int index) async {
-    final provider = context.read<TaskProvider>();
-    final allLeaves = await provider.getAllLeafTasks();
-    final leafIds = allLeaves.map((t) => t.id!).toList();
-    final blockedIds = await provider.getBlockedChildIds(leafIds);
-
-    final currentIds = _todaysTasks.map((t) => t.id).toSet();
-    final eligible = allLeaves.where(
-      (t) => !currentIds.contains(t.id) &&
-             !blockedIds.contains(t.id) &&
-             !t.isWorkedOnToday,
-    ).toList();
-
-    if (eligible.isEmpty) {
-      if (mounted) {
-        showInfoSnackBar(context, 'No tasks left to spin');
-      }
+  /// Pick-existing flow: opens TaskPickerDialog filtered to leaf tasks not
+  /// already in Today's 5, then pins the selection.
+  Future<void> _handlePickExistingForToday() async {
+    if (_todaysTasks.length >= maxPins) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      showInfoSnackBar(context, "Today’s 5 is full — remove one first");
       return;
     }
+    final provider = context.read<TaskProvider>();
+    final alreadyIn = _todaysTasks.map((t) => t.id!).toSet();
 
-    final parentNamesMap = await provider.getParentNamesForTaskIds(
-      eligible.map((t) => t.id!).toList(),
-    );
-
-    if (!mounted) return;
-    final picked = await showDialog<Task>(
+    final selected = await showDialog<Task>(
       context: context,
-      builder: (ctx) => TaskPickerDialog(
-        candidates: eligible,
-        title: 'Place your bet',
-        parentNamesMap: parentNamesMap,
+      builder: (_) => PickTaskForTodayDialog(
+        provider: provider,
+        excludeIds: alreadyIn,
       ),
     );
-    if (picked == null || !mounted) return;
+    if (selected == null || !mounted) return;
+    await _pinTaskInTodaysFive(selected.id!, isNew: false);
+  }
 
-    final oldTask = _todaysTasks[index];
-    final wasPinned = _pinnedIds.remove(oldTask.id);
-    // Always pin the picked task (we just freed a slot if old was pinned)
-    final newPins = TodaysFivePinHelper.togglePinInPlace(_pinnedIds, picked.id!);
-    if (newPins == null) {
-      // Restore old pin if we can't fit the new one
-      if (wasPinned) _pinnedIds.add(oldTask.id!);
+  /// Persists a pin into Today's 5 state and updates local widget state.
+  /// [isNew] uses [TodaysFivePinHelper.pinNewTask] (always pins, replaces an
+  /// unpinned slot or appends); existing tasks use [togglePin] (idempotent
+  /// add since we filter out already-in tasks upstream).
+  Future<void> _pinTaskInTodaysFive(int taskId, {required bool isNew}) async {
+    final db = DatabaseHelper();
+    final today = _todayKey();
+    final saved = await db.loadTodaysFiveState(today) ?? TodaysFiveData(
+      date: today, taskIds: const [], completedIds: const {},
+      workedOnIds: const {}, pinnedIds: const {},
+    );
+    final result = isNew
+        ? TodaysFivePinHelper.pinNewTask(saved, taskId)
+        : TodaysFivePinHelper.togglePin(saved, taskId);
+    if (result == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
-        showInfoSnackBar(context, 'Max 5 pinned tasks — unpin one first');
+        showInfoSnackBar(context, 'Couldn\'t pin — Today\'s 5 is full');
       }
       return;
     }
-    _pinnedIds.clear();
-    _pinnedIds.addAll(newPins);
-    // Load ancestor path for the new task's breadcrumb subtitle
-    final ancestors = await DatabaseHelper().getAncestorPath(picked.id!);
-    if (ancestors.isNotEmpty) {
-      _taskPaths[picked.id!] = ancestors.map((t) => t.name).join(' › ');
-    } else {
-      _taskPaths.remove(picked.id!);
-    }
-    setState(() {
-      _todaysTasks[index] = picked;
-    });
-    await _persist();
-  }
-
-  Future<void> _swapTask(int index) async {
-    final provider = context.read<TaskProvider>();
-    final ctx = await _fetchSelectionContext();
-
-    final currentIds = _todaysTasks.map((t) => t.id).toSet();
-    final eligible = ctx.allLeaves.where(
-      (t) => !currentIds.contains(t.id) &&
-             !ctx.blockedIds.contains(t.id) &&
-             !t.isWorkedOnToday,
-    ).toList();
-
-    if (eligible.isEmpty) {
-      if (mounted) {
-        showInfoSnackBar(context, 'No tasks left to spin');
-      }
-      return;
-    }
-
-    // Seed diversity penalty from current Today's 5 (excluding the task
-    // being swapped out) so the replacement respects existing root spread.
-    // Completed tasks aren't in normData.leafToRoots (they're excluded from
-    // getAllLeafTasks), so look up their roots separately.
-    final missingIds = <int>[];
-    for (int i = 0; i < _todaysTasks.length; i++) {
-      if (i == index) continue;
-      final tid = _todaysTasks[i].id;
-      if (tid != null && !ctx.normData.leafToRoots.containsKey(tid)) {
-        missingIds.add(tid);
-      }
-    }
-    final extraRoots = missingIds.isEmpty
-        ? <int, Set<int>>{}
-        : await DatabaseHelper().getRootAncestorsForLeaves(missingIds);
-
-    final rootPickCounts = <int, int>{};
-    for (int i = 0; i < _todaysTasks.length; i++) {
-      if (i == index) continue; // skip the slot being replaced
-      final tid = _todaysTasks[i].id;
-      if (tid != null) {
-        final roots = ctx.normData.leafToRoots[tid]
-            ?? extraRoots[tid]
-            ?? <int>{};
-        for (final r in roots) {
-          rootPickCounts[r] = (rootPickCounts[r] ?? 0) + 1;
-        }
-      }
-    }
-
-    final picked = provider.pickWeightedN(eligible, 1,
-        scheduleBoostedIds: ctx.scheduleBoostedIds,
-        deadlineDaysMap: ctx.deadlineDaysMap,
-        normData: ctx.normData,
-        existingRootPickCounts: rootPickCounts);
-    if (picked.isNotEmpty) {
-      // Complete async work before mutating state
-      final ancestors = await DatabaseHelper().getAncestorPath(picked.first.id!);
-      if (!mounted) return;
-      _pinnedIds.remove(_todaysTasks[index].id);
-      _todaysTasks[index] = picked.first;
-      if (ancestors.isNotEmpty) {
-        _taskPaths[picked.first.id!] = ancestors.map((t) => t.name).join(' › ');
-      } else {
-        _taskPaths.remove(picked.first.id!);
-      }
-      setState(() {});
-      await _persist();
-    }
+    await db.saveTodaysFiveState(
+      date: today,
+      taskIds: result.taskIds,
+      completedIds: saved.completedIds,
+      workedOnIds: saved.workedOnIds,
+      pinnedIds: result.pinnedIds,
+    );
+    // Reload from DB so the new task's snapshot, paths, and deadline/schedule
+    // metadata are populated for the card. _reloadFromDb clears local state
+    // and re-runs the full _loadTodaysTasksInner pipeline.
+    if (mounted) await _reloadFromDb();
   }
 
   @override
@@ -1210,6 +767,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     }
 
     return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showAddToTodaysSheet,
+        tooltip: 'Add to Today’s 5',
+        child: const Icon(Icons.add),
+      ),
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1282,39 +844,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
             },
             tooltip: 'Archive',
           ),
-          if (_todaysTasks.any((t) =>
-              !_completedIds.contains(t.id) && !_pinnedIds.contains(t.id)))
-            IconButton(
-              icon: SizedBox(
-                width: 24,
-                height: 24,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Positioned(
-                      left: -1,
-                      bottom: 0,
-                      child: Transform.rotate(
-                        angle: -0.3,
-                        child: Icon(Icons.casino_rounded, size: 16,
-                            color: Theme.of(context).colorScheme.onSurface.withAlpha(140)),
-                      ),
-                    ),
-                    Positioned(
-                      right: -1,
-                      top: 0,
-                      child: Transform.rotate(
-                        angle: 0.25,
-                        child: Icon(Icons.casino_rounded, size: 18,
-                            color: Theme.of(context).colorScheme.onSurface),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              onPressed: _confirmNewSet,
-              tooltip: 'Reroll all',
-            ),
         ],
       ),
       body: _todaysTasks.isEmpty
@@ -1324,16 +853,16 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.check_circle_outline, size: 64, color: colorScheme.primary),
+                  Icon(Icons.push_pin_outlined, size: 64, color: colorScheme.primary),
                   const SizedBox(height: 16),
                   Text(
-                    'No tasks for today!',
+                    'Nothing pinned yet',
                     style: textTheme.headlineSmall,
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Add some tasks in the All Tasks tab.',
+                    'Tap the + button to pick a task to focus on today.',
                     style: textTheme.bodyMedium?.copyWith(
                       color: colorScheme.onSurfaceVariant,
                     ),
@@ -1392,70 +921,32 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   }
 
   Widget _buildTaskList(BuildContext context, ColorScheme colorScheme, TextTheme textTheme) {
-    // Split into three buckets: pinned-undone, undone-unpinned, done
-    final mustDo = <int>[]; // indices into _todaysTasks
-    final rest = <int>[];
+    // Implicit-pin model: every task is "pinned" by membership, so the
+    // only distinction left is undone vs done.
+    final undone = <int>[];
     final done = <int>[];
     for (int i = 0; i < _todaysTasks.length; i++) {
-      final task = _todaysTasks[i];
-      final isDone = _completedIds.contains(task.id);
-      if (isDone) {
+      if (_completedIds.contains(_todaysTasks[i].id)) {
         done.add(i);
-      } else if (_pinnedIds.contains(task.id)) {
-        mustDo.add(i);
       } else {
-        rest.add(i);
+        undone.add(i);
       }
-    }
-
-    final showSections = mustDo.isNotEmpty || done.isNotEmpty;
-
-    if (!showSections) {
-      // No pinned tasks and no done tasks — flat list, no headers
-      return ListView(
-        children: [
-          for (int i = 0; i < _todaysTasks.length; i++)
-            _buildTaskCard(context, _todaysTasks[i], i, false),
-          if (_otherDoneToday.isNotEmpty)
-            _buildOtherDoneBox(context, textTheme, colorScheme),
-        ],
-      );
     }
 
     return ListView(
       children: [
-        if (mustDo.isNotEmpty) ...[
-          _buildSectionHeader(
-            context,
-            icon: Icons.push_pin,
-            label: 'Must do',
-            color: colorScheme.tertiary,
-          ),
-          for (final i in mustDo)
-            _buildTaskCard(context, _todaysTasks[i], i, false),
-        ],
-        if (rest.isNotEmpty) ...[
-          if (mustDo.isNotEmpty)
-            _buildSectionHeader(
-              context,
-              icon: Icons.casino_outlined,
-              label: 'Also on the table',
-              color: colorScheme.onSurfaceVariant,
-              topPadding: 12,
-            ),
-          for (final i in rest)
-            _buildTaskCard(context, _todaysTasks[i], i, false),
-        ],
+        for (final i in undone)
+          _buildTaskCard(context, _todaysTasks[i], false),
         if (done.isNotEmpty) ...[
           _buildSectionHeader(
             context,
             icon: Icons.check_circle_outline,
             label: 'Done',
             color: colorScheme.primary,
-            topPadding: 12,
+            topPadding: undone.isEmpty ? 0 : 12,
           ),
           for (final i in done)
-            _buildTaskCard(context, _todaysTasks[i], i, true),
+            _buildTaskCard(context, _todaysTasks[i], true),
         ],
         if (_otherDoneToday.isNotEmpty)
           _buildOtherDoneBox(context, textTheme, colorScheme),
@@ -1617,7 +1108,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   Widget _buildTaskCard(
     BuildContext context,
     Task task,
-    int index,
     bool isDone,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -1653,43 +1143,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
             mainAxisSize: MainAxisSize.min,
             children: [
               if (!isDone)
-                PinButton(
-                  isPinned: _pinnedIds.contains(task.id),
-                  onToggle: () => _togglePinFromSheet(task),
-                ),
-              if (isDone && _pinnedIds.contains(task.id))
-                Icon(Icons.push_pin, size: 18, color: colorScheme.tertiary),
-              if (!isDone)
                 IconButton(
-                  icon: SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        Positioned(
-                          left: -1,
-                          bottom: 0,
-                          child: Transform.rotate(
-                            angle: -0.3,
-                            child: Icon(Icons.casino_outlined, size: 12,
-                                color: colorScheme.onSurface.withAlpha(140)),
-                          ),
-                        ),
-                        Positioned(
-                          right: -1,
-                          top: 0,
-                          child: Transform.rotate(
-                            angle: 0.25,
-                            child: Icon(Icons.casino_outlined, size: 14,
-                                color: colorScheme.onSurface),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  onPressed: () => _confirmSwapTask(index),
-                  tooltip: 'Spin',
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () => _confirmRemoveFromTodaysFive(task),
+                  tooltip: "Remove from Today’s 5",
                   visualDensity: VisualDensity.compact,
                   constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 ),

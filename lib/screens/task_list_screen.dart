@@ -159,8 +159,12 @@ class TaskListScreenState extends State<TaskListScreen>
     final now = DateTime.now();
     final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     final db = DatabaseHelper();
-    final saved = await db.loadTodaysFiveState(today);
-    if (saved == null) return;
+    // Manual model: Today's 5 may have no saved state until the first pin.
+    // Bootstrap an empty state so the user can pin into a fresh day.
+    final saved = await db.loadTodaysFiveState(today) ?? TodaysFiveData(
+      date: today, taskIds: const [], completedIds: const {},
+      workedOnIds: const {}, pinnedIds: const {},
+    );
 
     final result = TodaysFivePinHelper.togglePin(saved, taskId);
     if (result == null) {
@@ -347,7 +351,7 @@ class TaskListScreenState extends State<TaskListScreen>
         (_todays5PinnedIds?.contains(parentId) ?? false);
     // Hide "Pin for today" when parent is pinned — the pin will auto-transfer
     // to the new subtask, so the option is misleading.
-    final showPin = !parentIsPinned && _todaysFiveIds.isNotEmpty &&
+    final showPin = !parentIsPinned &&
         (_todays5PinnedIds?.length ?? 0) < maxPins;
     await AddTaskFlow(
       parentId: parentId,
@@ -819,9 +823,7 @@ class TaskListScreenState extends State<TaskListScreen>
           parentNames: parentNames,
           isPinnedInTodays5: _todays5PinnedIds?.contains(task.id) ?? false,
           atMaxPins: (_todays5PinnedIds?.length ?? 0) >= maxPins,
-          onTogglePin: _todaysFiveIds.isNotEmpty
-              ? () => _togglePinInTodays5(task.id!)
-              : null,
+          onTogglePin: () => _togglePinInTodays5(task.id!),
           isBlocked: provider.blockedTaskIds.contains(task.id),
         );
       },
@@ -1350,81 +1352,12 @@ class TaskListScreenState extends State<TaskListScreen>
       final newDeadline = result.deadline != null
           ? (result.deadline!.isEmpty ? null : result.deadline)
           : task.deadline;
-      // Pin into Today's 5 BEFORE updating the deadline on the provider,
-      // because updateTaskDeadline triggers notifyListeners → Today's 5
-      // refreshSnapshots → _persist, which would overwrite our DB changes.
-      String? deadlineSnackMessage;
-      if (newDeadline != null) {
-        final parsed = DateTime.tryParse(newDeadline);
-        if (parsed != null) {
-          final now = DateTime.now();
-          final today = DateTime(now.year, now.month, now.day);
-          final deadlineDay = DateTime(parsed.year, parsed.month, parsed.day);
-          if (!deadlineDay.isAfter(today)) {
-            final db = DatabaseHelper();
-            final dateKey = todayDateKey();
-            final saved = await db.loadTodaysFiveState(dateKey);
-            final children = await db.getChildren(task.id!);
-            final isLeaf = children.isEmpty;
-            deadlineSnackMessage = 'Due today';
-            if (isLeaf && saved == null) {
-              await db.saveTodaysFiveState(
-                date: dateKey,
-                taskIds: [task.id!],
-                completedIds: {},
-                workedOnIds: {},
-                pinnedIds: {task.id!},
-              );
-              await db.unsuppressDeadlineAutoPin(dateKey, task.id!);
-              deadlineSnackMessage = 'Due today — pinned to Today\'s 5!';
-            } else if (isLeaf && saved != null && !saved.taskIds.contains(task.id!)) {
-              final pinResult = TodaysFivePinHelper.pinNewTask(saved, task.id!);
-              if (pinResult != null) {
-                await db.saveTodaysFiveState(
-                  date: dateKey,
-                  taskIds: pinResult.taskIds,
-                  completedIds: saved.completedIds,
-                  workedOnIds: saved.workedOnIds,
-                  pinnedIds: pinResult.pinnedIds,
-                );
-                await db.unsuppressDeadlineAutoPin(dateKey, task.id!);
-                deadlineSnackMessage = 'Due today — pinned to Today\'s 5!';
-              } else {
-                await db.suppressDeadlineAutoPin(dateKey, task.id!);
-                deadlineSnackMessage = 'Due today — couldn\'t pin, all 5 pin slots are taken';
-              }
-            } else if (isLeaf && saved != null && saved.taskIds.contains(task.id!)) {
-              // Bug fix: Previously just showed "already in Today's 5" without
-              // pinning. Now pins the task so it's protected from rerolls.
-              if (!saved.pinnedIds.contains(task.id!)) {
-                final newPins = TodaysFivePinHelper.togglePinInPlace(saved.pinnedIds, task.id!);
-                if (newPins != null) {
-                  await db.saveTodaysFiveState(
-                    date: dateKey,
-                    taskIds: saved.taskIds.toList(),
-                    completedIds: saved.completedIds,
-                    workedOnIds: saved.workedOnIds,
-                    pinnedIds: newPins,
-                  );
-                  deadlineSnackMessage = 'Due today — pinned in Today\'s 5!';
-                } else {
-                  deadlineSnackMessage = 'Due today — already in Today\'s 5 (max pins reached)';
-                }
-              } else {
-                deadlineSnackMessage = 'Due today — already pinned in Today\'s 5';
-              }
-            }
-          }
-        }
-      }
-      // Now update the deadline — this triggers notifyListeners → refreshSnapshots,
-      // which will detect the DB mismatch and reload (picking up our pin).
+      // Manual model: setting a deadline no longer auto-pins into Today's 5.
+      // The user picks tasks themselves; deadlines are stored for display only.
+      // (TODO: future "you have X coming up" suggestion mechanism.)
       await provider.updateTaskDeadline(task.id!, newDeadline, deadlineType: deadlineType);
-      if (mounted && deadlineSnackMessage != null) {
-        showInfoSnackBar(context, deadlineSnackMessage);
-      }
     }
-    // Refresh Today's 5 indicators (deadline may have triggered auto-pin)
+    // Refresh Today's 5 indicators in case the deadline change is relevant.
     await loadTodaysFiveIds();
     // Invalidate cached schedule state so leaf detail refreshes
     if (mounted) setState(() {});

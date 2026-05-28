@@ -24,7 +24,9 @@ class TodaysFivePinHelper {
 
   /// Toggle pin status for [taskId].
   ///
-  /// If the task is already pinned, it gets unpinned.
+  /// If the task is already pinned, it gets unpinned AND removed from
+  /// Today's 5 (manual model: pin = membership). Completed tasks stay in
+  /// the list when unpinned so progress isn't lost.
   /// If unpinned and not yet in Today's 5, it replaces the last unpinned
   /// undone slot, or gets appended if all slots are done/pinned (up to
   /// [maxSlots]).
@@ -37,8 +39,11 @@ class TodaysFivePinHelper {
     final pinnedIds = Set<int>.from(saved.pinnedIds);
 
     if (pinnedIds.contains(taskId)) {
-      // Unpin — then trim excess unpinned undone tasks
       pinnedIds.remove(taskId);
+      // Remove from list unless completed (keep done tasks visible for progress).
+      if (!saved.completedIds.contains(taskId)) {
+        taskIds.remove(taskId);
+      }
       final trimmed = trimExcess(taskIds, saved.completedIds, pinnedIds);
       return PinResult(taskIds: trimmed, pinnedIds: pinnedIds);
     }
