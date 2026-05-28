@@ -1,3 +1,11 @@
+// Notification code is currently disabled (2026-05-28). The daily 8 AM
+// reminder was broken on the user's setup and the feature was commented out
+// rather than debugged. To re-enable: delete this header, restore the imports,
+// remove the block-comment markers around the class body, and uncomment the
+// call sites in `lib/main.dart` (NotificationService.init / onNotificationTap /
+// _navigateToToday). Required packages are still in pubspec.
+
+/*
 import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
@@ -127,3 +135,4 @@ class NotificationService {
     return scheduled;
   }
 }
+*/

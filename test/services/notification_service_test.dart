@@ -1,3 +1,10 @@
+// Notification code is currently disabled (2026-05-28). See the header in
+// lib/services/notification_service.dart. This test file is commented out
+// because the symbols under test no longer exist in the compiled source.
+// Restore alongside the service implementation if/when notifications are
+// re-enabled.
+
+/*
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
@@ -144,3 +151,4 @@ void main() {
     });
   });
 }
+*/

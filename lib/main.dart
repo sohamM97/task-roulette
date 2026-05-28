@@ -11,7 +11,7 @@ import 'providers/theme_provider.dart';
 import 'screens/starred_screen.dart';
 import 'screens/task_list_screen.dart';
 import 'screens/todays_five_screen.dart';
-import 'services/notification_service.dart';
+// import 'services/notification_service.dart'; // Disabled — see notification_service.dart header.
 import 'services/sync_service.dart';
 import 'utils/display_utils.dart' show debugLog;
 
@@ -23,7 +23,7 @@ void main() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
-  await NotificationService.init();
+  // await NotificationService.init(); // Disabled — see notification_service.dart header.
   runApp(const TaskRouletteApp());
 }
 
@@ -85,28 +85,38 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
-  int _currentIndex = 0;
+  // Tab indices for the bottom nav / PageView. Update both [_tabIndex] values
+  // AND the order of children/destinations in [build] if you reorder tabs.
+  static const _tabStarred = 0;
+  static const _tabToday = 1;
+  static const _tabAllTasks = 2;
+  static const _defaultTab = _tabStarred;
+
+  int _currentIndex = _defaultTab;
   final _todaysFiveKey = GlobalKey<TodaysFiveScreenState>();
   final _starredKey = GlobalKey<StarredScreenState>();
   final _taskListKey = GlobalKey<TaskListScreenState>();
-  final _pageController = PageController();
+  final _pageController = PageController(initialPage: _defaultTab);
 
   @override
   void initState() {
     super.initState();
-    NotificationService.onNotificationTap = _navigateToToday;
+    // Disabled — see notification_service.dart header.
+    // NotificationService.onNotificationTap = _navigateToToday;
     _initAuth();
   }
 
-  void _navigateToToday() {
-    if (!mounted) return;
-    _todaysFiveKey.currentState?.refreshSnapshots();
-    _pageController.animateToPage(
-      0,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    );
-  }
+  // Disabled with notification handling. Restore alongside the call sites
+  // above and in [dispose] if/when notifications are re-enabled.
+  // void _navigateToToday() {
+  //   if (!mounted) return;
+  //   _todaysFiveKey.currentState?.refreshSnapshots();
+  //   _pageController.animateToPage(
+  //     _tabToday,
+  //     duration: const Duration(milliseconds: 300),
+  //     curve: Curves.easeInOut,
+  //   );
+  // }
 
   Future<void> _initAuth() async {
     final authProvider = context.read<AuthProvider>();
@@ -143,7 +153,8 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
-    NotificationService.onNotificationTap = null;
+    // Disabled — see notification_service.dart header.
+    // NotificationService.onNotificationTap = null;
     _pageController.dispose();
     super.dispose();
   }
@@ -155,35 +166,36 @@ class _AppShellState extends State<AppShell> {
         controller: _pageController,
         physics: const _LessAggressivePagePhysics(),
         onPageChanged: (index) {
-          if (index == 0) {
+          if (index == _tabToday) {
             _todaysFiveKey.currentState?.refreshSnapshots();
-          } else if (index == 2) {
+          } else if (index == _tabAllTasks) {
             _taskListKey.currentState?.loadTodaysFiveIds();
           }
           setState(() {
             _currentIndex = index;
           });
         },
+        // Children order MUST match the _tab* indices above.
         children: [
-          TodaysFiveScreen(
-            key: _todaysFiveKey,
-            onNavigateToTask: (task) async {
-              await context.read<TaskProvider>().navigateToTask(task);
-              if (!mounted) return;
-              _pageController.animateToPage(
-                2,
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
-              );
-            },
-          ),
           StarredScreen(
             key: _starredKey,
             onNavigateToTask: (task) async {
               await context.read<TaskProvider>().navigateToTask(task);
               if (!mounted) return;
               _pageController.animateToPage(
-                2,
+                _tabAllTasks,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+            },
+          ),
+          TodaysFiveScreen(
+            key: _todaysFiveKey,
+            onNavigateToTask: (task) async {
+              await context.read<TaskProvider>().navigateToTask(task);
+              if (!mounted) return;
+              _pageController.animateToPage(
+                _tabAllTasks,
                 duration: const Duration(milliseconds: 300),
                 curve: Curves.easeInOut,
               );
@@ -202,16 +214,17 @@ class _AppShellState extends State<AppShell> {
             curve: Curves.easeInOut,
           );
         },
+        // Destination order MUST match the _tab* indices above.
         destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.today_outlined),
-            selectedIcon: Icon(Icons.today),
-            label: 'Today',
-          ),
           NavigationDestination(
             icon: Icon(Icons.star_outline),
             selectedIcon: Icon(Icons.star),
             label: 'Starred',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.today_outlined),
+            selectedIcon: Icon(Icons.today),
+            label: 'Today',
           ),
           NavigationDestination(
             icon: Icon(Icons.list_outlined),

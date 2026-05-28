@@ -1,10 +1,10 @@
 # Test Coverage Inventory
 
-Last updated: 2026-03-31
+Last updated: 2026-05-28
 
 ## Summary
 
-~1326 tests across 34 test files. Models and data layer are well-covered. Task card at 100%. Triage dialog at 93%. Screens and services have remaining gaps.
+~1333 tests across 34 test files. Models and data layer are well-covered. Task card at 100%. Triage dialog at 93%. Screens and services have remaining gaps.
 
 ## Covered
 
@@ -54,7 +54,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 - **test/utils/display_utils_test.dart** (~99 tests) — `normalizeUrl`, `isAllowedUrl`, `displayUrl`, `shortenAncestorPath` (single/multi-segment, left-truncation of long ancestors, 4+ segment collapse, immediate parent always preserved, boundary at 12 chars), **`confirmDependentUnblock`** (empty list returns true immediately, dialog content with dependent names, Complete confirms, Cancel returns false, dismiss-by-tap-outside returns false), **`debugLog`** (forwards to debugPrint in debug mode, exact message passthrough, empty string), **SEC-fix LOW-21/LOW-22 codebase scan** (no ungated `debugPrint` calls outside `display_utils.dart`, `debugLog` import present where used).
 - **test/utils/force_directed_layout_test.dart** (~8 tests) — `LayoutNode` serialization round-trip, `ForceDirectedLayout.run` (single node, empty graph, early convergence, adaptive iterations), `runAsync` produces valid result.
 - **test/platform/platform_utils_native_test.dart** (7 tests) — Platform detection, home dir, file ops.
-- **test/app/app_test.dart** (1 test) — App renders with tabs.
+- **test/app/app_test.dart** (8 tests) — AppShell bottom-nav: renders 3 tabs (Starred/Today/All Tasks), destinations are in the correct order, **Starred is the default landing tab** (regression for the `_tabStarred = 0` reorder), Starred empty state shown on launch (not Today's 5), selecting Today/All Tasks destinations animates the PageView to the right index, tab-switching round-trip (Starred→Today→Starred), filled-star icon is the selected state on launch.
 
 ## NOT Covered
 
@@ -80,7 +80,7 @@ Note: `database_helper_test.dart` also covers **deadline auto-pin suppression** 
 ### Low priority (not worth testing)
 - **theme/app_colors.dart** — Just constants.
 - **platform/platform_utils.dart** — Conditional import wrapper, tested via `platform_utils_native_test.dart`.
-- **main.dart** — 1 basic test exists. Deep testing (dark mode toggle, tab switching, app lifecycle) would be complex widget tests with minimal ROI.
+- **main.dart** — 8 tests cover AppShell bottom-nav tab order, default landing tab, and inter-tab navigation. Still not tested: dark mode toggle, notification-tap → Today navigation (requires NotificationService mocking), full app lifecycle.
 
 ## Testing Caveats
 
