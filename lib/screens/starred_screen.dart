@@ -283,11 +283,10 @@ class StarredScreenState extends State<StarredScreen>
       body: ReorderableListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         itemCount: _starredTasks.length,
-        // ignore: deprecated_member_use
         // onReorder is deprecated after Flutter 3.41 in favour of onReorderItem,
         // but the dev machine still pins Flutter 3.41 where the replacement
         // doesn't exist yet. Swap when local Flutter is bumped.
-        onReorder: _onReorder,
+        onReorder: _onReorder, // ignore: deprecated_member_use
         buildDefaultDragHandles: false,
         proxyDecorator: (child, index, animation) {
           return AnimatedBuilder(
