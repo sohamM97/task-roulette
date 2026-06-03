@@ -526,9 +526,13 @@ class DatabaseHelper {
 
   /// Inserts multiple tasks in a single transaction.
   /// If [parentId] is non-null, each task is added as a child of that parent.
-  Future<void> insertTasksBatch(List<Task> tasks, int? parentId) async {
+  /// Inserts a batch of tasks under [parentId] (or at root if null) and
+  /// returns the inserted row IDs in input order — callers (e.g. the Starred
+  /// brain-dump pin transfer) need the new IDs to act on the created tasks.
+  Future<List<int>> insertTasksBatch(List<Task> tasks, int? parentId) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
+    final insertedIds = <int>[];
     await db.transaction((txn) async {
       String? parentSyncId;
       if (parentId != null) {
@@ -542,6 +546,7 @@ class DatabaseHelper {
         map['updated_at'] = now;
         map['sync_status'] = 'pending';
         final id = await txn.insert('tasks', map);
+        insertedIds.add(id);
         if (parentId != null) {
           await txn.insert('task_relationships', {
             'parent_id': parentId,
@@ -559,6 +564,7 @@ class DatabaseHelper {
         }
       }
     });
+    return insertedIds;
   }
 
   Future<void> addRelationship(int parentId, int childId) async {

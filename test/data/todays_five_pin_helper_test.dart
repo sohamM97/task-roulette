@@ -367,6 +367,95 @@ void main() {
     });
   });
 
+  group('transferPin', () {
+    // [Mechanism] Replaces the parent's slot with the child and moves the pin.
+    test('moves pin from a pinned parent to the new child', () {
+      final state = _state(
+        taskIds: [1, 2, 3, 4, 5],
+        pinnedIds: {3},
+      );
+      final result = TodaysFivePinHelper.transferPin(state, 3, 99);
+      expect(result, isNotNull);
+      // Parent (3) replaced in-place by child (99).
+      expect(result!.taskIds, [1, 2, 99, 4, 5]);
+      // Pin followed the work down to the child.
+      expect(result.pinnedIds, {99});
+    });
+
+    // [Mechanism] Parent present but NOT pinned — slot transfers, no pin added.
+    test('replaces slot but adds no pin when parent was unpinned', () {
+      final state = _state(
+        taskIds: [1, 2, 3, 4, 5],
+        pinnedIds: {1},
+      );
+      final result = TodaysFivePinHelper.transferPin(state, 3, 99);
+      expect(result, isNotNull);
+      expect(result!.taskIds, [1, 2, 99, 4, 5]);
+      // 1 stays pinned; child not pinned because parent wasn't.
+      expect(result.pinnedIds, {1});
+    });
+
+    // [Edge case] Parent absent from Today's 5 → nothing to transfer.
+    test('returns null when parent is not in Today\'s 5', () {
+      final state = _state(
+        taskIds: [1, 2, 3],
+        pinnedIds: {1},
+      );
+      final result = TodaysFivePinHelper.transferPin(state, 99, 100);
+      expect(result, isNull);
+    });
+
+    // [Mechanism] Replacement preserves the parent's exact position.
+    test('preserves slot position (does not reorder)', () {
+      final state = _state(
+        taskIds: [10, 20, 30, 40, 50],
+        pinnedIds: {10, 30},
+      );
+      final result = TodaysFivePinHelper.transferPin(state, 10, 99);
+      expect(result, isNotNull);
+      // 10 at index 0 replaced by 99; rest untouched.
+      expect(result!.taskIds, [99, 20, 30, 40, 50]);
+      expect(result.pinnedIds, {99, 30});
+    });
+
+    // [Baseline] Pure: original state object is not mutated.
+    test('does not modify original state', () {
+      final original = _state(
+        taskIds: [1, 2, 3],
+        pinnedIds: {2},
+      );
+      TodaysFivePinHelper.transferPin(original, 2, 99);
+      expect(original.taskIds, [1, 2, 3]);
+      expect(original.pinnedIds, {2});
+    });
+
+    // [Edge case] Parent present at the last slot, pinned.
+    test('transfers pin when parent is the last slot', () {
+      final state = _state(
+        taskIds: [1, 2, 3, 4, 5],
+        pinnedIds: {5},
+      );
+      final result = TodaysFivePinHelper.transferPin(state, 5, 99);
+      expect(result, isNotNull);
+      expect(result!.taskIds, [1, 2, 3, 4, 99]);
+      expect(result.pinnedIds, {99});
+    });
+
+    // [Edge case] Child already among pinned ids stays pinned (idempotent add).
+    test('child already pinned remains pinned after transfer', () {
+      final state = _state(
+        taskIds: [1, 2, 3],
+        pinnedIds: {2, 99},
+      );
+      // 99 isn't a slot here, but transferring parent 2's pin to 99 must not
+      // duplicate/break the set.
+      final result = TodaysFivePinHelper.transferPin(state, 2, 99);
+      expect(result, isNotNull);
+      expect(result!.taskIds, [1, 99, 3]);
+      expect(result.pinnedIds, {99});
+    });
+  });
+
   group('togglePinInPlace', () {
     test('pin a task', () {
       final result = TodaysFivePinHelper.togglePinInPlace({1, 2}, 3);

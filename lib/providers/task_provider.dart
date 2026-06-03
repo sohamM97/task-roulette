@@ -96,10 +96,18 @@ class TaskProvider extends ChangeNotifier {
   }
 
   /// Inserts multiple tasks in a single transaction, refreshes once at the end.
-  Future<void> addTasksBatch(List<String> names, {bool isInbox = false}) async {
+  /// Inserts [names] as a batch and returns the new task IDs.
+  ///
+  /// [parentId] forces the parent explicitly, overriding the current
+  /// navigation state — callers in other tabs (e.g. the Starred dialog's
+  /// brain-dump) MUST pass it so tasks aren't silently nested under whatever
+  /// parent the All Tasks tab last drilled into (mirrors [addTask]'s atRoot).
+  Future<List<int>> addTasksBatch(List<String> names,
+      {bool isInbox = false, int? parentId}) async {
     final tasks = names.map((name) => Task(name: name, isInbox: isInbox)).toList();
-    await _db.insertTasksBatch(tasks, _currentParent?.id);
+    final ids = await _db.insertTasksBatch(tasks, parentId ?? _currentParent?.id);
     await _refreshAfterMutation();
+    return ids;
   }
 
   /// Adds a task and returns its ID.

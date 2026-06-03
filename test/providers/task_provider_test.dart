@@ -2046,6 +2046,68 @@ void main() {
       final children = await db.getChildren(parentId);
       expect(children, hasLength(2));
     });
+
+    // [Mechanism] Explicit parentId overrides current-navigation parent and
+    // parents the new tasks under the given task (used by the Starred dialog
+    // brain-dump, which runs while the All Tasks tab may be drilled elsewhere).
+    test('addTasksBatch with explicit parentId parents under that task',
+        () async {
+      final starredId = await db.insertTask(Task(name: 'Starred'));
+      final otherId = await db.insertTask(Task(name: 'Other parent'));
+      await provider.loadRootTasks();
+      // Drill into a DIFFERENT parent — the All Tasks nav state.
+      final other = provider.tasks.firstWhere((t) => t.id == otherId);
+      await provider.navigateInto(other);
+
+      // Batch-add with explicit parentId = starredId, NOT the nav parent.
+      await provider.addTasksBatch(
+        ['Sub 1', 'Sub 2'],
+        parentId: starredId,
+      );
+
+      // Children landed under the starred task, not under "Other parent".
+      final starredChildren = await db.getChildren(starredId);
+      expect(starredChildren.map((t) => t.name).toSet(), {'Sub 1', 'Sub 2'});
+      final otherChildren = await db.getChildren(otherId);
+      expect(otherChildren, isEmpty);
+    });
+
+    // [Mechanism] addTasksBatch now returns the new task IDs in input order.
+    test('addTasksBatch returns the new task IDs in order', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      await provider.loadRootTasks();
+
+      final ids = await provider.addTasksBatch(
+        ['One', 'Two', 'Three'],
+        parentId: parentId,
+      );
+
+      expect(ids, hasLength(3));
+      final names = <String>[];
+      for (final id in ids) {
+        names.add((await db.getTaskById(id))!.name);
+      }
+      expect(names, ['One', 'Two', 'Three']);
+    });
+
+    // [Regression] The explicit parentId must win even at root nav (no
+    // _currentParent). Without it the tasks would be created at root, and the
+    // Starred "add multiple" would silently produce no subtasks of the card.
+    test('addTasksBatch with parentId at root nav still nests under parent',
+        () async {
+      final starredId = await db.insertTask(Task(name: 'Starred'));
+      await provider.loadRootTasks(); // _currentParent == null
+
+      final ids = await provider.addTasksBatch(
+        ['A', 'B'],
+        parentId: starredId,
+      );
+
+      final children = await db.getChildren(starredId);
+      expect(children.map((t) => t.id).toSet(), ids.toSet());
+      // None left dangling at root.
+      expect(children, hasLength(2));
+    });
   });
 
   group('Task deletion & restore', () {

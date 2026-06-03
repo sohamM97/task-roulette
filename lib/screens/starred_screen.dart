@@ -5,7 +5,7 @@ import '../data/database_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../utils/display_utils.dart';
-import '../widgets/add_task_dialog.dart';
+import '../widgets/add_task_flow.dart';
 import '../widgets/profile_icon.dart';
 import '../providers/theme_provider.dart';
 import 'completed_tasks_screen.dart';
@@ -311,13 +311,12 @@ class StarredScreenState extends State<StarredScreen>
             tree: treeInfo?.children ?? [],
             totalChildren: treeInfo?.totalChildren ?? 0,
             blockedInfo: _blockedInfo,
-            onTap: () {
-              if ((treeInfo?.totalChildren ?? 0) == 0) {
-                widget.onNavigateToTask?.call(task);
-              } else {
-                _showExpandedView(task);
-              }
-            },
+            // Unified tap: empty and non-empty starred cards both open the
+            // expanded dialog. (Before: empty cards navigated straight to All
+            // Tasks; now they open the dialog too, so a subtask can be added
+            // via its "+" FAB without leaving Starred.) Long-press is the
+            // escape hatch to All Tasks.
+            onTap: () => _showExpandedView(task),
             onLongPress: () => widget.onNavigateToTask?.call(task),
           );
         },
@@ -939,97 +938,38 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     }
   }
 
-  /// Opens AddTaskDialog and creates a child of the starred task. If the
-  /// starred task is pinned in Today's 5, first shows the "this task is
-  /// pinned" warning (mirrors `task_list_screen.dart`'s flow) and, after
-  /// creation, transfers the pin to the new subtask so the Today's 5 pin
-  /// indicator doesn't silently disappear when the parent goes non-leaf.
-  Future<void> _addSubtask() async {
-    if (_starredTaskPinnedInTodays5) {
-      final proceed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('This task is pinned'),
-          content: Text(
-            '"${widget.task.name}" is in your Today\'s 5 and pinned. '
-            'Adding a subtask will replace it with the new subtask.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Add anyway'),
-            ),
-          ],
-        ),
-      );
-      if (proceed != true || !mounted) return;
-    }
-
-    final result = await showDialog<AddTaskResult>(
-      context: context,
-      builder: (_) => const AddTaskDialog(),
-    );
-    if (!mounted || result is! SingleTask) return;
-
+  /// Adds subtask(s) to the starred task via the shared [AddTaskFlow]. The
+  /// new tasks are parented explicitly to the starred task (atRoot ignores the
+  /// All Tasks tab's drilled-in parent). No pin/inbox toggles are shown here.
+  Future<void> _addSubtask() {
     final provider = context.read<TaskProvider>();
-    // atRoot: true ignores the All Tasks tab's _currentParent; the only
-    // parent for the new task is the starred one (via additionalParentIds).
-    // deferNotify when we need to do follow-up DB writes (pin transfer)
-    // before listeners fire — same race documented in TaskProvider.addTask.
-    final needsPinTransfer = _starredTaskPinnedInTodays5;
-    final newId = await provider.addTask(
-      result.name,
-      url: result.url,
-      atRoot: true,
-      additionalParentIds: [widget.task.id!],
-      deferNotify: needsPinTransfer,
-    );
+    return AddTaskFlow(
+      parentId: widget.task.id,
+      parentName: widget.task.name,
+      parentIsPinned: _starredTaskPinnedInTodays5,
+      addSingle: ({required name, url, required isInbox, required deferNotify}) =>
+          provider.addTask(name,
+              url: url,
+              atRoot: true,
+              additionalParentIds: [widget.task.id!],
+              deferNotify: deferNotify),
+      addBatch: (names, {required isInbox}) =>
+          provider.addTasksBatch(names, parentId: widget.task.id!),
+      // The starred task's pin moved to a new subtask, so it's no longer pinned.
+      onTodaysFiveChanged: (_) => _starredTaskPinnedInTodays5 = false,
+      onProviderRefresh: provider.refreshAfterMutation,
+      onCompleted: (_) => _reloadAfterAdd(),
+      // The expanded dialog covers the page's snackbar, and its tree refreshes
+      // in place — so the "Added N tasks" snackbar would just flash behind it.
+      announceBatchAdd: false,
+    ).run(context);
+  }
 
-    if (needsPinTransfer) {
-      try {
-        await _transferPinToNewChild(widget.task.id!, newId);
-      } finally {
-        await provider.refreshAfterMutation();
-      }
-      // After transfer, the starred task is no longer pinned (the pin moved).
-      _starredTaskPinnedInTodays5 = false;
-    }
-
-    if (!mounted) return;
-    // Invalidate cached children so the new subtask appears, then reload.
+  /// Invalidate cached children so the new subtask(s) appear, then reload.
+  Future<void> _reloadAfterAdd() async {
     _childrenCache.remove(widget.task.id);
     _expanded.clear();
     await _loadDirectChildren();
-  }
-
-  /// Mirrors `task_list_screen.dart`'s `_transferPinToChild`. Replaces the
-  /// parent's slot in Today's 5 with the new child and moves the pin.
-  Future<void> _transferPinToNewChild(int parentId, int childId) async {
-    final today = todayDateKey();
-    final db = DatabaseHelper();
-    final saved = await db.loadTodaysFiveState(today);
-    if (saved == null) return;
-
-    final taskIds = List<int>.from(saved.taskIds);
-    final pinnedIds = Set<int>.from(saved.pinnedIds);
-
-    final idx = taskIds.indexOf(parentId);
-    if (idx < 0) return;
-    taskIds[idx] = childId;
-    if (pinnedIds.remove(parentId)) {
-      pinnedIds.add(childId);
-    }
-    await db.saveTodaysFiveState(
-      date: today,
-      taskIds: taskIds,
-      completedIds: saved.completedIds,
-      workedOnIds: saved.workedOnIds,
-      pinnedIds: pinnedIds,
-    );
   }
 
   @override
@@ -1037,8 +977,20 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     final colorScheme = Theme.of(context).colorScheme;
     final onSurface = colorScheme.onSurface;
     final lineColor = widget.accent.withAlpha(180);
+    // Dull the accent for the FAB by knocking its saturation down to 45% —
+    // keeps the hue/theme tie-in but reads softer than the full accent.
+    final accentHsl = HSLColor.fromColor(widget.accent);
+    final fabColor = accentHsl
+        .withSaturation((accentHsl.saturation * 0.45).clamp(0.0, 1.0))
+        .toColor();
+    // Pick a legible foreground — the lighter accents (yellow, etc.) need
+    // dark text, the rest need light.
+    final fabForeground =
+        fabColor.computeLuminance() > 0.5 ? Colors.black87 : Colors.white;
 
-    return Column(
+    return Stack(
+      children: [
+        Column(
       children: [
         // Header
         Padding(
@@ -1076,15 +1028,6 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                 ),
               ),
               IconButton(
-                icon: Icon(Icons.add, size: 20,
-                    color: onSurface.withAlpha(140)),
-                onPressed: _addSubtask,
-                tooltip: 'Add subtask',
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                padding: EdgeInsets.zero,
-              ),
-              IconButton(
                 icon: Icon(Icons.open_in_new_rounded, size: 18,
                     color: onSurface.withAlpha(100)),
                 onPressed: () => widget.onNavigateToTask(widget.task),
@@ -1112,7 +1055,9 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                       ),
                     )
                   : ListView.builder(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                      // Extra bottom padding so the floating "Add subtask"
+                      // button never covers the last row when scrolled.
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
                       itemCount: _flatTree.length,
                       itemBuilder: (context, index) {
                         final node = _flatTree[index];
@@ -1140,6 +1085,21 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                         );
                       },
                     ),
+        ),
+      ],
+        ),
+        // Highlighted call-to-action, pinned to the dialog's bottom-right.
+        Positioned(
+          right: 16,
+          bottom: 16,
+          child: FloatingActionButton(
+            heroTag: null,
+            onPressed: _addSubtask,
+            backgroundColor: fabColor,
+            foregroundColor: fabForeground,
+            tooltip: 'Add subtask',
+            child: const Icon(Icons.add),
+          ),
         ),
       ],
     );

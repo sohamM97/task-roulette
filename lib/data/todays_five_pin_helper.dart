@@ -95,6 +95,29 @@ class TodaysFivePinHelper {
     return PinResult(taskIds: taskIds, pinnedIds: pinnedIds);
   }
 
+  /// Transfers a parent's Today's 5 slot to a newly-created child.
+  ///
+  /// When a pinned (or merely present) parent gains its first subtask it
+  /// becomes non-leaf, so its slot should follow the work down to the child:
+  /// the parent's entry is replaced by [childId] in-place, and if the parent
+  /// was pinned the pin moves to the child too.
+  ///
+  /// Returns a [PinResult] with the mutated state, or `null` if the parent
+  /// isn't in Today's 5 (nothing to transfer).
+  static PinResult? transferPin(TodaysFiveData saved, int parentId, int childId) {
+    final taskIds = List<int>.from(saved.taskIds);
+    final pinnedIds = Set<int>.from(saved.pinnedIds);
+
+    final index = taskIds.indexOf(parentId);
+    if (index < 0) return null;
+
+    taskIds[index] = childId;
+    if (pinnedIds.remove(parentId)) {
+      pinnedIds.add(childId);
+    }
+    return PinResult(taskIds: taskIds, pinnedIds: pinnedIds);
+  }
+
   /// Simple pin/unpin for a task that is already in Today's 5.
   ///
   /// Returns the new pinnedIds set, or `null` if blocked (max pins).
