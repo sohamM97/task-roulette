@@ -1759,6 +1759,53 @@ void main() {
         expect(entry['key2'], isNotEmpty); // child sync_id
       }
     });
+
+    // [Mechanism] insertTasksBatch now returns the inserted row IDs (was void).
+    test('insertTasksBatch returns inserted IDs in input order', () async {
+      final tasks = [
+        Task(name: 'First'),
+        Task(name: 'Second'),
+        Task(name: 'Third'),
+      ];
+      final ids = await db.insertTasksBatch(tasks, null);
+
+      expect(ids, hasLength(3));
+      // IDs map back to the right rows, in order.
+      final names = <String>[];
+      for (final id in ids) {
+        names.add((await db.getTaskById(id))!.name);
+      }
+      expect(names, ['First', 'Second', 'Third']);
+    });
+
+    // [Mechanism] Returned IDs are real, distinct, auto-increment row IDs.
+    test('insertTasksBatch returns distinct positive IDs', () async {
+      final ids = await db.insertTasksBatch(
+        [Task(name: 'A'), Task(name: 'B')],
+        null,
+      );
+      expect(ids.toSet(), hasLength(2));
+      expect(ids.every((id) => id > 0), isTrue);
+    });
+
+    // [Edge case] Empty batch returns an empty ID list.
+    test('insertTasksBatch with empty list returns empty IDs', () async {
+      final ids = await db.insertTasksBatch(<Task>[], null);
+      expect(ids, isEmpty);
+    });
+
+    // [Mechanism] Returned child IDs are actually parented under parentId.
+    test('insertTasksBatch returned IDs are children of parentId', () async {
+      final parentId = await db.insertTask(Task(name: 'Parent'));
+      final ids = await db.insertTasksBatch(
+        [Task(name: 'Child 1'), Task(name: 'Child 2')],
+        parentId,
+      );
+
+      final childIds =
+          (await db.getChildren(parentId)).map((t) => t.id).toSet();
+      expect(childIds, ids.toSet());
+    });
   });
 
   group('Dirty tracking', () {

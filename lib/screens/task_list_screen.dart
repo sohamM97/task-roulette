@@ -9,8 +9,7 @@ import '../models/task_schedule.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_colors.dart';
-import '../widgets/add_task_dialog.dart';
-import '../widgets/brain_dump_dialog.dart';
+import '../widgets/add_task_flow.dart';
 import '../widgets/completion_animation.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/leaf_task_detail.dart';
@@ -306,7 +305,9 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   /// Returns true if the user confirmed (or task isn't pinned), false to abort.
-  Future<bool> _warnIfPinned({bool isBrainDump = false}) async {
+  /// Used by the "link existing task" flow; the add-task flow does its own
+  /// pinned-parent warning inside [AddTaskFlow].
+  Future<bool> _warnIfPinned() async {
     final provider = context.read<TaskProvider>();
     final currentParent = provider.currentParent;
     if (currentParent == null) return true;
@@ -315,16 +316,14 @@ class TaskListScreenState extends State<TaskListScreen>
     if (pinnedIds == null || !pinnedIds.contains(currentParent.id)) return true;
 
     if (!mounted) return false;
-    final message = isBrainDump
-        ? '"${currentParent.name}" is in your Today\'s 5 and pinned. '
-          'Adding subtasks will replace it with one of the new subtasks.'
-        : '"${currentParent.name}" is in your Today\'s 5 and pinned. '
-          'Adding a subtask will replace it with the new subtask.';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('This task is pinned'),
-        content: Text(message),
+        content: Text(
+          '"${currentParent.name}" is in your Today\'s 5 and pinned. '
+          'Adding a subtask will replace it with the new subtask.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -340,9 +339,8 @@ class TaskListScreenState extends State<TaskListScreen>
     return confirmed == true;
   }
 
+  /// Adds task(s) under the current parent via the shared [AddTaskFlow].
   Future<void> _addTask() async {
-    if (!await _warnIfPinned()) return;
-    if (!mounted) return;
     final provider = context.read<TaskProvider>();
     final parentId = provider.currentParent?.id;
     final parentIsPinned = parentId != null &&
@@ -351,140 +349,36 @@ class TaskListScreenState extends State<TaskListScreen>
     // to the new subtask, so the option is misleading.
     final showPin = !parentIsPinned && _todaysFiveIds.isNotEmpty &&
         (_todays5PinnedIds?.length ?? 0) < maxPins;
-    final result = await showDialog<AddTaskResult>(
-      context: context,
-      builder: (_) => AddTaskDialog(showPinOption: showPin, showInboxOption: provider.isRoot),
-    );
-    if (!mounted || result == null) return;
-    if (result is SingleTask) {
-      // Bug fix: when pinning on add, defer notifyListeners until after the
-      // pin is saved to DB. Otherwise refreshSnapshots() (triggered by
-      // notifyListeners) races with _pinNewTaskInTodays5 and overwrites the
-      // pin via _persist() before the pin is saved.
-      final needsPin = result.pinInTodays5 || parentIsPinned;
-      final taskId = await provider.addTask(result.name, url: result.url, isInbox: result.addToInbox, deferNotify: needsPin);
-      if (needsPin) {
-        try {
-          if (result.pinInTodays5 && mounted) {
-            await _pinNewTaskInTodays5(taskId);
-          } else if (parentIsPinned && mounted) {
-            // Parent was pinned in Today's 5 and just became non-leaf —
-            // eagerly transfer the pin to the new subtask so the pin icon
-            // appears immediately without waiting for a tab switch.
-            await _transferPinToChild(parentId, taskId);
-          }
-        } finally {
-          // If we deferred notification, trigger it now that the pin is persisted.
-          // In a finally block so the provider always refreshes even if pinning
-          // throws — otherwise the task exists in DB but the UI stays stale.
-          await provider.refreshAfterMutation();
-        }
-      }
-      if (provider.isRoot && mounted) await _loadInboxCount();
-    } else if (result is SwitchToBrainDump) {
-      await _brainDump(initialText: result.initialText);
-    }
-  }
-
-  /// Transfers a pin from a parent that just became non-leaf to its new child
-  /// in Today's 5 state. Called eagerly after adding a subtask to a pinned
-  /// parent so the pin icon appears immediately on the child's card.
-  Future<void> _transferPinToChild(int parentId, int childId) async {
-    final today = todayDateKey();
-    final db = DatabaseHelper();
-    final saved = await db.loadTodaysFiveState(today);
-    if (saved == null) return;
-
-    final taskIds = List<int>.from(saved.taskIds);
-    final pinnedIds = Set<int>.from(saved.pinnedIds);
-
-    final parentIdx = taskIds.indexOf(parentId);
-    if (parentIdx < 0) return;
-
-    // Replace parent with child in the list, transfer pin
-    taskIds[parentIdx] = childId;
-    if (pinnedIds.remove(parentId)) {
-      pinnedIds.add(childId);
-    }
-
-    await db.saveTodaysFiveState(
-      date: today,
-      taskIds: taskIds,
-      completedIds: saved.completedIds,
-      workedOnIds: saved.workedOnIds,
-      pinnedIds: pinnedIds,
-    );
-    if (mounted) {
-      setState(() {
-        _todaysFiveIds = taskIds.toSet();
-        _todays5PinnedIds = pinnedIds;
-      });
-    }
-  }
-
-  /// Adds a newly created task to Today's 5 (replacing an unpinned undone slot)
-  /// and pins it.
-  Future<void> _pinNewTaskInTodays5(int taskId) async {
-    final today = todayDateKey();
-    final db = DatabaseHelper();
-    final saved = await db.loadTodaysFiveState(today);
-    if (saved == null) return;
-
-    final result = TodaysFivePinHelper.pinNewTask(saved, taskId);
-    if (result == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        showInfoSnackBar(context, 'Couldn\'t pin — all Today\'s 5 slots are full');
-      }
-      return;
-    }
-
-    await db.saveTodaysFiveState(
-      date: today,
-      taskIds: result.taskIds,
-      completedIds: saved.completedIds,
-      workedOnIds: saved.workedOnIds,
-      pinnedIds: result.pinnedIds,
-    );
-    if (mounted) {
-      setState(() {
-        _todaysFiveIds = result.taskIds.toSet();
-        _todays5PinnedIds = result.pinnedIds;
-      });
-    }
-  }
-
-  Future<void> _brainDump({String initialText = ''}) async {
-    if (!await _warnIfPinned(isBrainDump: true)) return;
-    if (!mounted) return;
-    final provider = context.read<TaskProvider>();
-    final parentId = provider.currentParent?.id;
-    final parentIsPinned = parentId != null &&
-        (_todays5PinnedIds?.contains(parentId) ?? false);
-    final result = await showDialog<BrainDumpResult>(
-      context: context,
-      builder: (_) => BrainDumpDialog(initialText: initialText, showInboxOption: provider.isRoot),
-    );
-    if (result != null && result.names.isNotEmpty && mounted) {
-      final names = result.names;
-      final beforeIds = provider.tasks.map((t) => t.id!).toSet();
-      await provider.addTasksBatch(names, isInbox: result.addToInbox);
-      if (parentIsPinned && mounted) {
-        // Pick one of the NEW subtasks to inherit the pin (not pre-existing children)
-        final newChildren = provider.tasks.where((t) => !beforeIds.contains(t.id)).toList();
-        if (newChildren.isNotEmpty) {
-          final picked = provider.pickWeightedN(newChildren, 1);
-          if (picked.isNotEmpty) {
-            await _transferPinToChild(parentId, picked.first.id!);
-          }
-        }
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        showInfoSnackBar(context, 'Added ${names.length} tasks');
-      }
-      if (provider.isRoot && mounted) await _loadInboxCount();
-    }
+    await AddTaskFlow(
+      parentId: parentId,
+      parentName: provider.currentParent?.name,
+      parentIsPinned: parentIsPinned,
+      showPinOption: showPin,
+      showInboxOption: provider.isRoot,
+      addSingle: ({required name, url, required isInbox, required deferNotify}) =>
+          provider.addTask(name,
+              url: url, isInbox: isInbox, deferNotify: deferNotify),
+      addBatch: (names, {required isInbox}) =>
+          provider.addTasksBatch(names, isInbox: isInbox),
+      choosePinHeir: (newIds) async {
+        // Pick one of the NEW subtasks (weighted) to inherit the pin.
+        final newChildren =
+            provider.tasks.where((t) => newIds.contains(t.id)).toList();
+        final picked = provider.pickWeightedN(newChildren, 1);
+        return picked.isNotEmpty ? picked.first.id! : newIds.first;
+      },
+      onTodaysFiveChanged: (result) {
+        if (!mounted) return;
+        setState(() {
+          _todaysFiveIds = result.taskIds.toSet();
+          _todays5PinnedIds = result.pinnedIds;
+        });
+      },
+      onProviderRefresh: provider.refreshAfterMutation,
+      onCompleted: (_) async {
+        if (provider.isRoot && mounted) await _loadInboxCount();
+      },
+    ).run(context);
   }
 
   /// Fetches allTasks and parentNamesMap concurrently.

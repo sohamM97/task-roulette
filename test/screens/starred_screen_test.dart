@@ -11,6 +11,7 @@ import 'package:task_roulette/providers/task_provider.dart';
 import 'package:task_roulette/providers/theme_provider.dart';
 import 'package:task_roulette/screens/starred_screen.dart';
 import 'package:task_roulette/services/sync_service.dart';
+import 'package:task_roulette/utils/display_utils.dart' show todayDateKey;
 
 void main() {
   late DatabaseHelper db;
@@ -174,7 +175,8 @@ void main() {
   });
 
   group('StarredScreen - Tap expanded view', () {
-    testWidgets('tap leaf starred task navigates directly', (tester) async {
+    testWidgets('tap leaf starred task opens expanded dialog (unified behavior)',
+        (tester) async {
       await tester.runAsync(() => createStarredTask('Guitar'));
 
       await pumpAndLoad(tester, buildTestWidget());
@@ -182,9 +184,14 @@ void main() {
       await tester.tap(find.text('Guitar'));
       await pumpAsync(tester);
 
-      // Leaf task should navigate instead of opening expanded view
-      expect(navigatedTask, isNotNull);
-      expect(navigatedTask!.name, 'Guitar');
+      // Behavior change: leaf (childless) starred tasks now open the expanded
+      // dialog like non-leaf ones, rather than navigating to All Tasks — so a
+      // subtask can be added inline via the dialog's "+" button. Long-press is
+      // the remaining path to All Tasks. The dialog header shows the name, so
+      // it appears twice (card + header); tapping must NOT navigate.
+      expect(navigatedTask, isNull);
+      expect(find.text('Guitar'), findsNWidgets(2));
+      expect(find.text('No sub-tasks'), findsOneWidget);
     });
 
     testWidgets('tap non-leaf starred task opens expanded dialog', (tester) async {
@@ -524,6 +531,179 @@ void main() {
 
       // Header has one ↗, leaf row has another
       expect(find.byIcon(Icons.open_in_new_rounded), findsNWidgets(2));
+    });
+  });
+
+  group('StarredScreen - Add subtask FAB', () {
+    // [Mechanism] The "+" FAB in the expanded dialog opens AddTaskDialog.
+    testWidgets('FAB opens the AddTaskDialog', (tester) async {
+      await tester.runAsync(() => createStarredTask('Project'));
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      // Tap the add FAB.
+      await tester.tap(find.byType(FloatingActionButton));
+      await pumpAsync(tester);
+
+      expect(find.text('Add Task'), findsOneWidget);
+    });
+
+    // [Mechanism] The "+" FAB creates a subtask of the starred task.
+    testWidgets('FAB creates a subtask of the starred task', (tester) async {
+      late int starredId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Project');
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await pumpAsync(tester);
+
+      await tester.enterText(find.byType(TextField).first, 'New subtask');
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Add'));
+      });
+      await pumpAsync(tester);
+
+      // Persisted as a child of the starred task.
+      final children = await tester.runAsync(() => db.getChildren(starredId));
+      expect(children!.map((t) => t.name), contains('New subtask'));
+      // And surfaced in the expanded dialog tree.
+      expect(find.text('New subtask'), findsOneWidget);
+    });
+
+    // [Regression] Guards the "add multiple did nothing" bug — the brain-dump
+    // path from the Starred dialog must actually create the tasks AND parent
+    // them under the starred card (previously this produced no subtasks).
+    testWidgets('FAB "Add multiple" brain-dump creates multiple subtasks',
+        (tester) async {
+      late int starredId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Project');
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await pumpAsync(tester);
+
+      // Switch to brain dump mode.
+      await tester.tap(find.text('Add multiple'));
+      await pumpAsync(tester);
+      expect(find.text('Brain dump'), findsOneWidget);
+
+      // Enter three lines.
+      await tester.enterText(
+          find.byType(TextField).first, 'Sub A\nSub B\nSub C');
+      await pumpAsync(tester);
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Add 3'));
+      });
+      await pumpAsync(tester);
+
+      // All three persisted as children of the starred task.
+      final children = await tester.runAsync(() => db.getChildren(starredId));
+      final names = children!.map((t) => t.name).toSet();
+      expect(names, containsAll(['Sub A', 'Sub B', 'Sub C']));
+      expect(children, hasLength(3));
+    });
+
+    // [Edge case] Cancelling the AddTaskDialog from the FAB creates nothing.
+    testWidgets('cancelling the FAB dialog adds no subtask', (tester) async {
+      late int starredId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Project');
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await pumpAsync(tester);
+
+      await tester.tap(find.text('Cancel'));
+      await pumpAsync(tester);
+
+      final children = await tester.runAsync(() => db.getChildren(starredId));
+      expect(children, isEmpty);
+    });
+
+    // [Mechanism] When the starred task is pinned in Today's 5, adding a
+    // subtask shows the "this task is pinned" warning, and on confirm the pin
+    // transfers to the new child (parent slot is replaced).
+    testWidgets('pinned starred task warns then transfers pin to new subtask',
+        (tester) async {
+      late int starredId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Pinned project');
+        // Put the starred task into Today's 5 and pin it.
+        await db.saveTodaysFiveState(
+          date: todayDateKey(),
+          taskIds: [starredId],
+          completedIds: const {},
+          workedOnIds: const {},
+          pinnedIds: {starredId},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Pinned project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await pumpAsync(tester);
+
+      // Pinned warning appears first.
+      expect(find.text('This task is pinned'), findsOneWidget);
+      await tester.tap(find.text('Add anyway'));
+      await pumpAsync(tester);
+
+      // Then the AddTaskDialog.
+      expect(find.text('Add Task'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).first, 'Child task');
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Add'));
+      });
+      await pumpAsync(tester);
+
+      // Pin moved from parent to the new child.
+      final state =
+          await tester.runAsync(() => db.loadTodaysFiveState(todayDateKey()));
+      final children = await tester.runAsync(() => db.getChildren(starredId));
+      final childId = children!.firstWhere((t) => t.name == 'Child task').id;
+      expect(state!.pinnedIds, {childId});
+      expect(state.pinnedIds, isNot(contains(starredId)));
+      expect(state.taskIds, [childId]); // parent slot replaced in-place
+    });
+
+    // [Baseline] Unpinned starred task adds a subtask with no warning.
+    testWidgets('unpinned starred task shows no pin warning', (tester) async {
+      await tester.runAsync(() => createStarredTask('Plain project'));
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Plain project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await pumpAsync(tester);
+
+      // No pinned warning — straight to AddTaskDialog.
+      expect(find.text('This task is pinned'), findsNothing);
+      expect(find.text('Add Task'), findsOneWidget);
     });
   });
 
