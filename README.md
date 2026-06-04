@@ -8,11 +8,11 @@
 
 > **Note:** This app was vibe-coded — planned and ideated by a human, implemented with AI assistance.
 
-> ## ⏸ Development paused indefinitely (2026-04-21)
+> ## 🐢 Low-intensity development
 >
-> Work on this repo has been stopped. The DAG-based structure (tasks under multiple parents, drill-down trees, nested groups) turned out to be **counterproductive**. Instead of reducing decision fatigue, it produced the opposite: opening the app felt like opening an infinite-scroll social feed — a wall of content, brain trash, no direction.
+> Development here is slow and occasional — specific features as convenience dictates, not heavy active development.
 >
-> The core premise needs a rethink before any further work happens here. When development resumes, expect a ground-up redesign rather than incremental fixes on top of the current model.
+> The original concern still stands: the **All Tasks** view is counterproductive. Instead of reducing decision fatigue, it produces the opposite — a wall of content, like an infinite-scroll social feed, with no direction. The path forward favors focused, curated surfaces over browsing the full DAG.
 
 ## Quick Start
 
