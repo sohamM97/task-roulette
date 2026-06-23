@@ -11,6 +11,7 @@ import 'package:task_roulette/providers/task_provider.dart';
 import 'package:task_roulette/providers/theme_provider.dart';
 import 'package:task_roulette/screens/task_list_screen.dart';
 import 'package:task_roulette/services/sync_service.dart';
+import 'package:task_roulette/utils/display_utils.dart';
 
 void main() {
   late DatabaseHelper db;
@@ -337,6 +338,42 @@ void main() {
       await pumpAsync(tester);
 
       expect(find.byIcon(Icons.link), findsNothing);
+    });
+  });
+
+  group('Pin-for-today on add (empty-day regression)', () {
+    // [Regression] Bug: AddTaskFlow._pinNewTask returned true (reporting
+    // success) without pinning when no Today's 5 row existed yet. Since Today's
+    // 5 is empty-by-default each day, "Pin for today" on a fresh day silently
+    // created the task UNPINNED. After the fix it bootstraps an empty state and
+    // pins into it.
+    testWidgets('pinning a new task on an empty day actually pins it',
+        (tester) async {
+      await tester.runAsync(() => provider.loadRootTasks());
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Empty day — no saved Today's 5 state.
+      final before = await tester
+          .runAsync(() => db.loadTodaysFiveState(todayDateKey()));
+      expect(before, isNull);
+
+      // Open the Add dialog via the + FAB, turn Pin ON, add a task.
+      await tester.tap(find.byIcon(Icons.add));
+      await pumpAsync(tester);
+      await tester.tap(find.text('Pin'));
+      await pumpAsync(tester);
+      await tester.enterText(find.byType(TextField).first, 'Focus task');
+      await tester.runAsync(() async {
+        await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+      });
+      await pumpAsync(tester);
+
+      // The task is pinned into a freshly bootstrapped Today's 5 state.
+      final after = await tester
+          .runAsync(() => db.loadTodaysFiveState(todayDateKey()));
+      expect(after, isNotNull);
+      expect(after!.pinnedIds, isNotEmpty);
+      expect(after.taskIds.length, 1);
     });
   });
 }

@@ -24,7 +24,9 @@ class TodaysFivePinHelper {
 
   /// Toggle pin status for [taskId].
   ///
-  /// If the task is already pinned, it gets unpinned.
+  /// If the task is already pinned, it gets unpinned AND removed from
+  /// Today's 5 (manual model: pin = membership). Completed tasks stay in
+  /// the list when unpinned so progress isn't lost.
   /// If unpinned and not yet in Today's 5, it replaces the last unpinned
   /// undone slot, or gets appended if all slots are done/pinned (up to
   /// [maxSlots]).
@@ -37,8 +39,11 @@ class TodaysFivePinHelper {
     final pinnedIds = Set<int>.from(saved.pinnedIds);
 
     if (pinnedIds.contains(taskId)) {
-      // Unpin — then trim excess unpinned undone tasks
       pinnedIds.remove(taskId);
+      // Remove from list unless completed (keep done tasks visible for progress).
+      if (!saved.completedIds.contains(taskId)) {
+        taskIds.remove(taskId);
+      }
       final trimmed = trimExcess(taskIds, saved.completedIds, pinnedIds);
       return PinResult(taskIds: trimmed, pinnedIds: pinnedIds);
     }
@@ -95,6 +100,12 @@ class TodaysFivePinHelper {
     return PinResult(taskIds: taskIds, pinnedIds: pinnedIds);
   }
 
+  // Pin auto-transfer was removed with the manual Today's 5 model: adding a
+  // subtask to a pinned task now just drops the (now non-leaf) parent instead
+  // of moving its pin to a child. transferPin is no longer wired into any flow
+  // — kept commented out (with its tests) rather than deleted so it's trivial
+  // to restore if transfer-on-subtask is ever reintroduced.
+  /*
   /// Transfers a parent's Today's 5 slot to a newly-created child.
   ///
   /// When a pinned (or merely present) parent gains its first subtask it
@@ -117,7 +128,13 @@ class TodaysFivePinHelper {
     }
     return PinResult(taskIds: taskIds, pinnedIds: pinnedIds);
   }
+  */
 
+  // Commented out (with its tests) like transferPin above: the manual model
+  // replaced the Today's 5 bottom-sheet pin/unpin tile with the Remove flow,
+  // removing all callers of togglePinInPlace. Kept rather than deleted so it's
+  // easy to restore if an in-place pin/unpin toggle is reintroduced.
+  /*
   /// Simple pin/unpin for a task that is already in Today's 5.
   ///
   /// Returns the new pinnedIds set, or `null` if blocked (max pins).
@@ -131,6 +148,7 @@ class TodaysFivePinHelper {
     pinnedIds.add(taskId);
     return pinnedIds;
   }
+  */
 
   /// Removes unpinned undone tasks from the end of the list until the list
   /// has at most 5 items (or only pinned/completed tasks remain).

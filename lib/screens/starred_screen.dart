@@ -67,13 +67,16 @@ class StarredScreenState extends State<StarredScreen>
   /// task); use a card's expanded-dialog "+" to add subtasks to a starred task.
   Future<void> _addTask() async {
     final provider = context.read<TaskProvider>();
-    // Mirror the All Tasks root dialog: only offer "Pin for today" when a
-    // Today's 5 exists and still has a free pin slot.
+    // Mirror the All Tasks root dialog: offer "Pin for today" whenever a pin
+    // slot is free. Manual model: Today's 5 starts empty each day, so do NOT
+    // require it to be non-empty — otherwise you could never pin the first task
+    // of the day from here. (Bug: the old `taskIds.isNotEmpty` gate hid the Pin
+    // toggle on a fresh day, so pinning from Starred was impossible until a task
+    // was pinned some other way first.)
     final todaysFive =
         await DatabaseHelper().getTodaysFiveTaskAndPinIds(todayDateKey());
     if (!mounted) return;
-    final showPin = todaysFive.taskIds.isNotEmpty &&
-        todaysFive.pinnedIds.length < maxPins;
+    final showPin = todaysFive.pinnedIds.length < maxPins;
     await AddTaskFlow(
       // Always root level on the Starred page, so the Inbox toggle is shown
       // (and defaults ON inside AddTaskDialog).

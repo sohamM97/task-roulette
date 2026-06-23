@@ -13,7 +13,13 @@ import 'brain_dump_dialog.dart';
 ///   * the optional "this parent is pinned in Today's 5" warning,
 ///   * the [AddTaskDialog] → [SingleTask] / [SwitchToBrainDump] branch,
 ///   * [BrainDumpDialog] for bulk add,
-///   * Today's 5 pin-on-add and pin-transfer-to-new-child handling.
+///   * Today's 5 pin-on-add handling.
+///
+/// Manual Today's 5 model: adding a subtask to a task that is pinned in
+/// Today's 5 makes it a non-leaf parent, so it simply drops out of Today's 5
+/// on the next refresh. The pin is NOT auto-transferred to a child — the user
+/// curates Today's 5 explicitly. [parentIsPinned] only drives the heads-up
+/// warning, not any pin mutation.
 ///
 /// Task *creation* is delegated back to the caller via [addSingle] / [addBatch]
 /// so each screen keeps control of parenting (current-navigation parent vs an
@@ -28,7 +34,6 @@ class AddTaskFlow {
     this.parentIsPinned = false,
     this.showPinOption = false,
     this.showInboxOption = false,
-    this.choosePinHeir,
     this.onTodaysFiveChanged,
     this.onProviderRefresh,
     this.onCompleted,
@@ -49,14 +54,16 @@ class AddTaskFlow {
   final Future<List<int>> Function(List<String> names, {required bool isInbox})
       addBatch;
 
-  /// Parent task id — required for the pin transfer when [parentIsPinned].
+  /// Parent task id this flow adds under, when known. Parenting itself is
+  /// handled by the caller's [addSingle]/[addBatch] closures; this is kept as
+  /// context for callers and potential future use.
   final int? parentId;
 
   /// Parent task name, used only in the pinned-warning text.
   final String? parentName;
 
-  /// Whether the parent is currently pinned in Today's 5. Drives the warning
-  /// and the pin-transfer onto the new subtask.
+  /// Whether the parent is currently pinned in Today's 5. Drives the heads-up
+  /// warning that adding a subtask will drop the parent out of Today's 5.
   final bool parentIsPinned;
 
   /// Whether to show the "Pin in Today's 5" toggle in [AddTaskDialog].
@@ -64,10 +71,6 @@ class AddTaskFlow {
 
   /// Whether to show the "Add to Inbox" toggle (root level only).
   final bool showInboxOption;
-
-  /// For bulk add, picks which new task id should inherit the parent's pin.
-  /// Defaults to the first new task. (All Tasks supplies a weighted pick.)
-  final Future<int> Function(List<int> newIds)? choosePinHeir;
 
   /// Called after any Today's 5 mutation with the new state, so the screen can
   /// refresh its local mirrors (e.g. `_todaysFiveIds`) / pin indicators.
@@ -119,8 +122,9 @@ class AddTaskFlow {
       builder: (ctx) => AlertDialog(
         title: const Text('This task is pinned'),
         content: Text(
-          '"${parentName ?? 'This task'}" is in your Today\'s 5 and pinned. '
-          'Adding a subtask will replace it with the new subtask.',
+          '"${parentName ?? 'This task'}" is pinned in your Today\'s 5. '
+          'Adding a subtask makes it a parent, so it will drop out of '
+          'Today\'s 5.',
         ),
         actions: [
           TextButton(
@@ -137,9 +141,10 @@ class AddTaskFlow {
   }
 
   Future<void> _addOne(BuildContext context, SingleTask result) async {
-    // Defer the provider notify when we have follow-up pin writes, so
-    // refreshSnapshots() doesn't overwrite the pin before it's persisted.
-    final needsPin = result.pinInTodays5 || parentIsPinned;
+    // Defer the provider notify when we pin the new task, so refreshSnapshots()
+    // doesn't overwrite the pin before it's persisted. A pinned parent going
+    // non-leaf needs no pin write here — it drops out of Today's 5 on refresh.
+    final needsPin = result.pinInTodays5;
     final id = await addSingle(
       name: result.name,
       url: result.url,
@@ -148,15 +153,11 @@ class AddTaskFlow {
     );
     if (needsPin) {
       try {
-        if (result.pinInTodays5) {
-          final pinned = await _pinNewTask(id);
-          if (!pinned && context.mounted) {
-            ScaffoldMessenger.of(context).clearSnackBars();
-            showInfoSnackBar(
-                context, "Couldn't pin — all Today's 5 slots are full");
-          }
-        } else if (parentIsPinned) {
-          await _transferPin(id);
+        final pinned = await _pinNewTask(id);
+        if (!pinned && context.mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          showInfoSnackBar(
+              context, "Couldn't pin — all Today's 5 slots are full");
         }
       } finally {
         await onProviderRefresh?.call();
@@ -175,13 +176,10 @@ class AddTaskFlow {
     );
     if (!context.mounted || result == null || result.names.isEmpty) return;
 
-    final newIds = await addBatch(result.names, isInbox: result.addToInbox);
-    if (parentIsPinned && newIds.isNotEmpty) {
-      // Parent just went non-leaf — move its pin onto one of the new subtasks.
-      final heir =
-          choosePinHeir != null ? await choosePinHeir!(newIds) : newIds.first;
-      await _transferPin(heir);
-    }
+    await addBatch(result.names, isInbox: result.addToInbox);
+    // Manual Today's 5 model: adding subtasks makes a pinned parent non-leaf,
+    // so it drops out of Today's 5 on the next refresh. The pin is not
+    // auto-transferred onto a child — the user curates Today's 5 explicitly.
     if (announceBatchAdd && context.mounted) {
       ScaffoldMessenger.of(context).clearSnackBars();
       showInfoSnackBar(context, 'Added ${result.names.length} tasks');
@@ -195,8 +193,20 @@ class AddTaskFlow {
   Future<bool> _pinNewTask(int taskId) async {
     final db = DatabaseHelper();
     final today = todayDateKey();
-    final saved = await db.loadTodaysFiveState(today);
-    if (saved == null) return true;
+    // Bug fix: Today's 5 is empty-by-default each day (no saved row until the
+    // first pin), and the Add dialog shows the Pin toggle even when Today's 5 is
+    // empty. Before: `saved == null` returned `true` (reporting success) WITHOUT
+    // pinning, so "Pin for today" on a fresh day silently created the task
+    // unpinned. After: bootstrap an empty state and pin into it, matching the
+    // sibling paths (_togglePinInTodays5 / _pinTaskInTodaysFive).
+    final saved = await db.loadTodaysFiveState(today) ??
+        TodaysFiveData(
+          date: today,
+          taskIds: const [],
+          completedIds: const {},
+          workedOnIds: const {},
+          pinnedIds: const {},
+        );
 
     final result = TodaysFivePinHelper.pinNewTask(saved, taskId);
     if (result == null) return false;
@@ -210,25 +220,5 @@ class AddTaskFlow {
     );
     onTodaysFiveChanged?.call(result);
     return true;
-  }
-
-  /// Transfers the parent's pin onto [childId] (load → compute → save).
-  Future<void> _transferPin(int childId) async {
-    final db = DatabaseHelper();
-    final today = todayDateKey();
-    final saved = await db.loadTodaysFiveState(today);
-    if (saved == null) return;
-
-    final result = TodaysFivePinHelper.transferPin(saved, parentId!, childId);
-    if (result == null) return;
-
-    await db.saveTodaysFiveState(
-      date: today,
-      taskIds: result.taskIds,
-      completedIds: saved.completedIds,
-      workedOnIds: saved.workedOnIds,
-      pinnedIds: result.pinnedIds,
-    );
-    onTodaysFiveChanged?.call(result);
   }
 }

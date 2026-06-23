@@ -1,200 +1,105 @@
-# Today's 5 Selection Algorithm
+# Today's 5 Selection — Manual Model
 
-How the app picks 5 tasks for the daily focus view.
+How the app populates the daily focus view.
 
 ## Overview
 
-Today's 5 uses **weighted random selection** with normalization and diversity controls to pick a balanced, engaging set of tasks each day. The algorithm runs in two contexts: **fresh generation** (new day / "New set") and **swap** (replacing a single task).
+Today's 5 has **no automatic selection**. Each day starts empty, and tasks
+appear only when the user explicitly pins them. Pin entry points:
 
-## Candidate Pool
+- **Today tab + FAB** → bottom sheet with "Create new task" (auto-pinned at
+  root) or "Pick existing task" (triage-style dialog with always-visible
+  search bar + browse tree; only leaves can be pinned, tasks already in
+  Today's 5 are hidden).
+- **All Tasks tab** pin button on any task card.
+- Per-task **bottom sheet** on the Today tab (Pin/Unpin tile).
 
-Only **leaf tasks** (tasks with no active children) are eligible. Additional filters:
+Up to 5 tasks can be pinned at once.
 
-| Filter | Reason |
-|--------|--------|
-| Not completed | Already done |
-| Not skipped | User opted out |
-| Not blocked | Has unfinished dependencies |
-| Not worked on today | Already had attention today |
-| Not already in Today's 5 | No duplicates (swap only) |
+There is no random pick, no weighted roulette, no normalization, no
+diversity penalty, no schedule reservation, no deadline auto-pin, no reroll,
+no per-card swap.
 
-## Weight Formula
+## Lifecycle
 
-Each candidate gets a base weight of `1.0`, multiplied by several independent factors:
+1. **Empty by default.** When `_loadTodaysTasksInner()` finds no saved
+   `todays_five_state` row for today, the screen renders the empty state.
+2. **First pin bootstraps state.** `_togglePinInTodays5` /
+   `_pinNewTaskInTodays5` in `task_list_screen.dart`, and
+   `_pinTaskInTodaysFive` in `todays_five_screen.dart`, all create a fresh
+   empty `TodaysFiveData` if none exists, then add the task.
+3. **Refresh keeps existing tasks fresh.** `refreshSnapshots()` re-fetches
+   the current task list from the DB — it does **not** add new tasks.
+4. **Tasks dropped automatically only when invalid.** A task is removed from
+   Today's 5 if it becomes non-leaf (subtasks added) and isn't already done,
+   or if it's deleted entirely. No replacement is picked.
+5. **Pin = membership.** Every task in Today's 5 is implicitly pinned —
+   there is no separate pin/unpin toggle within the screen. The only way
+   to take a task off the list is the **Remove (X) button** on the card or
+   the "Remove from Today's 5" tile in the bottom sheet, both of which go
+   through an "are you sure?" confirmation dialog. The DB column
+   `pinnedIds` is still persisted (set equal to `taskIds` on every save) for
+   sync round-trip compatibility, but the UI no longer reads it for any
+   distinction.
+6. **Midnight rollover.** When the date key changes, the screen reloads from
+   DB. Yesterday's saved state isn't carried forward — today starts empty
+   unless the user already pinned something for today on another device.
 
-```
-weight = 1.0
-       * priority_boost        (high priority: 3.0x — mutually exclusive with someday)
-       * started_boost          (in progress: 2.0x — someday tasks skip)
-       * staleness_boost        (1.0 + 0.25 * ln(days + 1), clamped 1.0–2.0 — someday tasks skip)
-       * novelty_boost          (created ≤ 3 days ago: 1.3x — someday tasks skip)
-       * deadline_boost         (within 14 days: 1.0 + 7.0/(|days| + 1))
-       * schedule_boost         (scheduled for today: 2.5x)
-       * normalization_factor   (1/sqrt(N) where N = leaf count under root)
-```
+## Constants
 
-> **Someday tasks** skip started, staleness, and novelty boosts — they stay at base weight `1.0` (plus deadline/schedule/normalization if applicable). High priority is mutually exclusive with someday (toggling one clears the other).
+| Constant | Value | Where |
+|----------|------:|-------|
+| Max pinned | 5 | `TodaysFivePinHelper.maxPins` |
+| Max total slots | 10 | `TodaysFivePinHelper.maxSlots` |
 
-### Factor Details
+`maxSlots` allowed legacy auto-picked tasks plus pins to coexist. With the
+manual model every task is pinned, so the effective ceiling is `maxPins`.
 
-**Priority** — High-priority tasks get 3x weight. This is the strongest single factor.
+## Key Files
 
-**Started** — Tasks the user has started working on get 2x, reflecting commitment. Someday tasks skip this.
+| Component | File | Notes |
+|-----------|------|-------|
+| Screen | `lib/screens/todays_five_screen.dart` | Load / refresh / unpin removal / FAB add flow (`_pinTaskInTodaysFive`) |
+| Pin helper | `lib/data/todays_five_pin_helper.dart` | `togglePin` / `togglePinInPlace` / `pinNewTask` |
+| Pin entry points | `lib/screens/task_list_screen.dart`, `lib/widgets/add_task_flow.dart` | `_togglePinInTodays5` (All Tasks leaf detail); `_pinNewTask` (pin-on-add via shared `AddTaskFlow`). Manual model: no pin auto-transfer to a child when a pinned task becomes non-leaf — it just drops. |
+| State persistence | `lib/data/database_helper.dart` | `saveTodaysFiveState`, `loadTodaysFiveState` |
 
-**Staleness** — Logarithmic curve based on days since last touched (`lastWorkedAt` → `startedAt` → `createdAt`). Ensures neglected tasks surface. Someday tasks skip this.
+## What Was Removed (and Why)
 
-**Novelty** — Newly created tasks (≤ 3 days) get a 1.3x bump so they appear soon after creation. Someday tasks skip this.
+This view used to use a weighted-random algorithm with deadline auto-pin and
+scheduled-source reserved slots. It was removed because the auto-selection
+felt too prescriptive — the user wanted full control over what appears in
+the focus view.
 
-**Deadline proximity** — Hyperbolic boost `1 + 7/(|days|+1)`. `due_by` deadlines ramp up over 14 days before; `on` deadlines are silent before the day. Both ramp down symmetrically when overdue:
-- Due today: 8.0x (both types)
-- Due in 1 day: 4.5x (ramp-up, `due_by` only)
-- Due in 3 days: 2.75x (ramp-up, `due_by` only)
-- Due in 7 days: 1.875x (ramp-up, `due_by` only)
-- Due in 14 days: 1.47x (ramp-up, `due_by` only)
-- 1 day overdue: 4.5x (ramp-down, both types)
-- 3 days overdue: 2.75x (ramp-down, both types)
+The following methods, fields, DB tables, and `TaskProvider` APIs are
+**still present in the code but unused in production**, kept around in case
+they're needed for the future suggestion mechanism (see "Future" below):
 
-**Schedule boost** — Tasks scheduled for the current day of the week get 2.5x. Schedule propagates from ancestors (stops at schedule barriers — tasks with their own schedule or explicit override flag).
+- `TaskProvider.pickWeightedN()`, `getDeadlinePinLeafIds()`,
+  `getScheduleBoostedLeafIds()`, `getDeadlineBoostedLeafData()`,
+  `getNormalizationData()`, `getScheduledSourceToLeafMap()`
+- `DatabaseHelper.suppressDeadlineAutoPin()`,
+  `unsuppressDeadlineAutoPin()`, `getDeadlineSuppressedIds()`,
+  `purgeOldDeadlineSuppressed()`
+- The `todays_five_deadline_suppressed` DB table (still created by
+  migrations; no longer written or read by the UI)
 
-**Root normalization** — `1/sqrt(N)` where N is the leaf count under the task's root ancestor. Dampens volume advantage of large categories. For multi-parent tasks, uses the minimum leaf count across roots (most generous normalization).
+If those stay unused indefinitely, a future cleanup pass can remove them
+together with the migration to drop the table.
 
-Examples:
-- Root with 100 leaves: factor = 0.1x
-- Root with 10 leaves: factor ≈ 0.316x
-- Root with 1 leaf: factor = 1.0x
+## Future
 
-## Selection Algorithm (Weighted Roulette)
+The user has expressed interest in a **suggestion mechanism** for surfacing
+deadline-due and scheduled tasks without forcing them into Today's 5.
+Possible directions:
 
-```
-picked = []
-rootPickCounts = {...existingRootPickCounts}  // seeded for swap
+- A "Suggested" affordance (banner / chip / bottom sheet) on the Today tab
+  that says "You have X due today" or "Y is scheduled for today" with a
+  one-tap pin action.
+- A separate "Suggestions" tab or section in All Tasks that highlights
+  tasks the system thinks are worth attention (using the old weighted
+  factors — priority, deadline, schedule, staleness — but as a *display*
+  ranking rather than a forced pin).
 
-while picked.length < slotsToFill and remaining is not empty:
-    for each candidate in remaining:
-        w = computeWeight(candidate)
-
-        // Diversity penalty: penalize same-root picks
-        if normData available and rootPickCounts not empty:
-            maxPicks = max picks from any of candidate's roots
-            if maxPicks > 0:
-                w *= 0.3 ^ maxPicks
-
-        weights.append(w)
-
-    // Roulette wheel selection
-    total = sum(weights)
-    roll = random(0, total)
-    for i in 0..remaining.length:
-        roll -= weights[i]
-        if roll <= 0: pick = remaining[i]; break
-
-    picked.append(pick)
-    remaining.remove(pick)
-    update rootPickCounts for pick's roots
-```
-
-### Diversity Penalty
-
-After each pick, tasks sharing roots with already-picked tasks get a multiplicative penalty:
-- 1st pick from a root: no penalty
-- 2nd pick from same root: 0.3x (70% reduction)
-- 3rd pick from same root: 0.09x (91% reduction)
-- 4th pick from same root: 0.027x (97% reduction)
-
-This strongly encourages spread across different root categories without making it impossible to pick multiple tasks from the same root.
-
-## Generation vs Swap
-
-### Fresh Generation (`_generateNewSet`)
-
-1. Keep completed + pinned tasks from previous set
-2. On first generation of the day (`autoPin: true`): auto-pin deadline-due tasks (respects suppression list, max 5 pins)
-3. Fetch `_SelectionContext` (all leaves, blocked IDs, schedule boosts, deadline data, normalization, scheduled source map)
-4. **Reserve slots for scheduled tasks** (see [Reserved Slots](#reserved-slots-for-scheduled-tasks) below)
-5. Fill remaining slots via weighted roulette with full normalization + diversity penalty
-
-> On rerolls ("New set" button), `autoPin` is false — no deadline auto-pinning. This prevents whack-a-mole where unpinning one deadline task causes another to be auto-pinned on reroll.
-
-### Swap (`_swapTask`)
-
-1. Fetch same `_SelectionContext` (shared `_fetchSelectionContext` helper)
-2. **Seed `rootPickCounts`** from current Today's 5 (excluding the slot being replaced)
-3. Pick 1 task via weighted roulette with full normalization + diversity penalty
-4. The seeded counts ensure the replacement respects existing root spread
-
-### Deadline Auto-Pinning
-
-Deadline auto-pinning happens in two contexts:
-
-1. **First generation of the day** — `_generateNewSet(autoPin: true)` queries `getDeadlinePinLeafIds()` for all leaf tasks with deadlines ≤ today (own or inherited). These are force-pinned before weighted selection runs, consuming slots. Respects the suppression list (`todays_five_deadline_suppressed`) and max 5 pins.
-
-2. **Setting a deadline from All Tasks** — `_editSchedule` in `task_list_screen.dart` directly pins leaf tasks via `TodaysFivePinHelper.pinNewTask()` when the deadline is today or overdue.
-
-Auto-pinning does **not** fire on reloads, refreshes, or rerolls ("New set"). This prevents whack-a-mole where unpinning one deadline task causes another to be auto-pinned. Suppression is tracked in the `todays_five_deadline_suppressed` DB table — if the user unpins a deadline task, it's suppressed for that day.
-
-### Deadline Types and Weight Boost
-
-| Type | Before deadline day | On the day | Overdue |
-|------|--------------------|-----------:|--------:|
-| `due_by` | Ramp-up: 14-day window | 8.0x | Ramp-down (symmetric) |
-| `on` | Silent — no boost | 8.0x | Ramp-down (symmetric) |
-
-Ramp-down applies to **both** `due_by` and `on` (unlike ramp-up which is `due_by` only). Same formula `1 + 7/(|days|+1)` using absolute days:
-- 1 day overdue: 4.5x
-- 3 days overdue: 2.75x
-- 7 days overdue: 1.875x
-- 14 days overdue: 1.47x
-- Beyond 14 days: no boost
-
-Both types get auto-pinned on first generation (via `getDeadlinePinLeafIds`). The only difference between `due_by` and `on` is the ramp-up behaviour for preceding days.
-
-### Reserved Slots for Scheduled Tasks
-
-Before the general-pool weighted draw runs, Today's 5 carves out **reserved slots** for scheduled tasks:
-
-1. **Source map** — `getScheduledSourceToLeafMap()` returns a `Map<sourceId, [leafIds]>` using a recursive CTE that carries each scheduled source through the DAG, stopping at schedule barriers (tasks with their own schedule or `is_schedule_override=1`).
-
-2. **Slot calculation** — Given `slotsAvailable = 5 - kept.length`:
-   - If `slotsAvailable == 1`: at most 1 reserved slot (can't leave 0 general slots)
-   - Otherwise: `maxReserved = min(sources.length, slotsAvailable - 1)` — always leaves ≥1 general-pool slot
-
-3. **Per-source pick** — For each source (shuffled), pick 1 leaf via weighted roulette using the full `_SelectionContext` (schedule boost, deadline boost, normalization). Skip sources with no eligible candidates.
-
-4. **General pool** — After reserved slots are filled, `slotsToFill = 5 - kept.length - reserved.length` slots are drawn from the remaining eligible leaves (reserved and kept IDs are excluded).
-
-**Why reserved slots instead of boost-only?** Schedule boosts (2.5x) are probabilistic and can be overwhelmed by stacking other multipliers (e.g., a high-priority task with a deadline is 3x × 8x = 24x vs scheduled 2.5x). A reserved slot guarantees the user's scheduling intent is respected regardless of how competitive the general pool is.
-
-## Key Implementation Files
-
-| Component | File | Key Function |
-|-----------|------|-------------|
-| Weight formula | `lib/providers/task_provider.dart` | `_taskWeight()` |
-| Weighted selection | `lib/providers/task_provider.dart` | `pickWeightedN()` |
-| Normalization data | `lib/data/database_helper.dart` | `getNormalizationData()` |
-| Root ancestor lookup | `lib/data/database_helper.dart` | `getRootAncestorsForLeaves()` |
-| Leaf count per root | `lib/data/database_helper.dart` | `getLeafCountPerRoot()` |
-| Schedule boost | `lib/data/database_helper.dart` | `getScheduleBoostedLeafIds()` |
-| Scheduled source map | `lib/data/database_helper.dart` | `getScheduledSourceToLeafMap()` |
-| Deadline boost | `lib/data/database_helper.dart` | `getDeadlineBoostedLeafData()` |
-| Selection context | `lib/screens/todays_five_screen.dart` | `_fetchSelectionContext()` |
-| Fresh generation | `lib/screens/todays_five_screen.dart` | `_generateNewSet()` |
-| Swap | `lib/screens/todays_five_screen.dart` | `_swapTask()` |
-| Pin management | `lib/data/todays_five_pin_helper.dart` | `TodaysFivePinHelper` |
-
-## Future Considerations
-
-### Inferred Task Cadence
-
-Auto-detect recurring habits from completion patterns (e.g., "walk" completed every ~2 days → boost when overdue). Would add a new weight factor without user configuration. See TODO.md "Inferred Task Cadence" section for phased approach.
-
-### Stronger Normalization
-
-Current `1/sqrt(N)` is a good middle ground. `1/N` was considered but rejected — it over-penalizes large categories (a root with 20 leaves gets 0.05x, making high-priority tasks nearly invisible). If volume imbalance worsens, a tunable exponent `1/N^k` where `0.5 < k < 1.0` could be explored.
-
-### Energy-Level Matching
-
-Optional effort tags (low/med/high) on tasks; filter or boost based on current energy level. Would add a user-input dimension to weight calculation alongside the existing priority field. Note: a "quick task" difficulty flag existed previously (vestigial `difficulty` column still in DB schema) but was removed from the Task model and UI due to low usage.
-
-### Schedule Inheritance Rethink
-
-Currently, scheduling a parent boosts all leaf descendants. A child with its own schedule acts as a **barrier** — it blocks parent schedule propagation and only uses its own schedule days. The `schedule_barrier` CTE in `getScheduleBoostedLeafIds` enforces this. Open question: is this barrier behavior always desirable, or should there be more nuanced inheritance controls? See TODO.md for details.
+Whatever shape it takes, the dormant code listed above (especially
+`pickWeightedN` and the boost queries) is a viable starting point.
