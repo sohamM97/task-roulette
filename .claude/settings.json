@@ -1,5 +1,4 @@
 {
-  "model": "auto",
   "permissions": {
     "allow": [
       "Bash(flutter test *)"
