@@ -870,39 +870,33 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           ),
         ],
       ),
+      // Empty state: a clean centered hero. "Also done today" is intentionally
+      // NOT shown here — it only appears once Today's 5 has at least one entry
+      // (the populated branch below).
       body: _todaysTasks.isEmpty
-        ? Padding(
-            padding: const EdgeInsets.all(16),
-            // Center the placeholder + "Also done today" box as a GROUP so the
-            // box sits just under the message rather than pinned to the screen
-            // bottom — closer to how it flows right after the tasks in the
-            // populated view.
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.push_pin_outlined, size: 64, color: colorScheme.primary),
-                const SizedBox(height: 16),
-                Text(
-                  'Nothing pinned yet',
-                  style: textTheme.headlineSmall,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Tap the + button to pick a task to focus on today.',
-                  style: textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
+        ? Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.push_pin_outlined, size: 64, color: colorScheme.primary),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Nothing pinned yet',
+                    style: textTheme.headlineSmall,
+                    textAlign: TextAlign.center,
                   ),
-                  textAlign: TextAlign.center,
-                ),
-                // Surface tasks completed today OUTSIDE Today's 5 even when
-                // nothing is pinned — otherwise finishing your last pinned task,
-                // or a day of purely ad-hoc completions, would make that progress
-                // silently vanish. (Previously the box only rendered in the
-                // non-empty branch.) _buildOtherDoneBox has its own top padding.
-                if (_otherDoneToday.isNotEmpty)
-                  _buildOtherDoneBox(context, textTheme, colorScheme),
-              ],
+                  const SizedBox(height: 8),
+                  Text(
+                    'Tap the + button to pick a task to focus on today.',
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
             ),
           )
         : Padding(
