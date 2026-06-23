@@ -325,8 +325,9 @@ class TaskListScreenState extends State<TaskListScreen>
       builder: (ctx) => AlertDialog(
         title: const Text('This task is pinned'),
         content: Text(
-          '"${currentParent.name}" is in your Today\'s 5 and pinned. '
-          'Adding a subtask will replace it with the new subtask.',
+          '"${currentParent.name}" is pinned in your Today\'s 5. '
+          'Adding a subtask makes it a parent, so it will drop out of '
+          'Today\'s 5.',
         ),
         actions: [
           TextButton(
@@ -364,13 +365,6 @@ class TaskListScreenState extends State<TaskListScreen>
               url: url, isInbox: isInbox, deferNotify: deferNotify),
       addBatch: (names, {required isInbox}) =>
           provider.addTasksBatch(names, isInbox: isInbox),
-      choosePinHeir: (newIds) async {
-        // Pick one of the NEW subtasks (weighted) to inherit the pin.
-        final newChildren =
-            provider.tasks.where((t) => newIds.contains(t.id)).toList();
-        final picked = provider.pickWeightedN(newChildren, 1);
-        return picked.isNotEmpty ? picked.first.id! : newIds.first;
-      },
       onTodaysFiveChanged: (result) {
         if (!mounted) return;
         setState(() {

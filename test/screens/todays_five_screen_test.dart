@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:task_roulette/data/database_helper.dart';
+import 'package:task_roulette/data/todays_five_pin_helper.dart';
 import 'package:task_roulette/models/task.dart';
 import 'package:task_roulette/providers/auth_provider.dart';
 import 'package:task_roulette/providers/task_provider.dart';
@@ -1069,6 +1070,159 @@ void main() {
       }
 
       expect(find.text("Remove from Today’s 5?"), findsOneWidget);
+    });
+  });
+
+  group('Add to Today\'s 5 FAB sheet', () {
+    // Advances route (sheet/dialog) animations AND async DB loads together.
+    Future<void> settleRoute(WidgetTester tester) async {
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await pumpAsync(tester, rounds: 15);
+    }
+
+    testWidgets('FAB opens sheet with Create new / Pick existing options',
+        (tester) async {
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await settleRoute(tester);
+
+      expect(find.text("Add to Today’s 5"), findsOneWidget);
+      expect(find.text('Create new task'), findsOneWidget);
+      expect(find.text('Pick existing task'), findsOneWidget);
+    });
+
+    testWidgets('Pick existing opens the PickTaskForTodayDialog', (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Pickable leaf'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await settleRoute(tester);
+      await tester.tap(find.text('Pick existing task'));
+      await settleRoute(tester);
+
+      // The picker dialog is shown, listing the leaf task.
+      expect(find.text("Pin a task to Today’s 5"), findsOneWidget);
+      expect(find.text('Pickable leaf'), findsOneWidget);
+    });
+
+    testWidgets('picking an existing task pins it into Today\'s 5',
+        (tester) async {
+      late int leafId;
+      await tester.runAsync(() async {
+        leafId = await db.insertTask(Task(name: 'Pin me'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Empty to start (manual model).
+      expect(find.text('Nothing pinned yet'), findsOneWidget);
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await settleRoute(tester);
+      await tester.tap(find.text('Pick existing task'));
+      await settleRoute(tester);
+      await tester.tap(find.text('Pin me'));
+      await settleRoute(tester);
+
+      // The task is now in Today's 5 and persisted.
+      expect(find.text('Nothing pinned yet'), findsNothing);
+      expect(find.text('Pin me'), findsOneWidget);
+
+      final saved = await tester.runAsync(
+        () => db.loadTodaysFiveState(_todayKey()),
+      );
+      expect(saved!.taskIds, contains(leafId));
+      expect(saved.pinnedIds, contains(leafId));
+    });
+
+    testWidgets('picker excludes tasks already in Today\'s 5', (tester) async {
+      late int pinnedId;
+      await tester.runAsync(() async {
+        pinnedId = await db.insertTask(Task(name: 'Already here'));
+        await db.insertTask(Task(name: 'Not yet'));
+        await seedTodaysFive(db, [pinnedId]);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await settleRoute(tester);
+      await tester.tap(find.text('Pick existing task'));
+      await settleRoute(tester);
+
+      // The pinned task is excluded from the picker; the other is selectable.
+      expect(find.text("Pin a task to Today’s 5"), findsOneWidget);
+      expect(find.text('Not yet'), findsOneWidget);
+      // "Already here" appears only in the background Today's 5 card, not in
+      // the picker dialog list. Two matches would mean it leaked into the
+      // picker; we expect exactly one (the background card).
+      expect(find.text('Already here'), findsOneWidget);
+    });
+  });
+
+  group('+ FAB visibility at max pins', () {
+    // [Mechanism] Once Today's 5 holds maxPins tasks, the + FAB is hidden so
+    // there's never an add button that can only fail with a "full" message.
+    testWidgets('+ FAB is hidden when Today\'s 5 is full', (tester) async {
+      await tester.runAsync(() async {
+        final ids = <int>[];
+        for (var i = 0; i < maxPins; i++) {
+          ids.add(await db.insertTask(Task(name: 'Pinned $i')));
+        }
+        await seedTodaysFive(db, ids);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.byType(FloatingActionButton), findsNothing);
+    });
+
+    // [Baseline] Below the limit the + FAB is present.
+    testWidgets('+ FAB is shown when below the pin limit', (tester) async {
+      await tester.runAsync(() async {
+        final ids = <int>[];
+        for (var i = 0; i < maxPins - 1; i++) {
+          ids.add(await db.insertTask(Task(name: 'Pinned $i')));
+        }
+        await seedTodaysFive(db, ids);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.byType(FloatingActionButton), findsOneWidget);
+    });
+  });
+
+  group('midnight rollover (manual-model empty-at-start)', () {
+    // [Regression] Bug: the empty/no-saved-state load path returned without
+    // clearing _todaysTasks, so on rollover to an empty day yesterday's tasks
+    // lingered (shown undone, then re-marked done on the next refresh). The
+    // debug night icon deletes today's state and triggers the same reload path
+    // as a real midnight rollover — the screen must end at the empty state.
+    testWidgets('rollover clears yesterday\'s tasks to the empty state',
+        (tester) async {
+      await tester.runAsync(() async {
+        final id1 = await db.insertTask(Task(name: 'Yesterday A'));
+        final id2 = await db.insertTask(Task(name: 'Yesterday B'));
+        await seedTodaysFive(db, [id1, id2]);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      expect(find.text('Yesterday A'), findsOneWidget);
+
+      // Simulate midnight rollover (debug-only icon; kDebugMode is true here).
+      await tester.tap(find.byTooltip('Simulate midnight rollover'));
+      await pumpAsync(tester, rounds: 10);
+
+      expect(find.text('Yesterday A'), findsNothing);
+      expect(find.text('Yesterday B'), findsNothing);
+      expect(find.text('Nothing pinned yet'), findsOneWidget);
     });
   });
 }

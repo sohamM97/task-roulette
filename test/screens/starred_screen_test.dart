@@ -643,7 +643,7 @@ void main() {
     // [Mechanism] When the starred task is pinned in Today's 5, adding a
     // subtask shows the "this task is pinned" warning, and on confirm the pin
     // transfers to the new child (parent slot is replaced).
-    testWidgets('pinned starred task warns then transfers pin to new subtask',
+    testWidgets('pinned starred task warns but does NOT transfer pin to subtask',
         (tester) async {
       late int starredId;
       await tester.runAsync(() async {
@@ -666,8 +666,9 @@ void main() {
       await tester.tap(find.byTooltip('Add subtask'));
       await pumpAsync(tester);
 
-      // Pinned warning appears first.
+      // Pinned warning appears first, now phrased as a drop (not a replace).
       expect(find.text('This task is pinned'), findsOneWidget);
+      expect(find.textContaining('drop out of'), findsOneWidget);
       await tester.tap(find.text('Add anyway'));
       await pumpAsync(tester);
 
@@ -679,14 +680,18 @@ void main() {
       });
       await pumpAsync(tester);
 
-      // Pin moved from parent to the new child.
+      // Manual model: NO pin transfer. AddTaskFlow leaves Today's 5 state
+      // untouched — the new child is not auto-pinned. The now-non-leaf parent
+      // drops out of Today's 5 only when the Today's 5 screen next refreshes
+      // (filtered by leaf status there; see todays_five_screen_test), so at the
+      // DB layer the parent's pin is still present immediately after the add.
       final state =
           await tester.runAsync(() => db.loadTodaysFiveState(todayDateKey()));
       final children = await tester.runAsync(() => db.getChildren(starredId));
       final childId = children!.firstWhere((t) => t.name == 'Child task').id;
-      expect(state!.pinnedIds, {childId});
-      expect(state.pinnedIds, isNot(contains(starredId)));
-      expect(state.taskIds, [childId]); // parent slot replaced in-place
+      expect(state!.pinnedIds, isNot(contains(childId)));
+      expect(state.pinnedIds, {starredId});
+      expect(state.taskIds, [starredId]);
     });
 
     // [Baseline] Unpinned starred task adds a subtask with no warning.

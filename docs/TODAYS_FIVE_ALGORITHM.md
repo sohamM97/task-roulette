@@ -61,7 +61,7 @@ manual model every task is pinned, so the effective ceiling is `maxPins`.
 |-----------|------|-------|
 | Screen | `lib/screens/todays_five_screen.dart` | Load / refresh / unpin removal / FAB add flow (`_pinTaskInTodaysFive`) |
 | Pin helper | `lib/data/todays_five_pin_helper.dart` | `togglePin` / `togglePinInPlace` / `pinNewTask` |
-| Pin entry points | `lib/screens/task_list_screen.dart` | `_togglePinInTodays5`, `_pinNewTaskInTodays5`, `_transferPinToChild` |
+| Pin entry points | `lib/screens/task_list_screen.dart`, `lib/widgets/add_task_flow.dart` | `_togglePinInTodays5` (All Tasks leaf detail); `_pinNewTask` (pin-on-add via shared `AddTaskFlow`). Manual model: no pin auto-transfer to a child when a pinned task becomes non-leaf — it just drops. |
 | State persistence | `lib/data/database_helper.dart` | `saveTodaysFiveState`, `loadTodaysFiveState` |
 
 ## What Was Removed (and Why)

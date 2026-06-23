@@ -134,6 +134,17 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final saved = await db.loadTodaysFiveState(today);
     if (saved == null || saved.taskIds.isEmpty) {
       if (!mounted) return;
+      // Bug fix (manual-model empty-at-start): when there is no saved state for
+      // today — real midnight rollover with the app left open, a sync pull that
+      // empties the set, or the debug rollover button — this branch must reset
+      // the in-memory list. Before: it returned WITHOUT clearing _todaysTasks,
+      // so yesterday's tasks lingered on the new day (shown undone after
+      // _reloadFromDb cleared _completedIds, then re-marked done on the next
+      // refreshSnapshots via isWorkedOnToday). After: the list is truly empty
+      // and the "Nothing pinned yet" state shows.
+      _todaysTasks = [];
+      _completedIds.clear();
+      _workedOnIds.clear();
       await _loadOtherDoneToday();
       if (!mounted) return;
       setState(() => _loading = false);
@@ -767,11 +778,16 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     }
 
     return Scaffold(
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showAddToTodaysSheet,
-        tooltip: 'Add to Today’s 5',
-        child: const Icon(Icons.add),
-      ),
+      // Hide the + FAB once Today's 5 is full (maxPins tasks). It reappears
+      // when the user removes one, so there's never an add button that can
+      // only fail with a "full" message.
+      floatingActionButton: _todaysTasks.length >= maxPins
+          ? null
+          : FloatingActionButton(
+              onPressed: _showAddToTodaysSheet,
+              tooltip: 'Add to Today’s 5',
+              child: const Icon(Icons.add),
+            ),
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -810,7 +826,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                 final messenger = ScaffoldMessenger.of(context);
                 final yesterday = DateTime.now().subtract(const Duration(days: 1));
                 _loadedDateKey = '${yesterday.year}-${yesterday.month.toString().padLeft(2, '0')}-${yesterday.day.toString().padLeft(2, '0')}';
-                // Delete today's saved state so first-gen auto-pin fires
+                // Delete today's saved state so the reload lands in the
+                // manual-model empty state ("Nothing pinned yet") — there is no
+                // auto-pick to re-populate it.
                 await DatabaseHelper().deleteTodaysFiveState(_todayKey());
                 await refreshSnapshots();
                 if (mounted) {
