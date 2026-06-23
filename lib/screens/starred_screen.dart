@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/database_helper.dart';
+import '../data/todays_five_pin_helper.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../utils/display_utils.dart';
@@ -46,6 +47,55 @@ class StarredScreenState extends State<StarredScreen>
     _debounce?.cancel();
     _provider?.removeListener(_onProviderChanged);
     super.dispose();
+  }
+
+  /// The screen-level "+" FAB shared by both the empty-state and populated
+  /// Scaffolds. Distinct [heroTag] because the All Tasks tab's FAB uses
+  /// 'addTask' and both tab Scaffolds are kept alive at once — a shared tag
+  /// would throw a Hero collision.
+  Widget _buildAddTaskFab() {
+    return FloatingActionButton(
+      heroTag: 'addTaskStarred',
+      onPressed: _addTask,
+      child: const Icon(Icons.add),
+    );
+  }
+
+  /// Adds a root-level task (Inbox by default) via the shared [AddTaskFlow] —
+  /// the same create dialog the All Tasks parent page shows. These are
+  /// quick-capture tasks that land at root / Inbox (not subtasks of any starred
+  /// task); use a card's expanded-dialog "+" to add subtasks to a starred task.
+  Future<void> _addTask() async {
+    final provider = context.read<TaskProvider>();
+    // Mirror the All Tasks root dialog: only offer "Pin for today" when a
+    // Today's 5 exists and still has a free pin slot.
+    final todaysFive =
+        await DatabaseHelper().getTodaysFiveTaskAndPinIds(todayDateKey());
+    if (!mounted) return;
+    final showPin = todaysFive.taskIds.isNotEmpty &&
+        todaysFive.pinnedIds.length < maxPins;
+    await AddTaskFlow(
+      // Always root level on the Starred page, so the Inbox toggle is shown
+      // (and defaults ON inside AddTaskDialog).
+      showInboxOption: true,
+      showPinOption: showPin,
+      // isStarred: true so the new task(s) actually show up on the Starred
+      // page (an unstarred root/Inbox task would only appear in All Tasks).
+      // atRoot: true because TaskProvider._currentParent is SHARED across tabs
+      // — without it, a task added from Starred while the All Tasks tab is
+      // drilled into "some task" gets silently nested under that task instead
+      // of being a root-level starred task.
+      addSingle: ({required name, url, required isInbox, required deferNotify}) =>
+          provider.addTask(name,
+              url: url,
+              isInbox: isInbox,
+              isStarred: true,
+              atRoot: true,
+              deferNotify: deferNotify),
+      addBatch: (names, {required isInbox}) => provider.addTasksBatch(names,
+          isInbox: isInbox, isStarred: true, atRoot: true),
+      onProviderRefresh: provider.refreshAfterMutation,
+    ).run(context);
   }
 
   void _onProviderChanged() {
@@ -248,6 +298,10 @@ class StarredScreenState extends State<StarredScreen>
     if (_starredTasks.isEmpty) {
       return Scaffold(
         appBar: _buildAppBar(context),
+        // Show the add FAB on the empty state too — adding a first starred task
+        // is exactly what a user wants here, and long-press-to-star isn't the
+        // only path.
+        floatingActionButton: _buildAddTaskFab(),
         body: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -281,6 +335,7 @@ class StarredScreenState extends State<StarredScreen>
 
     return Scaffold(
       appBar: _buildAppBar(context),
+      floatingActionButton: _buildAddTaskFab(),
       body: ReorderableListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         itemCount: _starredTasks.length,

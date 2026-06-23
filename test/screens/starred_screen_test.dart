@@ -545,7 +545,7 @@ void main() {
       await pumpAsync(tester);
 
       // Tap the add FAB.
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('Add subtask'));
       await pumpAsync(tester);
 
       expect(find.text('Add Task'), findsOneWidget);
@@ -563,7 +563,7 @@ void main() {
       await tester.tap(find.text('Project'));
       await pumpAsync(tester);
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('Add subtask'));
       await pumpAsync(tester);
 
       await tester.enterText(find.byType(TextField).first, 'New subtask');
@@ -594,7 +594,7 @@ void main() {
       await tester.tap(find.text('Project'));
       await pumpAsync(tester);
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('Add subtask'));
       await pumpAsync(tester);
 
       // Switch to brain dump mode.
@@ -630,7 +630,7 @@ void main() {
       await tester.tap(find.text('Project'));
       await pumpAsync(tester);
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('Add subtask'));
       await pumpAsync(tester);
 
       await tester.tap(find.text('Cancel'));
@@ -663,7 +663,7 @@ void main() {
       await tester.tap(find.text('Pinned project'));
       await pumpAsync(tester);
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('Add subtask'));
       await pumpAsync(tester);
 
       // Pinned warning appears first.
@@ -698,12 +698,66 @@ void main() {
       await tester.tap(find.text('Plain project'));
       await pumpAsync(tester);
 
-      await tester.tap(find.byType(FloatingActionButton));
+      await tester.tap(find.byTooltip('Add subtask'));
       await pumpAsync(tester);
 
       // No pinned warning — straight to AddTaskDialog.
       expect(find.text('This task is pinned'), findsNothing);
       expect(find.text('Add Task'), findsOneWidget);
+    });
+  });
+
+  group('StarredScreen - screen-level Add task FAB', () {
+    // [Mechanism] The screen "+" FAB opens AddTaskDialog with the Inbox toggle
+    // (root-level add), shown even on the empty state.
+    testWidgets('FAB on empty state opens AddTaskDialog with Inbox toggle',
+        (tester) async {
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Empty state still shows the add FAB.
+      expect(find.text('No starred tasks yet'), findsOneWidget);
+      expect(find.byType(FloatingActionButton), findsOneWidget);
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await pumpAsync(tester);
+
+      expect(find.text('Add Task'), findsOneWidget);
+      // Inbox toggle is shown (root-level add) and defaults on.
+      expect(find.text('Inbox'), findsOneWidget);
+    });
+
+    // [Mechanism] Adding via the screen FAB creates an auto-starred ROOT task
+    // (so it lands on the Starred list, not nested under any task).
+    testWidgets('FAB creates an auto-starred root task', (tester) async {
+      await tester.runAsync(() => createStarredTask('Existing'));
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // The populated screen has exactly one (screen-level) FAB.
+      expect(find.byType(FloatingActionButton), findsOneWidget);
+      await tester.tap(find.byType(FloatingActionButton));
+      await pumpAsync(tester);
+
+      await tester.enterText(find.byType(TextField).first, 'Brand new starred');
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Add'));
+      });
+      await pumpAsync(tester);
+
+      // Persisted as an auto-starred, root-level task (DB is source of truth;
+      // screen-rebuild assertions are timing-flaky under FakeAsync).
+      final created = await tester.runAsync(() async {
+        final all = await db.getAllTasks();
+        return all.firstWhere((t) => t.name == 'Brand new starred');
+      });
+      expect(created!.isStarred, isTrue,
+          reason: 'screen FAB auto-stars new tasks');
+      final starred = await tester.runAsync(() => provider.getStarredTasks());
+      expect(starred!.any((t) => t.id == created.id), isTrue);
+      final parents =
+          await tester.runAsync(() => provider.getParentIds(created.id!));
+      expect(parents, isEmpty,
+          reason: 'screen FAB must add at root, not under any task');
     });
   });
 
