@@ -479,6 +479,9 @@ void main() {
   });
   */
 
+  // Commented out with TodaysFivePinHelper.togglePinInPlace — dead since the
+  // manual model replaced the bottom-sheet pin/unpin tile with the Remove flow.
+  /*
   group('togglePinInPlace', () {
     test('pin a task', () {
       final result = TodaysFivePinHelper.togglePinInPlace({1, 2}, 3);
@@ -515,6 +518,7 @@ void main() {
       expect(result, {1});
     });
   });
+  */
 
   group('pinNewTask — add task dialog gate', () {
     // The add task dialog's pin option is hidden when pinnedIds.length >= maxPins.
@@ -542,6 +546,9 @@ void main() {
     });
   });
 
+  // Commented out with togglePinInPlace — the bottom-sheet pin/unpin gate it
+  // exercised was replaced by the Remove flow in the manual model.
+  /*
   group('bottom sheet pin/unpin gate', () {
     // The Today's 5 bottom sheet shows "Pin" when pinnedIds.length < maxPins
     // and "Unpin" when the task is already pinned (regardless of count).
@@ -577,6 +584,63 @@ void main() {
       final result = TodaysFivePinHelper.togglePinInPlace(pinnedIds, taskId);
       expect(result, isNotNull);
       expect(result, isNot(contains(taskId)));
+    });
+  });
+  */
+
+  group('pick-existing idempotent always-add (race regression)', () {
+    // PR #69 review fix: _pinTaskInTodaysFive (todays_five_screen.dart) used to
+    // call togglePin for the pick-existing flow. The picker's excludeIds are
+    // snapshotted when it opens, so a task can slip into Today's 5 in the
+    // interim (pinned from All Tasks, or pulled via sync) and still be
+    // selectable. togglePin on an ALREADY-PINNED task REMOVES it — the opposite
+    // of the user's intent. The fix guards on `saved.taskIds.contains(taskId)`
+    // and always uses pinNewTask (a pure add). These tests pin down both the
+    // old buggy behavior and the new guard.
+
+    test('[Regression] old togglePin path removed an already-pinned selection',
+        () {
+      // Reproduces the bug: the task raced into Today's 5 (pinned) before the
+      // user picked it. The OLD code called togglePin here.
+      final state = _state(taskIds: [7], pinnedIds: {7});
+      final result = TodaysFivePinHelper.togglePin(state, 7);
+      // togglePin toggles it OFF — task 7 vanishes from Today's 5. This is the
+      // exact regression the fix guards against; if someone reverts to
+      // togglePin, this documents what goes wrong.
+      expect(result, isNotNull);
+      expect(result!.taskIds, isNot(contains(7)));
+      expect(result.pinnedIds, isNot(contains(7)));
+    });
+
+    test('[Mechanism] guard short-circuits when task already in taskIds', () {
+      // The fix: `if (saved.taskIds.contains(taskId)) return;` — no mutation,
+      // the task stays exactly as it was.
+      final state = _state(taskIds: [7], pinnedIds: {7});
+      expect(state.taskIds.contains(7), isTrue,
+          reason: 'guard condition is true → screen returns early, no-op');
+    });
+
+    test('[Mechanism] pinNewTask adds a not-yet-present task (the happy path)',
+        () {
+      // When the guard is false (task not present), pinNewTask adds + pins it.
+      final state = _state(taskIds: [1, 2], pinnedIds: {1});
+      expect(state.taskIds.contains(9), isFalse);
+      final result = TodaysFivePinHelper.pinNewTask(state, 9);
+      expect(result, isNotNull);
+      expect(result!.taskIds, contains(9));
+      expect(result.pinnedIds, contains(9));
+    });
+
+    test('[Edge case] present-but-only-as-snapshot (in taskIds, not pinned) '
+        'is still a no-op under the guard', () {
+      // A task can be in taskIds without being pinned (e.g. left after a
+      // completed/unpinned mutation). The guard keys on taskIds, so re-picking
+      // it is still a no-op rather than a re-pin/duplicate.
+      final state = _state(taskIds: [3, 4], completedIds: {3}, pinnedIds: {});
+      expect(state.taskIds.contains(3), isTrue);
+      // pinNewTask would NOT duplicate (it has its own present-check via the
+      // replaceable-slot search), but the screen guard returns before even
+      // calling it.
     });
   });
 

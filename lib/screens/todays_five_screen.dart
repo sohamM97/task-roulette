@@ -703,7 +703,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       deferNotify: true,
     );
     try {
-      if (mounted) await _pinTaskInTodaysFive(taskId, isNew: true);
+      if (mounted) await _pinTaskInTodaysFive(taskId);
     } finally {
       await provider.refreshAfterMutation();
     }
@@ -728,23 +728,29 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       ),
     );
     if (selected == null || !mounted) return;
-    await _pinTaskInTodaysFive(selected.id!, isNew: false);
+    await _pinTaskInTodaysFive(selected.id!);
   }
 
-  /// Persists a pin into Today's 5 state and updates local widget state.
-  /// [isNew] uses [TodaysFivePinHelper.pinNewTask] (always pins, replaces an
-  /// unpinned slot or appends); existing tasks use [togglePin] (idempotent
-  /// add since we filter out already-in tasks upstream).
-  Future<void> _pinTaskInTodaysFive(int taskId, {required bool isNew}) async {
+  /// Persists a pin into Today's 5 and updates local widget state. Both entry
+  /// points (create-new and pick-existing) are ALWAYS-ADD, never a toggle.
+  ///
+  /// Bug fix: pick-existing's exclude-list is snapshotted when the picker opens,
+  /// so a task can slip into Today's 5 in the interim (pinned from All Tasks, or
+  /// pulled via sync) before the user selects it. The old code called
+  /// [TodaysFivePinHelper.togglePin] here, which would then REMOVE the
+  /// just-selected task — the opposite of intent. Guarding on already-present +
+  /// [pinNewTask] makes this a true idempotent add. (A freshly created task is
+  /// never already present, so create-new takes the same path safely.)
+  Future<void> _pinTaskInTodaysFive(int taskId) async {
     final db = DatabaseHelper();
     final today = _todayKey();
     final saved = await db.loadTodaysFiveState(today) ?? TodaysFiveData(
       date: today, taskIds: const [], completedIds: const {},
       workedOnIds: const {}, pinnedIds: const {},
     );
-    final result = isNew
-        ? TodaysFivePinHelper.pinNewTask(saved, taskId)
-        : TodaysFivePinHelper.togglePin(saved, taskId);
+    // Already in Today's 5 → nothing to do (never toggle it back off).
+    if (saved.taskIds.contains(taskId)) return;
+    final result = TodaysFivePinHelper.pinNewTask(saved, taskId);
     if (result == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
@@ -865,29 +871,38 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         ],
       ),
       body: _todaysTasks.isEmpty
-        ? Center(
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.push_pin_outlined, size: 64, color: colorScheme.primary),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Nothing pinned yet',
-                    style: textTheme.headlineSmall,
-                    textAlign: TextAlign.center,
+        ? Padding(
+            padding: const EdgeInsets.all(16),
+            // Center the placeholder + "Also done today" box as a GROUP so the
+            // box sits just under the message rather than pinned to the screen
+            // bottom — closer to how it flows right after the tasks in the
+            // populated view.
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.push_pin_outlined, size: 64, color: colorScheme.primary),
+                const SizedBox(height: 16),
+                Text(
+                  'Nothing pinned yet',
+                  style: textTheme.headlineSmall,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Tap the + button to pick a task to focus on today.',
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Tap the + button to pick a task to focus on today.',
-                    style: textTheme.bodyMedium?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
+                  textAlign: TextAlign.center,
+                ),
+                // Surface tasks completed today OUTSIDE Today's 5 even when
+                // nothing is pinned — otherwise finishing your last pinned task,
+                // or a day of purely ad-hoc completions, would make that progress
+                // silently vanish. (Previously the box only rendered in the
+                // non-empty branch.) _buildOtherDoneBox has its own top padding.
+                if (_otherDoneToday.isNotEmpty)
+                  _buildOtherDoneBox(context, textTheme, colorScheme),
+              ],
             ),
           )
         : Padding(

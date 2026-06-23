@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
+import 'task_picker_parts.dart';
 
 /// Result of the triage dialog.
 /// - [parent] non-null: file under that parent
@@ -180,15 +181,7 @@ class _TriageDialogState extends State<TriageDialog> {
 
   List<Task> get _filteredSearch {
     if (_allTasks == null) return [];
-    final lower = _searchFilter.toLowerCase();
-    return _allTasks!.where((t) {
-      if (t.name.toLowerCase().contains(lower)) return true;
-      final parents = _parentNamesMap?[t.id!];
-      if (parents != null) {
-        return parents.any((p) => p.toLowerCase().contains(lower));
-      }
-      return false;
-    }).toList();
+    return filterTasksBySearch(_allTasks!, _searchFilter, _parentNamesMap);
   }
 
   bool get _isSearching => _searchFilter.isNotEmpty;
@@ -227,28 +220,16 @@ class _TriageDialogState extends State<TriageDialog> {
               ),
               const SizedBox(height: 12),
               // Search bar — always visible regardless of phase
-              TextField(
+              PickerSearchField(
                 controller: _searchController,
-                maxLength: 500,
-                decoration: InputDecoration(
-                  hintText: 'Search tasks...',
-                  prefixIcon: const Icon(Icons.search, size: 20),
-                  border: const OutlineInputBorder(),
-                  isDense: true,
-                  counterText: '',
-                  suffixIcon: _isSearching
-                      ? IconButton(
-                          icon: const Icon(Icons.close, size: 18),
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() => _searchFilter = '');
-                          },
-                        )
-                      : null,
-                ),
+                isSearching: _isSearching,
                 onChanged: (value) {
                   if (value.isNotEmpty && _allTasks == null) _loadSearchData();
                   setState(() => _searchFilter = value);
+                },
+                onClear: () {
+                  _searchController.clear();
+                  setState(() => _searchFilter = '');
                 },
               ),
               const SizedBox(height: 8),
@@ -263,59 +244,6 @@ class _TriageDialogState extends State<TriageDialog> {
               const SizedBox(height: 8),
               _buildBottomActions(),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTaskCard(
-    Task task, {
-    String? subtitle,
-    VoidCallback? onTap,
-    Widget? trailing,
-  }) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Material(
-        color: colorScheme.surfaceContainerHighest.withAlpha(120),
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            child: Row(
-              children: [
-                Icon(Icons.folder_outlined, size: 18,
-                    color: colorScheme.primary.withAlpha(180)),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        task.name,
-                        style: Theme.of(context).textTheme.bodyMedium,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (subtitle != null)
-                        Text(
-                          subtitle,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                    ],
-                  ),
-                ),
-                ?trailing,
-              ],
-            ),
           ),
         ),
       ),
@@ -385,8 +313,9 @@ class _TriageDialogState extends State<TriageDialog> {
         final parents = _suggestionParentNames?[s.task.id!];
         final subtitle =
             parents != null && parents.isNotEmpty ? 'under ${parents.join(', ')}' : null;
-        return _buildTaskCard(
-          s.task,
+        return PickerTaskCard(
+          task: s.task,
+          leadingIcon: Icons.folder_outlined,
           subtitle: subtitle,
           onTap: () => Navigator.pop(context, TriageResult(parent: s.task)),
           trailing: const Icon(Icons.arrow_forward_rounded, size: 18),
@@ -417,8 +346,9 @@ class _TriageDialogState extends State<TriageDialog> {
             parents != null && parents.isNotEmpty
                 ? 'under ${parents.join(', ')}'
                 : null;
-        return _buildTaskCard(
-          task,
+        return PickerTaskCard(
+          task: task,
+          leadingIcon: Icons.folder_outlined,
           subtitle: subtitle,
           onTap: () => Navigator.pop(
               context, TriageResult(parent: task)),
@@ -483,8 +413,9 @@ class _TriageDialogState extends State<TriageDialog> {
                           : _browseChildren.length.clamp(0, 6),
                       itemBuilder: (context, index) {
                         final child = _browseChildren[index];
-                        return _buildTaskCard(
-                          child,
+                        return PickerTaskCard(
+                          task: child,
+                          leadingIcon: Icons.folder_outlined,
                           onTap: () => _browseInto(child),
                           trailing: IconButton(
                             icon: Icon(Icons.check_circle_outline,

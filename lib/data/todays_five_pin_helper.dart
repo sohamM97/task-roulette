@@ -130,6 +130,11 @@ class TodaysFivePinHelper {
   }
   */
 
+  // Commented out (with its tests) like transferPin above: the manual model
+  // replaced the Today's 5 bottom-sheet pin/unpin tile with the Remove flow,
+  // removing all callers of togglePinInPlace. Kept rather than deleted so it's
+  // easy to restore if an in-place pin/unpin toggle is reintroduced.
+  /*
   /// Simple pin/unpin for a task that is already in Today's 5.
   ///
   /// Returns the new pinnedIds set, or `null` if blocked (max pins).
@@ -143,6 +148,7 @@ class TodaysFivePinHelper {
     pinnedIds.add(taskId);
     return pinnedIds;
   }
+  */
 
   /// Removes unpinned undone tasks from the end of the list until the list
   /// has at most 5 items (or only pinned/completed tasks remain).

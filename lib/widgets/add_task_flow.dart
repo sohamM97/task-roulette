@@ -193,8 +193,20 @@ class AddTaskFlow {
   Future<bool> _pinNewTask(int taskId) async {
     final db = DatabaseHelper();
     final today = todayDateKey();
-    final saved = await db.loadTodaysFiveState(today);
-    if (saved == null) return true;
+    // Bug fix: Today's 5 is empty-by-default each day (no saved row until the
+    // first pin), and the Add dialog shows the Pin toggle even when Today's 5 is
+    // empty. Before: `saved == null` returned `true` (reporting success) WITHOUT
+    // pinning, so "Pin for today" on a fresh day silently created the task
+    // unpinned. After: bootstrap an empty state and pin into it, matching the
+    // sibling paths (_togglePinInTodays5 / _pinTaskInTodaysFive).
+    final saved = await db.loadTodaysFiveState(today) ??
+        TodaysFiveData(
+          date: today,
+          taskIds: const [],
+          completedIds: const {},
+          workedOnIds: const {},
+          pinnedIds: const {},
+        );
 
     final result = TodaysFivePinHelper.pinNewTask(saved, taskId);
     if (result == null) return false;

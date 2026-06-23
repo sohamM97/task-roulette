@@ -1225,4 +1225,24 @@ void main() {
       expect(find.text('Nothing pinned yet'), findsOneWidget);
     });
   });
+
+  group('empty-state "Also done today"', () {
+    // [Regression] When Today's 5 has no pins, tasks completed today OUTSIDE
+    // Today's 5 must still surface — previously the "Also done today" box only
+    // rendered in the non-empty branch, so that progress vanished at zero pins.
+    testWidgets('empty state shows tasks done outside Today\'s 5',
+        (tester) async {
+      await tester.runAsync(() async {
+        final id = await db.insertTask(Task(name: 'Done elsewhere'));
+        await db.markWorkedOn(id);
+        // No Today's 5 state seeded → empty.
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Nothing pinned yet'), findsOneWidget);
+      expect(find.text('Also done today'), findsOneWidget);
+      expect(find.text('Done elsewhere'), findsOneWidget);
+    });
+  });
 }

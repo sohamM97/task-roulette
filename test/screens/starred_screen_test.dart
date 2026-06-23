@@ -731,6 +731,19 @@ void main() {
       expect(find.text('Inbox'), findsOneWidget);
     });
 
+    // [Regression] On an empty day (no Today's 5 yet) the Pin toggle must still
+    // appear — the old `taskIds.isNotEmpty` gate hid it, so pinning the first
+    // task of the day from Starred was impossible.
+    testWidgets('FAB shows Pin toggle on an empty day', (tester) async {
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await pumpAsync(tester);
+
+      expect(find.text('Add Task'), findsOneWidget);
+      expect(find.text('Pin'), findsOneWidget);
+    });
+
     // [Mechanism] Adding via the screen FAB creates an auto-starred ROOT task
     // (so it lands on the Starred list, not nested under any task).
     testWidgets('FAB creates an auto-starred root task', (tester) async {

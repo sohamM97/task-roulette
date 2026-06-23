@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
+import 'task_picker_parts.dart';
 
 /// Dialog for picking an existing task to pin into Today's 5.
-/// Mirrors the triage dialog pattern: always-visible search bar at top
-/// and a browse tree below. Search overrides the browse view when the
-/// filter is non-empty.
+///
+/// Always-visible search bar at top with a browse tree below; search overrides
+/// the browse view when the filter is non-empty. Shares its row card, search
+/// field, and name/parent search filter with the triage dialog via
+/// `task_picker_parts.dart`.
 ///
 /// Returns the selected [Task] (always a leaf), or `null` if cancelled.
 class PickTaskForTodayDialog extends StatefulWidget {
@@ -32,20 +35,24 @@ class _PickTaskForTodayDialogState extends State<PickTaskForTodayDialog> {
   bool _browseLoading = true;
   bool _browseShowAll = false;
 
-  // Search state (lazy-loaded on first keystroke)
+  // Search state
   final _searchController = TextEditingController();
   String _searchFilter = '';
-  List<Task>? _allLeaves;
-  Map<int, List<String>>? _parentNamesMap;
+  // Leaves (minus excluded) are the search candidates. Loaded once up front and
+  // reused — this also derives _leafIds, so getAllLeafTasks runs ONCE for the
+  // whole dialog rather than separately for browse-icons and search.
+  List<Task>? _searchLeaves;
+  Map<int, List<String>>? _parentNamesMap; // lazy on first keystroke
+  List<Task> _searchResults = [];
 
-  // Set of leaf task IDs — used in browse to decide tap = pin vs drill in.
+  // All leaf ids — used in browse to decide tap = pin vs. drill in.
   Set<int>? _leafIds;
 
   @override
   void initState() {
     super.initState();
     _loadBrowseChildren();
-    _loadLeafIds();
+    _loadLeaves();
   }
 
   @override
@@ -54,10 +61,16 @@ class _PickTaskForTodayDialogState extends State<PickTaskForTodayDialog> {
     super.dispose();
   }
 
-  Future<void> _loadLeafIds() async {
+  Future<void> _loadLeaves() async {
     final leaves = await widget.provider.getAllLeafTasks();
     if (!mounted) return;
-    setState(() => _leafIds = leaves.map((t) => t.id!).toSet());
+    setState(() {
+      _leafIds = leaves.map((t) => t.id!).toSet();
+      _searchLeaves =
+          leaves.where((t) => !widget.excludeIds.contains(t.id)).toList();
+    });
+    // If the user typed before leaves finished loading, fill in results now.
+    if (_isSearching) _recomputeSearchResults();
   }
 
   Future<void> _loadBrowseChildren() async {
@@ -102,38 +115,39 @@ class _PickTaskForTodayDialogState extends State<PickTaskForTodayDialog> {
     await _loadBrowseChildren();
   }
 
+  /// Loads parent names (for the "under X" subtitle and parent-name search)
+  /// lazily on the first keystroke, then recomputes the filtered results.
   Future<void> _loadSearchData() async {
-    if (_allLeaves != null) return;
+    if (_parentNamesMap != null) return;
     try {
-      final leaves = await widget.provider.getAllLeafTasks();
       final parentNamesMap = await widget.provider.getParentNamesMap();
       if (!mounted) return;
-      setState(() {
-        _allLeaves = leaves
-            .where((t) => !widget.excludeIds.contains(t.id))
-            .toList();
-        _parentNamesMap = parentNamesMap;
-      });
+      setState(() => _parentNamesMap = parentNamesMap);
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _allLeaves = [];
-        _parentNamesMap = {};
-      });
+      setState(() => _parentNamesMap = {});
     }
+    _recomputeSearchResults();
   }
 
-  List<Task> get _filteredSearch {
-    if (_allLeaves == null) return [];
-    final lower = _searchFilter.toLowerCase();
-    return _allLeaves!.where((t) {
-      if (t.name.toLowerCase().contains(lower)) return true;
-      final parents = _parentNamesMap?[t.id!];
-      if (parents != null) {
-        return parents.any((p) => p.toLowerCase().contains(lower));
-      }
-      return false;
-    }).toList();
+  void _onSearchChanged(String value) {
+    _searchFilter = value;
+    if (value.isNotEmpty && _parentNamesMap == null) {
+      _loadSearchData();
+    }
+    _recomputeSearchResults();
+  }
+
+  // Perf: filter once per keystroke into _searchResults instead of re-scanning
+  // every leaf (and its parent names) inside build() on every rebuild.
+  void _recomputeSearchResults() {
+    setState(() {
+      _searchResults = filterTasksBySearch(
+        _searchLeaves ?? const [],
+        _searchFilter,
+        _parentNamesMap,
+      );
+    });
   }
 
   bool get _isSearching => _searchFilter.isNotEmpty;
@@ -154,37 +168,19 @@ class _PickTaskForTodayDialogState extends State<PickTaskForTodayDialog> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 12),
-              TextField(
+              PickerSearchField(
                 controller: _searchController,
-                maxLength: 500,
-                decoration: InputDecoration(
-                  hintText: 'Search tasks...',
-                  prefixIcon: const Icon(Icons.search, size: 20),
-                  border: const OutlineInputBorder(),
-                  isDense: true,
-                  counterText: '',
-                  suffixIcon: _isSearching
-                      ? IconButton(
-                          icon: const Icon(Icons.close, size: 18),
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() => _searchFilter = '');
-                          },
-                        )
-                      : null,
-                ),
-                onChanged: (value) {
-                  if (value.isNotEmpty && _allLeaves == null) {
-                    _loadSearchData();
-                  }
-                  setState(() => _searchFilter = value);
+                isSearching: _isSearching,
+                onChanged: _onSearchChanged,
+                onClear: () {
+                  _searchController.clear();
+                  _onSearchChanged('');
                 },
               ),
               const SizedBox(height: 8),
               Flexible(
-                child: _isSearching
-                    ? _buildSearchResults()
-                    : _buildBrowseTree(),
+                child:
+                    _isSearching ? _buildSearchResults() : _buildBrowseTree(),
               ),
               const SizedBox(height: 8),
               Align(
@@ -201,73 +197,11 @@ class _PickTaskForTodayDialogState extends State<PickTaskForTodayDialog> {
     );
   }
 
-  Widget _buildTaskCard(
-    Task task, {
-    String? subtitle,
-    required VoidCallback onTap,
-    Widget? trailing,
-  }) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Material(
-        color: colorScheme.surfaceContainerHighest.withAlpha(120),
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            child: Row(
-              children: [
-                Icon(
-                  // Folder icon for non-leaves, push-pin outline for leaves —
-                  // hints at what the tap will do (drill in vs. pin).
-                  _leafIds?.contains(task.id) ?? false
-                      ? Icons.push_pin_outlined
-                      : Icons.folder_outlined,
-                  size: 18,
-                  color: colorScheme.primary.withAlpha(180),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        task.name,
-                        style: Theme.of(context).textTheme.bodyMedium,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (subtitle != null)
-                        Text(
-                          subtitle,
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(color: colorScheme.onSurfaceVariant),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                    ],
-                  ),
-                ),
-                ?trailing,
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildSearchResults() {
-    if (_allLeaves == null) {
+    if (_searchLeaves == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    final filtered = _filteredSearch;
-    if (filtered.isEmpty) {
+    if (_searchResults.isEmpty) {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(24),
@@ -276,15 +210,16 @@ class _PickTaskForTodayDialogState extends State<PickTaskForTodayDialog> {
       );
     }
     return ListView.builder(
-      itemCount: filtered.length,
+      itemCount: _searchResults.length,
       itemBuilder: (context, index) {
-        final task = filtered[index];
+        final task = _searchResults[index];
         final parents = _parentNamesMap?[task.id!];
         final subtitle = parents != null && parents.isNotEmpty
             ? 'under ${parents.join(', ')}'
             : null;
-        return _buildTaskCard(
-          task,
+        return PickerTaskCard(
+          task: task,
+          leadingIcon: Icons.push_pin_outlined,
           subtitle: subtitle,
           onTap: () => Navigator.pop(context, task),
         );
@@ -334,8 +269,13 @@ class _PickTaskForTodayDialogState extends State<PickTaskForTodayDialog> {
                       itemBuilder: (context, index) {
                         final child = _browseChildren[index];
                         final isLeaf = _leafIds?.contains(child.id) ?? false;
-                        return _buildTaskCard(
-                          child,
+                        return PickerTaskCard(
+                          task: child,
+                          // Folder for non-leaves, push-pin for leaves — hints
+                          // at what the tap does (drill in vs. pin).
+                          leadingIcon: isLeaf
+                              ? Icons.push_pin_outlined
+                              : Icons.folder_outlined,
                           onTap: () => isLeaf
                               ? Navigator.pop(context, child)
                               : _browseInto(child),

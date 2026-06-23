@@ -8,6 +8,7 @@ import '../models/task.dart';
 import '../models/task_schedule.dart';
 import '../providers/task_provider.dart';
 import '../providers/theme_provider.dart';
+import '../services/sync_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/add_task_flow.dart';
 import '../widgets/completion_animation.dart';
@@ -156,6 +157,13 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   Future<void> _togglePinInTodays5(int taskId) async {
+    // Capture SyncService before any await so we don't use context across an
+    // async gap. Bug fix: this path saved the pin/unpin to the local table but
+    // never scheduled a push, so curation done from All Tasks didn't reach
+    // Firestore until some unrelated mutation triggered a push — other devices
+    // silently missed it. (todays_five_screen._persist already pushes; this is
+    // the matching call for the All Tasks entry point.)
+    final sync = context.read<SyncService>();
     final now = DateTime.now();
     final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     final db = DatabaseHelper();
@@ -183,6 +191,8 @@ class TaskListScreenState extends State<TaskListScreen>
       workedOnIds: saved.workedOnIds,
       pinnedIds: result.pinnedIds,
     );
+    // Push the pin/unpin to Firestore (debounced) so other devices see it.
+    sync.schedulePush();
     if (mounted) {
       setState(() {
         _todaysFiveIds = result.taskIds.toSet();
@@ -350,8 +360,10 @@ class TaskListScreenState extends State<TaskListScreen>
     final parentId = provider.currentParent?.id;
     final parentIsPinned = parentId != null &&
         (_todays5PinnedIds?.contains(parentId) ?? false);
-    // Hide "Pin for today" when parent is pinned — the pin will auto-transfer
-    // to the new subtask, so the option is misleading.
+    // Hide "Pin for today" when the parent is already pinned: adding a subtask
+    // makes the parent non-leaf, so it just drops out of Today's 5 (the manual
+    // model no longer transfers the pin to a child). Offering the toggle here
+    // would be misleading.
     final showPin = !parentIsPinned &&
         (_todays5PinnedIds?.length ?? 0) < maxPins;
     await AddTaskFlow(
