@@ -100,6 +100,12 @@ class TodaysFivePinHelper {
     return PinResult(taskIds: taskIds, pinnedIds: pinnedIds);
   }
 
+  // Pin auto-transfer was removed with the manual Today's 5 model: adding a
+  // subtask to a pinned task now just drops the (now non-leaf) parent instead
+  // of moving its pin to a child. transferPin is no longer wired into any flow
+  // — kept commented out (with its tests) rather than deleted so it's trivial
+  // to restore if transfer-on-subtask is ever reintroduced.
+  /*
   /// Transfers a parent's Today's 5 slot to a newly-created child.
   ///
   /// When a pinned (or merely present) parent gains its first subtask it
@@ -122,6 +128,7 @@ class TodaysFivePinHelper {
     }
     return PinResult(taskIds: taskIds, pinnedIds: pinnedIds);
   }
+  */
 
   /// Simple pin/unpin for a task that is already in Today's 5.
   ///

@@ -2856,6 +2856,11 @@ void main() {
       expect(loaded, isNull);
     });
 
+    // Commented out: simulated the removed pin auto-transfer flow
+    // (_transferPinToChild). The manual Today's 5 model drops the pinned parent
+    // on subtask-add instead of moving the pin to a child. Restore if transfer
+    // is ever reintroduced.
+    /*
     test('pin transfer: replacing parent with child preserves pin', () async {
       // Simulates _transferPinToChild: parent becomes non-leaf, pin moves
       // to the new child task in Today's 5 state.
@@ -2897,6 +2902,7 @@ void main() {
       // Other task unchanged
       expect(loaded.taskIds, contains(other));
     });
+    */
   });
 
   group('pin-on-add race condition regression', () {

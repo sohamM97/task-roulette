@@ -384,6 +384,11 @@ void main() {
     });
   });
 
+  // Commented out with TodaysFivePinHelper.transferPin — pin auto-transfer was
+  // removed in the manual Today's 5 model (subtask-add now drops the pinned
+  // parent instead of moving its pin). Restore alongside the helper if transfer
+  // is ever reintroduced.
+  /*
   group('transferPin', () {
     // [Mechanism] Replaces the parent's slot with the child and moves the pin.
     test('moves pin from a pinned parent to the new child', () {
@@ -472,6 +477,7 @@ void main() {
       expect(result.pinnedIds, {99});
     });
   });
+  */
 
   group('togglePinInPlace', () {
     test('pin a task', () {
