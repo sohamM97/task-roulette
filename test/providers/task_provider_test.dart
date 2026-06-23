@@ -3888,6 +3888,253 @@ void main() {
       expect(provider.currentParent!.isStarred, isTrue);
       expect(provider.currentParent!.starOrder, 0);
     });
+
+    // --- addTask(isStarred: true) ---
+
+    // [Mechanism] addTask with isStarred:true persists is_starred=1, assigns a
+    // star_order, and the task appears in getStarredTasks().
+    test('addTask with isStarred:true persists starred state and star_order', () async {
+      await provider.loadRootTasks();
+      final id = await provider.addTask('Starred at creation', isStarred: true);
+
+      final task = await db.getTaskById(id);
+      expect(task, isNotNull);
+      expect(task!.isStarred, isTrue);
+      expect(task.starOrder, isNotNull);
+      expect(task.starOrder, greaterThanOrEqualTo(0));
+
+      final starred = await provider.getStarredTasks();
+      expect(starred.any((t) => t.id == id), isTrue);
+    });
+
+    // [Baseline] addTask WITHOUT isStarred creates an unstarred task — the new
+    // default must not regress existing behavior.
+    test('addTask without isStarred creates unstarred task with null star_order', () async {
+      await provider.loadRootTasks();
+      final id = await provider.addTask('Normal task');
+
+      final task = await db.getTaskById(id);
+      expect(task, isNotNull);
+      expect(task!.isStarred, isFalse);
+      expect(task.starOrder, isNull);
+
+      final starred = await provider.getStarredTasks();
+      expect(starred.any((t) => t.id == id), isFalse);
+    });
+
+    // [Edge case] star_order appends after existing starred tasks — no collision.
+    test('addTask with isStarred:true appends to end of existing starred list', () async {
+      await provider.loadRootTasks();
+      // Pre-populate two starred tasks via updateTaskStarred (star_order 0 and 1).
+      final existing1 = await db.insertTask(Task(name: 'Existing A'));
+      final existing2 = await db.insertTask(Task(name: 'Existing B'));
+      await provider.updateTaskStarred(existing1, true);
+      await provider.updateTaskStarred(existing2, true);
+
+      // The max star_order is now 1; the new task should get 2.
+      final newId = await provider.addTask('New starred', isStarred: true);
+
+      final newTask = await db.getTaskById(newId);
+      expect(newTask!.starOrder, 2,
+          reason: 'New task must append after existing two (star_order 0 and 1)');
+
+      // Verify order in starred list: existing first, new last.
+      final starred = await provider.getStarredTasks();
+      expect(starred.length, 3);
+      expect(starred.last.id, newId);
+    });
+
+    // [Edge case] When no starred tasks exist yet, the first addTask(isStarred:true)
+    // gets star_order 0 (getMaxStarOrder returns -1 → -1+1 = 0).
+    test('addTask with isStarred:true on empty list assigns star_order 0', () async {
+      await provider.loadRootTasks();
+      final id = await provider.addTask('First starred', isStarred: true);
+
+      final task = await db.getTaskById(id);
+      expect(task!.starOrder, 0);
+    });
+
+    // --- addTasksBatch(isStarred: true) ---
+
+    // [Mechanism] addTasksBatch with isStarred:true stars every task and assigns
+    // sequential star_order in input order.
+    test('addTasksBatch with isStarred:true stars all tasks in input order', () async {
+      await provider.loadRootTasks();
+      final ids = await provider.addTasksBatch(['Alpha', 'Beta', 'Gamma'],
+          isStarred: true);
+
+      expect(ids.length, 3);
+      final tasks = await Future.wait(ids.map((id) => db.getTaskById(id)));
+      for (final t in tasks) {
+        expect(t, isNotNull);
+        expect(t!.isStarred, isTrue);
+        expect(t.starOrder, isNotNull);
+      }
+
+      // Verify ascending star_order matches input order.
+      final starOrders = tasks.map((t) => t!.starOrder!).toList();
+      expect(starOrders, equals([starOrders[0], starOrders[0] + 1, starOrders[0] + 2]),
+          reason: 'star_order must be sequential in input order');
+
+      // All three must appear in getStarredTasks().
+      final starred = await provider.getStarredTasks();
+      final starredIds = starred.map((t) => t.id).toSet();
+      expect(starredIds, containsAll(ids));
+    });
+
+    // [Baseline] addTasksBatch WITHOUT isStarred still creates unstarred tasks
+    // — the new parameter default must not regress existing behavior.
+    test('addTasksBatch without isStarred creates unstarred tasks', () async {
+      await provider.loadRootTasks();
+      final ids = await provider.addTasksBatch(['X', 'Y', 'Z']);
+
+      final tasks = await Future.wait(ids.map((id) => db.getTaskById(id)));
+      for (final t in tasks) {
+        expect(t!.isStarred, isFalse);
+        expect(t.starOrder, isNull);
+      }
+
+      final starred = await provider.getStarredTasks();
+      expect(starred.where((t) => ids.contains(t.id)), isEmpty);
+    });
+
+    // [Edge case] addTasksBatch with isStarred:true appends sequentially after
+    // existing starred tasks — star_order starts at max+1, no collision.
+    test('addTasksBatch with isStarred:true appends after existing starred tasks', () async {
+      await provider.loadRootTasks();
+      // Pre-populate two starred tasks (star_order 0 and 1).
+      final pre1 = await db.insertTask(Task(name: 'Pre A'));
+      final pre2 = await db.insertTask(Task(name: 'Pre B'));
+      await provider.updateTaskStarred(pre1, true);
+      await provider.updateTaskStarred(pre2, true);
+
+      // Batch-add two more starred tasks; they should get star_order 2 and 3.
+      final ids = await provider.addTasksBatch(['New 1', 'New 2'], isStarred: true);
+
+      final task1 = await db.getTaskById(ids[0]);
+      final task2 = await db.getTaskById(ids[1]);
+      expect(task1!.starOrder, 2, reason: 'First new task appends at max+1=2');
+      expect(task2!.starOrder, 3, reason: 'Second new task appends at max+2=3');
+
+      // Starred list should now have 4 tasks in correct order.
+      final starred = await provider.getStarredTasks();
+      expect(starred.length, 4);
+      expect(starred[0].id, pre1);
+      expect(starred[1].id, pre2);
+      expect(starred[2].id, ids[0]);
+      expect(starred[3].id, ids[1]);
+    });
+
+    // --- Root-parenting invariants (shared _currentParent trap) ---
+    // Bug: TaskProvider._currentParent is shared across tabs. A task added from
+    // the Starred page while the All Tasks tab was drilled into "some task" got
+    // silently nested under that task. Fix: the Starred FAB passes atRoot:true
+    // (no implicit nesting), and isInbox is enforced as a root-only invariant
+    // (an inbox task can never have a parent — addTask/addTasksBatch throw).
+
+    // [Regression] addTask(atRoot:true) ignores a non-null _currentParent.
+    test('addTask with atRoot:true stays at root while drilled into a parent', () async {
+      final parentId = await db.insertTask(Task(name: 'Drilled-in parent'));
+      final parent = await db.getTaskById(parentId);
+      await provider.navigateToTask(parent!);
+      expect(provider.currentParent!.id, parentId);
+
+      final newId =
+          await provider.addTask('From Starred', isStarred: true, atRoot: true);
+
+      final parents = await provider.getParentIds(newId);
+      expect(parents, isEmpty,
+          reason: 'atRoot must not nest under the shared _currentParent');
+    });
+
+    // [Mechanism] The Starred FAB path: isInbox + atRoot together create a
+    // root-level inbox task even while the All Tasks tab is drilled in — no
+    // throw, no parent.
+    test('addTask with isInbox:true + atRoot:true creates a root inbox task while drilled in', () async {
+      final parentId = await db.insertTask(Task(name: 'Drilled-in parent'));
+      final parent = await db.getTaskById(parentId);
+      await provider.navigateToTask(parent!);
+
+      final newId = await provider.addTask('Inbox at root',
+          isInbox: true, isStarred: true, atRoot: true);
+
+      final task = await db.getTaskById(newId);
+      expect(task!.isInbox, isTrue);
+      expect(await provider.getParentIds(newId), isEmpty);
+    });
+
+    // [Invariant] addTask throws if isInbox would resolve a parent (drilled-in,
+    // no atRoot) — inbox tasks must be at root. Unreachable from the UI, but the
+    // contract fails loudly for any future caller that violates it.
+    test('addTask with isInbox:true throws when drilled into a parent', () async {
+      final parentId = await db.insertTask(Task(name: 'Drilled-in parent'));
+      final parent = await db.getTaskById(parentId);
+      await provider.navigateToTask(parent!);
+
+      await expectLater(
+          provider.addTask('Bad inbox', isInbox: true), throwsArgumentError);
+    });
+
+    // [Invariant] addTask throws if isInbox is combined with explicit
+    // additionalParentIds — even with atRoot (explicit parents are still parents).
+    test('addTask with isInbox:true + additionalParentIds throws', () async {
+      final otherId = await db.insertTask(Task(name: 'Other parent'));
+
+      await expectLater(
+          provider.addTask('Bad inbox',
+              isInbox: true, atRoot: true, additionalParentIds: [otherId]),
+          throwsArgumentError);
+    });
+
+    // [Regression] addTasksBatch(atRoot:true) ignores a non-null _currentParent.
+    test('addTasksBatch with atRoot:true stays at root while drilled into a parent', () async {
+      final parentId = await db.insertTask(Task(name: 'Drilled-in parent'));
+      final parent = await db.getTaskById(parentId);
+      await provider.navigateToTask(parent!);
+
+      final ids = await provider.addTasksBatch(['A', 'B'],
+          isStarred: true, atRoot: true);
+
+      for (final id in ids) {
+        expect(await provider.getParentIds(id), isEmpty,
+            reason: 'atRoot batch must not nest under the shared _currentParent');
+      }
+    });
+
+    // [Mechanism] The Starred FAB brain-dump path: isInbox + atRoot create
+    // root-level inbox tasks even while drilled in.
+    test('addTasksBatch with isInbox:true + atRoot:true creates root inbox tasks while drilled in', () async {
+      final parentId = await db.insertTask(Task(name: 'Drilled-in parent'));
+      final parent = await db.getTaskById(parentId);
+      await provider.navigateToTask(parent!);
+
+      final ids = await provider.addTasksBatch(['A', 'B'],
+          isInbox: true, isStarred: true, atRoot: true);
+
+      for (final id in ids) {
+        expect(await provider.getParentIds(id), isEmpty);
+      }
+    });
+
+    // [Invariant] addTasksBatch throws if isInbox would resolve a parent.
+    test('addTasksBatch with isInbox:true throws when drilled into a parent', () async {
+      final parentId = await db.insertTask(Task(name: 'Drilled-in parent'));
+      final parent = await db.getTaskById(parentId);
+      await provider.navigateToTask(parent!);
+
+      await expectLater(
+          provider.addTasksBatch(['A', 'B'], isInbox: true), throwsArgumentError);
+    });
+
+    // [Invariant] addTasksBatch throws if isInbox is combined with an explicit
+    // parentId.
+    test('addTasksBatch with isInbox:true + explicit parentId throws', () async {
+      final otherId = await db.insertTask(Task(name: 'Other parent'));
+
+      await expectLater(
+          provider.addTasksBatch(['A', 'B'], isInbox: true, parentId: otherId),
+          throwsArgumentError);
+    });
   });
 
   group('addTask deferNotify', () {

@@ -103,9 +103,39 @@ class TaskProvider extends ChangeNotifier {
   /// brain-dump) MUST pass it so tasks aren't silently nested under whatever
   /// parent the All Tasks tab last drilled into (mirrors [addTask]'s atRoot).
   Future<List<int>> addTasksBatch(List<String> names,
-      {bool isInbox = false, int? parentId}) async {
-    final tasks = names.map((name) => Task(name: name, isInbox: isInbox)).toList();
-    final ids = await _db.insertTasksBatch(tasks, parentId ?? _currentParent?.id);
+      {bool isInbox = false,
+      bool isStarred = false,
+      int? parentId,
+      bool atRoot = false}) async {
+    // [atRoot] forces a root-level insert regardless of _currentParent. Needed
+    // by the Starred page brain-dump because _currentParent is SHARED across
+    // tabs — without it, a batch added from Starred while the All Tasks tab is
+    // drilled into a task would be nested under that task instead of at root.
+    final effectiveParentId = atRoot ? null : (parentId ?? _currentParent?.id);
+
+    // Invariant (see addTask): the Inbox is a root-level bucket — inbox tasks
+    // are NEVER nested. Throw before inserting if isInbox would still resolve a
+    // parent. Unreachable from the UI (Starred passes atRoot; All Tasks only
+    // offers the Inbox toggle at root) — explicit so future callers fail loud.
+    if (isInbox && effectiveParentId != null) {
+      throw ArgumentError(
+          'Inbox tasks must be at root: isInbox:true cannot be combined with a '
+          'parent (resolved parent: $effectiveParentId). '
+          'Pass atRoot:true, or add at root.');
+    }
+
+    // [isStarred] creates each task already starred (Starred page brain-dump),
+    // assigning sequential star_order from the current max so they append to
+    // the end of the starred list in input order.
+    var nextStarOrder = isStarred ? (await _db.getMaxStarOrder()) + 1 : 0;
+    final tasks = names
+        .map((name) => Task(
+            name: name,
+            isInbox: isInbox,
+            isStarred: isStarred,
+            starOrder: isStarred ? nextStarOrder++ : null))
+        .toList();
+    final ids = await _db.insertTasksBatch(tasks, effectiveParentId);
     await _refreshAfterMutation();
     return ids;
   }
@@ -115,14 +145,41 @@ class TaskProvider extends ChangeNotifier {
   /// When [deferNotify] is true, skips [_refreshAfterMutation] so the caller
   /// can perform follow-up DB writes (e.g. pinning in Today's 5) before
   /// listeners fire. The caller MUST call [refreshAfterMutation] afterwards.
-  Future<int> addTask(String name, {String? url, List<int>? additionalParentIds, bool isInbox = false, bool deferNotify = false, bool atRoot = false}) async {
-    final task = Task(name: name, url: url, isInbox: isInbox);
+  Future<int> addTask(String name, {String? url, List<int>? additionalParentIds, bool isInbox = false, bool isStarred = false, bool deferNotify = false, bool atRoot = false}) async {
+    // Invariant: the Inbox is a root-level bucket — a task is either filed in
+    // the Inbox or nested under a parent, NEVER both. The UI guarantees this is
+    // never requested (All Tasks only offers the Inbox toggle at root; the
+    // Starred FAB always passes atRoot:true), so this throw is unreachable in
+    // practice — it exists to make the invariant explicit and fail loudly for
+    // any future caller that violates it. Checked BEFORE any DB write so a bad
+    // call can't leave an orphaned inbox-with-parent row.
+    final wouldNestUnderCurrent = !atRoot && _currentParent != null;
+    final hasExplicitParents = additionalParentIds?.isNotEmpty ?? false;
+    if (isInbox && (wouldNestUnderCurrent || hasExplicitParents)) {
+      throw ArgumentError(
+          'Inbox tasks must be at root: isInbox:true cannot be combined with a '
+          'parent (current parent: ${_currentParent?.id}, '
+          'additionalParentIds: $additionalParentIds). '
+          'Pass atRoot:true, or add at root.');
+    }
+
+    // [isStarred] creates the task already starred (used by the Starred page's
+    // "+" so the new task shows up there). Assign the next star_order so it
+    // sorts to the end of the starred list, mirroring updateTaskStarred().
+    final starOrder = isStarred ? (await _db.getMaxStarOrder()) + 1 : null;
+    final task = Task(
+        name: name,
+        url: url,
+        isInbox: isInbox,
+        isStarred: isStarred,
+        starOrder: starOrder);
     final taskId = await _db.insertTask(task);
 
     // [atRoot] forces a root-level insert regardless of current navigation
-    // state. Used by callers in other tabs (Today's 5, Starred dialog) so
-    // the new task isn't silently nested under whatever parent the All
-    // Tasks tab last drilled into.
+    // state. Used by callers in other tabs (Today's 5, Starred) so the new
+    // task isn't silently nested under whatever parent the All Tasks tab last
+    // drilled into. (isInbox also implies root, enforced by the invariant
+    // above — so plain atRoot suffices here.)
     if (!atRoot && _currentParent != null) {
       await _db.addRelationship(_currentParent!.id!, taskId);
     }
