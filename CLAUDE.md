@@ -92,3 +92,6 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 - Repo: sohamM97/task-roulette
 - **Releases:** Auto-created via GitHub Actions on tag push. Use `/release` to tag. Don't use `gh release create`.
 - Hooks enforce confirmation prompts for `git tag` and `gh pr merge`.
+- **Before opening a PR (`/pr`), do two project pre-checks** (the user-level `/pr` skill doesn't):
+  1. **Test coverage:** read `docs/TEST_COVERAGE.md` and the changeset; if tests are missing for new/changed behavior, ask "Add tests before raising the PR, or go ahead without?" and run `/add-auto-tests` if they want them.
+  2. **Phone test:** ask via **`AskUserQuestion`** (not plain text) whether to run `/debug-build` to test on-device first. Only open the PR after they confirm ("deploy first" or "go ahead").
