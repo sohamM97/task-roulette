@@ -114,6 +114,19 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     await _loadTodaysTasks();
   }
 
+  /// Reloads from DB but preserves the session-only undo state that
+  /// `_reloadFromDb()` would otherwise clear (auto-started flags and
+  /// pre-worked-on timestamps are not persisted, so they must survive a
+  /// refresh-triggered reload). Used by both reconcile branches in
+  /// refreshSnapshots() so the snapshot→reload→restore dance lives in one place.
+  Future<void> _reloadPreservingUndoState() async {
+    final prevAutoStarted = Set<int>.from(_autoStartedIds);
+    final prevPreWorkedOn = Map<int, int?>.from(_preWorkedOnLastWorkedAt);
+    await _reloadFromDb();
+    _autoStartedIds.addAll(prevAutoStarted);
+    _preWorkedOnLastWorkedAt.addAll(prevPreWorkedOn);
+  }
+
   String _todayKey() => todayDateKey();
 
   Future<void> _loadTodaysTasks() async {
@@ -230,6 +243,20 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final db = DatabaseHelper();
     final today = _todayKey();
 
+    // Detect external modifications FIRST (cheap, indexed lookup): the task
+    // list screen can toggle pins or add pinned tasks directly to the DB. If
+    // the DB state differs from our in-memory state, do a full reload (which
+    // also runs the deadline reconcile) so we don't overwrite DB changes when
+    // _persist() runs at the end. Doing this before the deadline reconcile
+    // avoids paying the deadline query twice when a reload happens anyway.
+    final saved = await db.loadTodaysFiveState(today);
+    if (saved != null &&
+        !setEquals(saved.taskIds.toSet(),
+            _todaysTasks.map((t) => t.id!).toSet())) {
+      await _reloadPreservingUndoState();
+      return;
+    }
+
     // Deadline-today reconcile without a restart. Bug fix: the deadline
     // auto-pin used to run only on a full load (app start / sync / midnight),
     // so setting a deadline to today (or a task otherwise becoming due today)
@@ -237,38 +264,20 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     // After: if a non-suppressed deadline-today leaf isn't already in the list,
     // do a full reload so _loadTodaysTasksInner merges and persists it. The
     // `every` short-circuits to a no-op once everything due today is present,
-    // so there's no reload loop.
-    _deadlineTodayIds = await db.getDeadlinePinLeafIds();
-    final suppressedForReconcile = await db.getDeadlineSuppressedIds(today);
-    final autoPinIds = _deadlineTodayIds.difference(suppressedForReconcile);
-    final currentIds = _todaysTasks.map((t) => t.id!).toSet();
-    if (!autoPinIds.every(currentIds.contains)) {
-      // Preserve session-only undo state across the reload (same as below).
-      final prevAutoStarted = Set<int>.from(_autoStartedIds);
-      final prevPreWorkedOn = Map<int, int?>.from(_preWorkedOnLastWorkedAt);
-      await _reloadFromDb();
-      _autoStartedIds.addAll(prevAutoStarted);
-      _preWorkedOnLastWorkedAt.addAll(prevPreWorkedOn);
-      return;
-    }
-
-    // Detect external modifications: the task list screen can toggle pins
-    // or add pinned tasks directly to the DB. If the DB state differs from
-    // our in-memory state, do a full reload so we don't overwrite DB changes
-    // when _persist() runs at the end.
-    final saved = await db.loadTodaysFiveState(today);
-    if (saved != null) {
-      final inMemoryTaskIds = _todaysTasks.map((t) => t.id!).toSet();
-      final savedTaskIds = saved.taskIds.toSet();
-      if (!setEquals(savedTaskIds, inMemoryTaskIds)) {
-        // Preserve session-only undo state (not persisted to DB)
-        final prevAutoStarted = Set<int>.from(_autoStartedIds);
-        final prevPreWorkedOn = Map<int, int?>.from(_preWorkedOnLastWorkedAt);
-        await _reloadFromDb();
-        _autoStartedIds.addAll(prevAutoStarted);
-        _preWorkedOnLastWorkedAt.addAll(prevPreWorkedOn);
+    // so there's no reload loop. This runs on every provider notification, so
+    // the cheap hasDeadlineDueToday() guard skips the recursive descendant
+    // walk + suppression lookup entirely on days with nothing due today.
+    if (await db.hasDeadlineDueToday()) {
+      _deadlineTodayIds = await db.getDeadlinePinLeafIds();
+      final suppressedForReconcile = await db.getDeadlineSuppressedIds(today);
+      final autoPinIds = _deadlineTodayIds.difference(suppressedForReconcile);
+      final currentIds = _todaysTasks.map((t) => t.id!).toSet();
+      if (!autoPinIds.every(currentIds.contains)) {
+        await _reloadPreservingUndoState();
         return;
       }
+    } else {
+      _deadlineTodayIds = {};
     }
 
     if (_todaysTasks.isEmpty) {

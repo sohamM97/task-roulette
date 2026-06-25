@@ -191,6 +191,21 @@ class TaskListScreenState extends State<TaskListScreen>
       workedOnIds: saved.workedOnIds,
       pinnedIds: result.pinnedIds,
     );
+    // Keep deadline-today suppression consistent with the Today screen's remove
+    // flow. Bug fix (Codex P2): unpinning a due-today task from All Tasks only
+    // dropped it from todays_five_state — the next Today reconcile saw no
+    // suppression and re-auto-pinned it, so the unpin didn't stick. Now an
+    // unpin of a due-today task records the suppression; a pin clears it.
+    final wasMember = saved.taskIds.contains(taskId);
+    final isMember = result.taskIds.contains(taskId);
+    if (wasMember && !isMember) {
+      final deadlineToday = await db.getDeadlinePinLeafIds();
+      if (deadlineToday.contains(taskId)) {
+        await db.suppressDeadlineAutoPin(today, taskId);
+      }
+    } else if (!wasMember && isMember) {
+      await db.unsuppressDeadlineAutoPin(today, taskId);
+    }
     // Push the pin/unpin to Firestore (debounced) so other devices see it.
     sync.schedulePush();
     if (mounted) {

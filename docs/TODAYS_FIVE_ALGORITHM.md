@@ -33,9 +33,13 @@ to a full reload, so a deadline set to **today while the app is open** auto-pins
 immediately without an app restart. The reconcile compares the saved set with
 today's deadlines:
 
-1. `getDeadlinePinLeafIds()` returns leaf tasks whose `deadline = today`
-   exactly. Overdue (yesterday or earlier) and future deadlines are excluded —
-   overdue tasks rely on weight boost in the All Tasks roulette instead.
+1. `getDeadlinePinLeafIds()` returns leaf tasks that are due today — either the
+   leaf's **own** `deadline = today`, **or** it's a leaf descendant of an
+   ancestor whose `deadline = today` (deadline inheritance: the SQL walks
+   descendants of every `deadline = today` task and returns the leaves). So a
+   leaf with a NULL/other deadline can still auto-pin if a parent is due today.
+   Overdue (yesterday or earlier) and future deadlines are excluded — overdue
+   tasks rely on weight boost in the All Tasks roulette instead.
 2. Tasks the user has removed today are subtracted: `getDeadlineSuppressedIds()`
    reads the `todays_five_deadline_suppressed` table (keyed by date).
 3. The remaining IDs are merged into the saved task list and persisted as

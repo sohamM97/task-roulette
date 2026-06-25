@@ -4048,6 +4048,81 @@ void main() {
       expect(state.taskIds, isNot(contains(idC)));
     });
 
+    // --- Deadline suppression sync (Codex P2: cross-device removal must stick) ---
+
+    test('getDeadlineSuppressedSyncIds returns sync_ids of suppressed tasks', () async {
+      final idX = await insertTaskWithSyncId('X', 'sync-x');
+      await insertTaskWithSyncId('Y', 'sync-y'); // not suppressed
+      await db.suppressDeadlineAutoPin(date, idX);
+
+      expect(await db.getDeadlineSuppressedSyncIds(date), ['sync-x']);
+    });
+
+    test('upsertTodaysFiveFromRemote: remote suppression drops a locally-pinned '
+        'task and records it (no bounce-back)', () async {
+      final idX = await insertTaskWithSyncId('Due X', 'sync-x');
+      final idY = await insertTaskWithSyncId('Other Y', 'sync-y');
+      // Local has X pinned (e.g. auto-pinned earlier on this device).
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [idX, idY],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {idX, idY},
+      );
+
+      // Remote: another device removed X (due today) — only Y remains, X suppressed.
+      await db.upsertTodaysFiveFromRemote(
+        date,
+        [
+          {'task_sync_id': 'sync-y', 'is_completed': false, 'is_worked_on': false, 'is_pinned': true, 'sort_order': 0},
+        ],
+        remoteSuppressedSyncIds: ['sync-x'],
+      );
+
+      final state = await db.loadTodaysFiveState(date);
+      // X dropped despite being locally pinned (OR-merge would otherwise re-add it).
+      expect(state!.taskIds, isNot(contains(idX)));
+      expect(state.taskIds, contains(idY));
+      // And recorded as suppressed so our reconcile won't re-auto-pin it.
+      expect(await db.getDeadlineSuppressedIds(date), contains(idX));
+    });
+
+    test('upsertTodaysFiveFromRemote: remote membership clears a stale local '
+        'suppression (re-pin propagates)', () async {
+      final idX = await insertTaskWithSyncId('Re-pinned X', 'sync-x');
+      // X was previously removed/suppressed on this device.
+      await db.suppressDeadlineAutoPin(date, idX);
+
+      // Remote: another device re-pinned X — it's a member, not suppressed.
+      await db.upsertTodaysFiveFromRemote(date, [
+        {'task_sync_id': 'sync-x', 'is_completed': false, 'is_worked_on': false, 'is_pinned': true, 'sort_order': 0},
+      ]);
+
+      expect(await db.getDeadlineSuppressedIds(date), isNot(contains(idX)));
+      final state = await db.loadTodaysFiveState(date);
+      expect(state!.taskIds, contains(idX));
+    });
+
+    test('upsertTodaysFiveFromRemote: suppression with no remote entries still '
+        'drops the local task', () async {
+      final idX = await insertTaskWithSyncId('Due X', 'sync-x');
+      await db.saveTodaysFiveState(
+        date: date,
+        taskIds: [idX],
+        completedIds: {},
+        workedOnIds: {},
+        pinnedIds: {idX},
+      );
+
+      await db.upsertTodaysFiveFromRemote(date, [],
+          remoteSuppressedSyncIds: ['sync-x']);
+
+      final state = await db.loadTodaysFiveState(date);
+      expect(state?.taskIds ?? const <int>[], isNot(contains(idX)));
+      expect(await db.getDeadlineSuppressedIds(date), contains(idX));
+    });
+
     test('deleteAllLocalData also deletes todays_five_state', () async {
       final id1 = await insertTaskWithSyncId('Task A', 'sync-a');
       await db.saveTodaysFiveState(
@@ -5391,6 +5466,34 @@ void main() {
       final id = await db.insertTask(Task(name: 'Task'));
       final task = await db.getTaskById(id);
       expect(task!.deadline, isNull);
+    });
+
+    group('hasDeadlineDueToday', () {
+      test('true when a task is due exactly today', () async {
+        final today = DateTime(2026, 3, 18);
+        await db.insertTask(Task(name: 'Due today', deadline: '2026-03-18'));
+        expect(await db.hasDeadlineDueToday(now: today), isTrue);
+      });
+
+      test('false when nothing is due today (overdue/future/none)', () async {
+        final today = DateTime(2026, 3, 18);
+        await db.insertTask(Task(name: 'Overdue', deadline: '2026-03-15'));
+        await db.insertTask(Task(name: 'Future', deadline: '2026-03-20'));
+        await db.insertTask(Task(name: 'No deadline'));
+        expect(await db.hasDeadlineDueToday(now: today), isFalse);
+      });
+
+      test('false when the only due-today task is completed or skipped',
+          () async {
+        final today = DateTime(2026, 3, 18);
+        final done =
+            await db.insertTask(Task(name: 'Done', deadline: '2026-03-18'));
+        await db.completeTask(done);
+        final skip =
+            await db.insertTask(Task(name: 'Skip', deadline: '2026-03-18'));
+        await db.skipTask(skip);
+        expect(await db.hasDeadlineDueToday(now: today), isFalse);
+      });
     });
 
     group('getDeadlinePinLeafIds', () {

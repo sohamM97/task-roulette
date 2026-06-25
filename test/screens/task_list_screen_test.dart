@@ -376,4 +376,47 @@ void main() {
       expect(after.taskIds.length, 1);
     });
   });
+
+  group('Deadline-today suppression from All Tasks unpin (Codex P2)', () {
+    // [Regression] Codex P2: unpinning a due-today task from All Tasks only
+    // dropped it from todays_five_state without writing a suppression, so the
+    // next Today reconcile re-auto-pinned it (the unpin didn't stick). The
+    // unpin must now record the suppression, matching the Today screen's remove.
+    testWidgets('unpinning a due-today task from All Tasks suppresses it',
+        (tester) async {
+      late int id;
+      await tester.runAsync(() async {
+        id = await db.insertTask(
+            Task(name: 'Due today leaf', deadline: todayDateKey()));
+        await db.saveTodaysFiveState(
+          date: todayDateKey(),
+          taskIds: [id],
+          completedIds: const {},
+          workedOnIds: const {},
+          pinnedIds: {id},
+        );
+        await provider.loadRootTasks();
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Navigate into the leaf to reach its detail view + pin toggle.
+      await tester.tap(find.text('Due today leaf'));
+      await pumpAsync(tester);
+
+      // Unpin from All Tasks (PinButton shows tooltip 'Unpin' when pinned).
+      await tester.runAsync(() async {
+        await tester.tap(find.byTooltip('Unpin'));
+      });
+      await pumpAsync(tester);
+
+      // Dropped from Today's 5 AND recorded as suppressed.
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(todayDateKey()));
+      expect(saved?.taskIds ?? const <int>[], isNot(contains(id)));
+      final suppressed = await tester
+          .runAsync(() => db.getDeadlineSuppressedIds(todayDateKey()));
+      expect(suppressed, contains(id));
+    });
+  });
 }

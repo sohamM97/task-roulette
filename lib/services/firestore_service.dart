@@ -362,6 +362,7 @@ class FirestoreService {
     String idToken,
     String date,
     List<Map<String, dynamic>> entries,
+    List<String> suppressedSyncIds,
     int updatedAt,
   ) async {
     final docPath =
@@ -380,6 +381,11 @@ class FirestoreService {
             },
           },
         }).toList();
+    // Deadline-today suppressions travel with the state so a removal of a
+    // due-today task on one device isn't re-auto-pinned (and pushed back) by
+    // another device's reconcile.
+    final suppressedValues =
+        suppressedSyncIds.map((id) => {'stringValue': id}).toList();
 
     final response = await http.post(
       commitUrl,
@@ -392,6 +398,9 @@ class FirestoreService {
               'fields': {
                 'entries': {
                   'arrayValue': {'values': entryValues},
+                },
+                'deadline_suppressed_sync_ids': {
+                  'arrayValue': {'values': suppressedValues},
                 },
                 'updated_at': {'integerValue': updatedAt.toString()},
               },
@@ -408,7 +417,7 @@ class FirestoreService {
 
   /// Pulls Today's 5 state for a given date from Firestore.
   /// Returns null if no document exists (404).
-  Future<({List<Map<String, dynamic>> entries, int updatedAt})?> pullTodaysFive(
+  Future<({List<Map<String, dynamic>> entries, List<String> suppressedSyncIds, int updatedAt})?> pullTodaysFive(
     String uid,
     String idToken,
     String date,
@@ -426,11 +435,31 @@ class FirestoreService {
     if (fields == null) return null;
 
     final updatedAt = _intField(fields, 'updated_at');
+
+    // Parse the deadline suppression list (absent on docs written before this
+    // field existed → empty, which is a safe no-op).
+    final suppressedSyncIds = <String>[];
+    final suppressedArray = ((fields['deadline_suppressed_sync_ids']
+            as Map<String, dynamic>?)?['arrayValue'] as Map<String, dynamic>?)?['values']
+        as List<dynamic>?;
+    if (suppressedArray != null) {
+      for (final v in suppressedArray) {
+        final s = (v as Map<String, dynamic>)['stringValue'] as String?;
+        if (s != null) suppressedSyncIds.add(s);
+      }
+    }
+
     final entriesField = fields['entries'] as Map<String, dynamic>?;
     final arrayValues =
         (entriesField?['arrayValue'] as Map<String, dynamic>?)?['values']
             as List<dynamic>?;
-    if (arrayValues == null) return (entries: <Map<String, dynamic>>[], updatedAt: updatedAt);
+    if (arrayValues == null) {
+      return (
+        entries: <Map<String, dynamic>>[],
+        suppressedSyncIds: suppressedSyncIds,
+        updatedAt: updatedAt,
+      );
+    }
 
     final entries = <Map<String, dynamic>>[];
     for (final v in arrayValues) {
@@ -446,7 +475,7 @@ class FirestoreService {
         'sort_order': _intField(mapFields, 'sort_order'),
       });
     }
-    return (entries: entries, updatedAt: updatedAt);
+    return (entries: entries, suppressedSyncIds: suppressedSyncIds, updatedAt: updatedAt);
   }
 
   // --- Private helpers ---
