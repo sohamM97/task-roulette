@@ -51,6 +51,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   Map<int, ({String deadline, String type})> _effectiveDeadlines = {};
   /// Leaf task IDs scheduled for today (for icon display).
   Set<int> _scheduledTodayIds = {};
+  /// Leaf task IDs whose deadline is exactly today. These are force-pinned into
+  /// Today's 5 on every load (manual-model exception), unless the user has
+  /// removed (suppressed) them today. Cached so the remove flow knows whether a
+  /// removal needs to be recorded as a deadline suppression.
+  Set<int> _deadlineTodayIds = {};
   /// Other tasks completed/worked-on today, outside the Today's 5 set.
   List<Task> _otherDoneToday = [];
   bool _otherDoneExpanded = false;
@@ -109,6 +114,19 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     await _loadTodaysTasks();
   }
 
+  /// Reloads from DB but preserves the session-only undo state that
+  /// `_reloadFromDb()` would otherwise clear (auto-started flags and
+  /// pre-worked-on timestamps are not persisted, so they must survive a
+  /// refresh-triggered reload). Used by both reconcile branches in
+  /// refreshSnapshots() so the snapshot→reload→restore dance lives in one place.
+  Future<void> _reloadPreservingUndoState() async {
+    final prevAutoStarted = Set<int>.from(_autoStartedIds);
+    final prevPreWorkedOn = Map<int, int?>.from(_preWorkedOnLastWorkedAt);
+    await _reloadFromDb();
+    _autoStartedIds.addAll(prevAutoStarted);
+    _preWorkedOnLastWorkedAt.addAll(prevPreWorkedOn);
+  }
+
   String _todayKey() => todayDateKey();
 
   Future<void> _loadTodaysTasks() async {
@@ -129,19 +147,36 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     // Migrate SharedPreferences → DB (idempotent, safe to call every time)
     await db.migrateTodaysFiveFromPrefs();
 
-    // Manual-only model: no auto-selection. If no state exists for today,
-    // Today's 5 starts empty and the user pins tasks from All Tasks.
+    // Manual model, with ONE exception: leaf tasks whose deadline is exactly
+    // today are auto-pinned into Today's 5 on every load. Overdue deadlines are
+    // NOT auto-pinned — getDeadlinePinLeafIds() filters to `deadline = today`,
+    // so yesterday's/earlier misses rely on weight boost in All Tasks instead.
+    // A task the user explicitly removes today is recorded as "suppressed" so it
+    // stays off the list for the rest of the day and is not re-pinned on the next
+    // reconcile — while a *different* task that becomes due today still gets
+    // pinned (suppression is per task-id, so removals are respected individually).
+    await db.purgeOldDeadlineSuppressed(today);
+    _deadlineTodayIds = await db.getDeadlinePinLeafIds();
+    final suppressedIds = await db.getDeadlineSuppressedIds(today);
+    final autoPinIds = _deadlineTodayIds.difference(suppressedIds);
+
     final saved = await db.loadTodaysFiveState(today);
-    if (saved == null || saved.taskIds.isEmpty) {
+    // Merge saved manual pins with today's (non-suppressed) deadline auto-pins.
+    final effectiveTaskIds = List<int>.from(saved?.taskIds ?? const <int>[]);
+    for (final id in autoPinIds) {
+      if (!effectiveTaskIds.contains(id)) effectiveTaskIds.add(id);
+    }
+
+    if (effectiveTaskIds.isEmpty) {
       if (!mounted) return;
       // Bug fix (manual-model empty-at-start): when there is no saved state for
-      // today — real midnight rollover with the app left open, a sync pull that
-      // empties the set, or the debug rollover button — this branch must reset
-      // the in-memory list. Before: it returned WITHOUT clearing _todaysTasks,
-      // so yesterday's tasks lingered on the new day (shown undone after
-      // _reloadFromDb cleared _completedIds, then re-marked done on the next
-      // refreshSnapshots via isWorkedOnToday). After: the list is truly empty
-      // and the "Nothing pinned yet" state shows.
+      // today AND no deadline-today task to auto-pin — real midnight rollover
+      // with the app left open, a sync pull that empties the set, or the debug
+      // rollover button — this branch must reset the in-memory list. Before: it
+      // returned WITHOUT clearing _todaysTasks, so yesterday's tasks lingered on
+      // the new day (shown undone after _reloadFromDb cleared _completedIds, then
+      // re-marked done on the next refreshSnapshots via isWorkedOnToday). After:
+      // the list is truly empty and the "Nothing pinned yet" state shows.
       _todaysTasks = [];
       _completedIds.clear();
       _workedOnIds.clear();
@@ -153,10 +188,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     final allLeaves = await provider.getAllLeafTasks();
     final leafIdSet = allLeaves.map((t) => t.id!).toSet();
-    final savedCompletedIds = Set<int>.from(saved.completedIds);
-    final savedWorkedOnIds = Set<int>.from(saved.workedOnIds);
+    final savedCompletedIds = Set<int>.from(saved?.completedIds ?? const <int>{});
+    final savedWorkedOnIds = Set<int>.from(saved?.workedOnIds ?? const <int>{});
     final tasks = <Task>[];
-    for (final id in saved.taskIds) {
+    for (final id in effectiveTaskIds) {
       if (leafIdSet.contains(id)) {
         // Still a leaf — restore from fresh data
         final match = allLeaves.where((t) => t.id == id).firstOrNull;
@@ -205,23 +240,44 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       return;
     }
 
-    // Detect external modifications: the task list screen can toggle pins
-    // or add pinned tasks directly to the DB. If the DB state differs from
-    // our in-memory state, do a full reload so we don't overwrite DB changes
-    // when _persist() runs at the end.
-    final saved = await DatabaseHelper().loadTodaysFiveState(_todayKey());
-    if (saved != null) {
-      final inMemoryTaskIds = _todaysTasks.map((t) => t.id!).toSet();
-      final savedTaskIds = saved.taskIds.toSet();
-      if (!setEquals(savedTaskIds, inMemoryTaskIds)) {
-        // Preserve session-only undo state (not persisted to DB)
-        final prevAutoStarted = Set<int>.from(_autoStartedIds);
-        final prevPreWorkedOn = Map<int, int?>.from(_preWorkedOnLastWorkedAt);
-        await _reloadFromDb();
-        _autoStartedIds.addAll(prevAutoStarted);
-        _preWorkedOnLastWorkedAt.addAll(prevPreWorkedOn);
+    final db = DatabaseHelper();
+    final today = _todayKey();
+
+    // Detect external modifications FIRST (cheap, indexed lookup): the task
+    // list screen can toggle pins or add pinned tasks directly to the DB. If
+    // the DB state differs from our in-memory state, do a full reload (which
+    // also runs the deadline reconcile) so we don't overwrite DB changes when
+    // _persist() runs at the end. Doing this before the deadline reconcile
+    // avoids paying the deadline query twice when a reload happens anyway.
+    final saved = await db.loadTodaysFiveState(today);
+    if (saved != null &&
+        !setEquals(saved.taskIds.toSet(),
+            _todaysTasks.map((t) => t.id!).toSet())) {
+      await _reloadPreservingUndoState();
+      return;
+    }
+
+    // Deadline-today reconcile without a restart. Bug fix: the deadline
+    // auto-pin used to run only on a full load (app start / sync / midnight),
+    // so setting a deadline to today (or a task otherwise becoming due today)
+    // while the app was open did NOT auto-pin until the app was restarted.
+    // After: if a non-suppressed deadline-today leaf isn't already in the list,
+    // do a full reload so _loadTodaysTasksInner merges and persists it. The
+    // `every` short-circuits to a no-op once everything due today is present,
+    // so there's no reload loop. This runs on every provider notification, so
+    // the cheap hasDeadlineDueToday() guard skips the recursive descendant
+    // walk + suppression lookup entirely on days with nothing due today.
+    if (await db.hasDeadlineDueToday()) {
+      _deadlineTodayIds = await db.getDeadlinePinLeafIds();
+      final suppressedForReconcile = await db.getDeadlineSuppressedIds(today);
+      final autoPinIds = _deadlineTodayIds.difference(suppressedForReconcile);
+      final currentIds = _todaysTasks.map((t) => t.id!).toSet();
+      if (!autoPinIds.every(currentIds.contains)) {
+        await _reloadPreservingUndoState();
         return;
       }
+    } else {
+      _deadlineTodayIds = {};
     }
 
     if (_todaysTasks.isEmpty) {
@@ -237,7 +293,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     final provider = context.read<TaskProvider>();
     final allLeaves = await provider.getAllLeafTasks();
     final leafIdSet = allLeaves.map((t) => t.id!).toSet();
-    final db = DatabaseHelper();
     final refreshed = <Task>[];
     for (final t in _todaysTasks) {
       if (leafIdSet.contains(t.id)) {
@@ -479,6 +534,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       ),
     );
     if (confirmed != true || !mounted) return;
+    // If this task was force-pinned because its deadline is today, record the
+    // removal so the next reconcile doesn't immediately re-pin it. Suppression is
+    // per task-id, so removing this one never affects another task that becomes
+    // due today — that one still auto-pins.
+    if (_deadlineTodayIds.contains(task.id)) {
+      await DatabaseHelper().suppressDeadlineAutoPin(_todayKey(), task.id!);
+      _deadlineTodayIds.remove(task.id);
+      if (!mounted) return;
+    }
     setState(() {
       _todaysTasks.removeWhere((t) => t.id == task.id);
       _completedIds.remove(task.id);
@@ -765,6 +829,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       workedOnIds: saved.workedOnIds,
       pinnedIds: result.pinnedIds,
     );
+    // Manually pinning a task back clears any prior deadline-suppression, so a
+    // removed-then-re-added deadline-today task is treated as an intentional
+    // member again (and a later removal can re-suppress it).
+    await db.unsuppressDeadlineAutoPin(today, taskId);
     // Reload from DB so the new task's snapshot, paths, and deadline/schedule
     // metadata are populated for the card. _reloadFromDb clears local state
     // and re-runs the full _loadTodaysTasksInner pipeline.

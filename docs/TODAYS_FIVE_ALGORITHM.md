@@ -1,11 +1,13 @@
-# Today's 5 Selection — Manual Model
+# Today's 5 Selection — Manual Model (with deadline-today auto-pin)
 
 How the app populates the daily focus view.
 
 ## Overview
 
-Today's 5 has **no automatic selection**. Each day starts empty, and tasks
-appear only when the user explicitly pins them. Pin entry points:
+Today's 5 is **manual-first** with **one automatic exception**: leaf tasks
+whose deadline is **exactly today** are auto-pinned on every load (see
+"Deadline-today auto-pin" below). Apart from that, each day starts empty and
+tasks appear only when the user explicitly pins them. Pin entry points:
 
 - **Today tab + FAB** → bottom sheet with "Create new task" (auto-pinned at
   root) or "Pick existing task" (triage-style dialog with always-visible
@@ -17,8 +19,43 @@ appear only when the user explicitly pins them. Pin entry points:
 Up to 5 tasks can be pinned at once.
 
 There is no random pick, no weighted roulette, no normalization, no
-diversity penalty, no schedule reservation, no deadline auto-pin, no reroll,
-no per-card swap.
+diversity penalty, no schedule reservation, no reroll, no per-card swap. The
+**only** automatic population is the deadline-today auto-pin described below
+(overdue/future deadlines are never auto-pinned).
+
+## Deadline-today auto-pin
+
+The reconcile runs on **every load** (`_loadTodaysTasksInner()` — app start,
+sync, midnight rollover) **and on every in-place refresh** (`refreshSnapshots()`
+— provider notifications / tab focus). The refresh path does a cheap check:
+if a non-suppressed deadline-today leaf isn't already in the list it falls back
+to a full reload, so a deadline set to **today while the app is open** auto-pins
+immediately without an app restart. The reconcile compares the saved set with
+today's deadlines:
+
+1. `getDeadlinePinLeafIds()` returns leaf tasks that are due today — either the
+   leaf's **own** `deadline = today`, **or** it's a leaf descendant of an
+   ancestor whose `deadline = today` (deadline inheritance: the SQL walks
+   descendants of every `deadline = today` task and returns the leaves). So a
+   leaf with a NULL/other deadline can still auto-pin if a parent is due today.
+   Overdue (yesterday or earlier) and future deadlines are excluded — overdue
+   tasks rely on weight boost in the All Tasks roulette instead.
+2. Tasks the user has removed today are subtracted: `getDeadlineSuppressedIds()`
+   reads the `todays_five_deadline_suppressed` table (keyed by date).
+3. The remaining IDs are merged into the saved task list and persisted as
+   normal pinned members.
+
+**Removals are respected per task.** When the user removes a deadline-today
+task (X button / "Remove" tile), `suppressDeadlineAutoPin(today, id)` records
+it so the next reconcile won't re-pin *that* task — but a *different* task that
+becomes due today still auto-pins. Manually pinning a task back clears its
+suppression (`unsuppressDeadlineAutoPin`). Suppression rows are date-keyed and
+old ones are purged on load (`purgeOldDeadlineSuppressed`), so the suppression
+naturally only applies to the day the task was due.
+
+The deadline-today indicator on the card is the existing proximity-coloured
+clock icon (deepOrange for ≤2 days) — there is no separate "Today"-specific
+badge.
 
 ## Lifecycle
 
@@ -71,21 +108,24 @@ scheduled-source reserved slots. It was removed because the auto-selection
 felt too prescriptive — the user wanted full control over what appears in
 the focus view.
 
-The following methods, fields, DB tables, and `TaskProvider` APIs are
-**still present in the code but unused in production**, kept around in case
-they're needed for the future suggestion mechanism (see "Future" below):
+The deadline-today auto-pin was **later restored** in a narrowed form
+(deadline *exactly* today only — see "Deadline-today auto-pin" above), which
+brought `getDeadlinePinLeafIds()`, the suppression methods, and the
+`todays_five_deadline_suppressed` table back into production use.
 
-- `TaskProvider.pickWeightedN()`, `getDeadlinePinLeafIds()`,
-  `getScheduleBoostedLeafIds()`, `getDeadlineBoostedLeafData()`,
-  `getNormalizationData()`, `getScheduledSourceToLeafMap()`
-- `DatabaseHelper.suppressDeadlineAutoPin()`,
+The following are **still present but unused in production**, kept for the
+future suggestion mechanism (see "Future" below):
+
+- `TaskProvider.pickWeightedN()`, `getScheduleBoostedLeafIds()`,
+  `getDeadlineBoostedLeafData()`, `getNormalizationData()`,
+  `getScheduledSourceToLeafMap()`
+
+Now back **in** production use (no longer dead code):
+
+- `DatabaseHelper.getDeadlinePinLeafIds()`, `suppressDeadlineAutoPin()`,
   `unsuppressDeadlineAutoPin()`, `getDeadlineSuppressedIds()`,
-  `purgeOldDeadlineSuppressed()`
-- The `todays_five_deadline_suppressed` DB table (still created by
-  migrations; no longer written or read by the UI)
-
-If those stay unused indefinitely, a future cleanup pass can remove them
-together with the migration to drop the table.
+  `purgeOldDeadlineSuppressed()`, and the `todays_five_deadline_suppressed`
+  table.
 
 ## Future
 

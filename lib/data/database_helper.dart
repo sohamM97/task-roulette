@@ -1106,6 +1106,21 @@ class DatabaseHelper {
     return rows.map((r) => r['id'] as int).toSet();
   }
 
+  /// Cheap existence check: is any (not done/skipped) task due exactly today?
+  /// Used to gate the heavier deadline-pin reconcile (`getDeadlinePinLeafIds`'s
+  /// recursive descendant walk + the suppression lookup) on the refresh hot
+  /// path — on a day with nothing due today this short-circuits both away.
+  Future<bool> hasDeadlineDueToday({DateTime? now}) async {
+    final db = await database;
+    final date = now ?? DateTime.now();
+    final today = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    final rows = await db.rawQuery(
+      'SELECT 1 FROM tasks WHERE deadline = ? '
+      'AND completed_at IS NULL AND skipped_at IS NULL LIMIT 1',
+      [today]);
+    return rows.isNotEmpty;
+  }
+
   /// Returns the nearest ancestor's deadline info for a task, or null if none.
   /// Walks up the ancestor chain and returns the closest deadline found.
   Future<({String deadline, String deadlineType, String sourceName})?> getInheritedDeadline(int taskId) async {
@@ -2769,102 +2784,136 @@ class DatabaseHelper {
     }).toList();
   }
 
+  /// Returns the sync_ids of tasks deadline-suppressed for [date] (skips tasks
+  /// without a sync_id). Used to push the suppression set alongside Today's 5
+  /// state so cross-device removals of due-today tasks are respected.
+  Future<List<String>> getDeadlineSuppressedSyncIds(String date) async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT t.sync_id
+      FROM todays_five_deadline_suppressed s
+      JOIN tasks t ON t.id = s.task_id
+      WHERE s.date = ? AND t.sync_id IS NOT NULL
+    ''', [date]);
+    return rows.map((r) => r['sync_id'] as String).toList();
+  }
+
   /// Merges remote Today's 5 state into the local DB.
   /// - No local state: accept remote fully.
   /// - Both exist: use remote task list + sort order; OR-merge status bits
   ///   for tasks in both lists; append local-only pinned/completed tasks up
   ///   to max 5 slots.
+  ///
+  /// [remoteSuppressedSyncIds] carries the pushing device's deadline-today
+  /// suppressions (tasks the user removed despite being due today). Bug fix:
+  /// without syncing these, a removal on one device bounced back — another
+  /// device saw no suppression, re-auto-pinned the due-today task on its next
+  /// reconcile, and pushed it back. Now a synced suppression is (a) written
+  /// locally so our reconcile won't re-pin it, and (b) dropped from the merged
+  /// state so the OR-merge's local-only-pinned append can't re-add it. A task
+  /// the remote still lists as a member is treated as un-suppressed, so a
+  /// re-pin on another device propagates too.
   Future<void> upsertTodaysFiveFromRemote(
     String date,
-    List<Map<String, dynamic>> remoteEntries,
-  ) async {
-    if (remoteEntries.isEmpty) return;
+    List<Map<String, dynamic>> remoteEntries, {
+    List<String> remoteSuppressedSyncIds = const [],
+  }) async {
     final db = await database;
 
-    // Resolve remote sync_ids to local task IDs
+    // Resolve remote entry sync_ids → local task IDs
     final resolved = <({int taskId, bool isCompleted, bool isWorkedOn, bool isPinned, int sortOrder})>[];
     for (final entry in remoteEntries) {
       final syncId = entry['task_sync_id'] as String;
       final rows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [syncId]);
       if (rows.isEmpty) continue;
-      final localId = rows.first['id'] as int;
       resolved.add((
-        taskId: localId,
+        taskId: rows.first['id'] as int,
         isCompleted: entry['is_completed'] as bool,
         isWorkedOn: entry['is_worked_on'] as bool,
         isPinned: entry['is_pinned'] as bool,
         sortOrder: entry['sort_order'] as int,
       ));
     }
-    if (resolved.isEmpty) return;
 
-    // Load existing local state
-    final localState = await loadTodaysFiveState(date);
+    // Resolve remote suppressed sync_ids → local task IDs
+    final remoteSuppressedIds = <int>{};
+    for (final syncId in remoteSuppressedSyncIds) {
+      final rows = await db.query('tasks', columns: ['id'], where: 'sync_id = ?', whereArgs: [syncId]);
+      if (rows.isNotEmpty) remoteSuppressedIds.add(rows.first['id'] as int);
+    }
+
+    // Sync the deadline suppressions. A current remote member is by definition
+    // not suppressed there → clear any stale local suppression (lets a re-pin
+    // on another device propagate). A remote-suppressed task → suppress locally
+    // so our reconcile won't re-auto-pin it.
     final remoteIdSet = resolved.map((r) => r.taskId).toSet();
+    for (final id in remoteIdSet) {
+      await unsuppressDeadlineAutoPin(date, id);
+    }
+    for (final id in remoteSuppressedIds) {
+      await suppressDeadlineAutoPin(date, id);
+    }
 
-    if (localState == null) {
-      // No local state — accept remote fully
-      await db.transaction((txn) async {
-        await txn.delete('todays_five_state', where: 'date = ?', whereArgs: [date]);
-        for (final r in resolved) {
-          await txn.insert('todays_five_state', {
-            'date': date,
-            'task_id': r.taskId,
-            'is_completed': r.isCompleted ? 1 : 0,
-            'is_worked_on': r.isWorkedOn ? 1 : 0,
-            'is_pinned': r.isPinned ? 1 : 0,
-            'sort_order': r.sortOrder,
-          });
-        }
-      });
+    if (resolved.isEmpty) {
+      // No mergeable remote entries, but a synced suppression must still drop
+      // the task from our local Today's 5 so the removal sticks here too.
+      for (final id in remoteSuppressedIds) {
+        await db.delete('todays_five_state',
+            where: 'date = ? AND task_id = ?', whereArgs: [date, id]);
+      }
       return;
     }
 
-    // Both exist — merge
-    // Start with remote task list + sort order, OR-merge status bits
+    final localState = await loadTodaysFiveState(date);
     final mergedList = <({int taskId, bool isCompleted, bool isWorkedOn, bool isPinned, int sortOrder})>[];
-    for (final r in resolved) {
-      final localCompleted = localState.completedIds.contains(r.taskId);
-      final localWorkedOn = localState.workedOnIds.contains(r.taskId);
-      final localPinned = localState.pinnedIds.contains(r.taskId);
-      mergedList.add((
-        taskId: r.taskId,
-        isCompleted: r.isCompleted || localCompleted,
-        isWorkedOn: r.isWorkedOn || localWorkedOn,
-        isPinned: r.isPinned || localPinned,
-        sortOrder: r.sortOrder,
-      ));
+
+    if (localState == null) {
+      mergedList.addAll(resolved);
+    } else {
+      // OR-merge status bits for tasks present in both.
+      for (final r in resolved) {
+        mergedList.add((
+          taskId: r.taskId,
+          isCompleted: r.isCompleted || localState.completedIds.contains(r.taskId),
+          isWorkedOn: r.isWorkedOn || localState.workedOnIds.contains(r.taskId),
+          isPinned: r.isPinned || localState.pinnedIds.contains(r.taskId),
+          sortOrder: r.sortOrder,
+        ));
+      }
+      // Append local-only pinned tasks (always preserved, up to maxSlots total)
+      var nextOrder = mergedList.length;
+      for (final localId in localState.taskIds) {
+        if (mergedList.length >= maxSlots) break;
+        if (remoteIdSet.contains(localId)) continue;
+        if (!localState.pinnedIds.contains(localId)) continue;
+        mergedList.add((
+          taskId: localId,
+          isCompleted: localState.completedIds.contains(localId),
+          isWorkedOn: localState.workedOnIds.contains(localId),
+          isPinned: true,
+          sortOrder: nextOrder++,
+        ));
+      }
+      // Append local-only completed (non-pinned) tasks up to 5 total
+      for (final localId in localState.taskIds) {
+        if (mergedList.length >= 5) break;
+        if (remoteIdSet.contains(localId)) continue;
+        if (localState.pinnedIds.contains(localId)) continue;
+        if (!localState.completedIds.contains(localId)) continue;
+        mergedList.add((
+          taskId: localId,
+          isCompleted: true,
+          isWorkedOn: localState.workedOnIds.contains(localId),
+          isPinned: false,
+          sortOrder: nextOrder++,
+        ));
+      }
     }
 
-    // Append local-only pinned tasks (always preserved, up to maxSlots total)
-    var nextOrder = mergedList.length;
-    for (final localId in localState.taskIds) {
-      if (mergedList.length >= maxSlots) break;
-      if (remoteIdSet.contains(localId)) continue;
-      if (!localState.pinnedIds.contains(localId)) continue;
-      mergedList.add((
-        taskId: localId,
-        isCompleted: localState.completedIds.contains(localId),
-        isWorkedOn: localState.workedOnIds.contains(localId),
-        isPinned: true,
-        sortOrder: nextOrder++,
-      ));
-    }
-
-    // Append local-only completed (non-pinned) tasks up to 5 total
-    for (final localId in localState.taskIds) {
-      if (mergedList.length >= 5) break;
-      if (remoteIdSet.contains(localId)) continue;
-      if (localState.pinnedIds.contains(localId)) continue;
-      if (!localState.completedIds.contains(localId)) continue;
-      mergedList.add((
-        taskId: localId,
-        isCompleted: true,
-        isWorkedOn: localState.workedOnIds.contains(localId),
-        isPinned: false,
-        sortOrder: nextOrder++,
-      ));
-    }
+    // Drop any task that is (now) deadline-suppressed for this date so a
+    // cross-device removal of a due-today task sticks despite the OR-merge.
+    final suppressedNow = await getDeadlineSuppressedIds(date);
+    mergedList.removeWhere((m) => suppressedNow.contains(m.taskId));
 
     await db.transaction((txn) async {
       await txn.delete('todays_five_state', where: 'date = ?', whereArgs: [date]);

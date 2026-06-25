@@ -1073,6 +1073,340 @@ void main() {
     });
   });
 
+  group('deadline-today auto-pin', () {
+    // Manual model exception: leaf tasks whose deadline is exactly today are
+    // force-pinned into Today's 5 on every load, unless the user removed
+    // (suppressed) them today. Overdue deadlines are NOT auto-pinned.
+    String yesterdayKey() {
+      final d = DateTime.now().subtract(const Duration(days: 1));
+      return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    }
+
+    testWidgets('auto-pins a leaf due today even with no saved state',
+        (tester) async {
+      late int id;
+      await tester.runAsync(() async {
+        id = await db.insertTask(Task(name: 'Due today', deadline: _todayKey()));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Nothing pinned yet'), findsNothing);
+      expect(find.text('Due today'), findsOneWidget);
+      // Persisted into Today's 5 state so it survives a reload.
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.taskIds, contains(id));
+    });
+
+    testWidgets('does NOT auto-pin an overdue (yesterday) deadline',
+        (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Overdue', deadline: yesterdayKey()));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Nothing pinned yet'), findsOneWidget);
+      expect(find.text('Overdue'), findsNothing);
+    });
+
+    testWidgets('reconcile does not re-pin a suppressed deadline task',
+        (tester) async {
+      await tester.runAsync(() async {
+        final id =
+            await db.insertTask(Task(name: 'Removed today', deadline: _todayKey()));
+        // Simulate the user having removed it earlier today.
+        await db.suppressDeadlineAutoPin(_todayKey(), id);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Removed today'), findsNothing);
+      expect(find.text('Nothing pinned yet'), findsOneWidget);
+    });
+
+    testWidgets('removing one deadline task still auto-pins a different one',
+        (tester) async {
+      // User's scenario: A was due today and got removed (suppressed); then B
+      // also becomes due today. Reconcile must pin B without re-pinning A.
+      late int idA;
+      await tester.runAsync(() async {
+        idA = await db.insertTask(Task(name: 'Task A', deadline: _todayKey()));
+        await db.insertTask(Task(name: 'Task B', deadline: _todayKey()));
+        await db.suppressDeadlineAutoPin(_todayKey(), idA);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Task A'), findsNothing);
+      expect(find.text('Task B'), findsOneWidget);
+    });
+
+    testWidgets('refreshSnapshots auto-pins a task that became due today '
+        '(no full reload / restart needed)', (tester) async {
+      // Bug fix: a deadline set to today while the app is open must auto-pin
+      // on the next refresh (provider notify / tab focus), not only on restart.
+      late int seeded, becameDue;
+      await tester.runAsync(() async {
+        seeded = await db.insertTask(Task(name: 'Already pinned'));
+        await seedTodaysFive(db, [seeded]);
+        becameDue = await db.insertTask(Task(name: 'Newly due'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      expect(find.text('Already pinned'), findsOneWidget);
+      expect(find.text('Newly due'), findsNothing);
+
+      // Simulate the deadline being set to today from another screen, then a
+      // provider-driven refresh (no widget rebuild / restart).
+      await tester.runAsync(() async {
+        await db.updateTaskDeadline(becameDue, _todayKey());
+      });
+      final state = tester.state<TodaysFiveScreenState>(
+        find.byType(TodaysFiveScreen),
+      );
+      await tester.runAsync(() => state.refreshSnapshots());
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(
+            () => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      expect(find.text('Newly due'), findsOneWidget);
+      expect(find.text('Already pinned'), findsOneWidget);
+    });
+
+    testWidgets('refreshSnapshots does NOT re-pin a suppressed deadline task',
+        (tester) async {
+      // Regression for the new refreshSnapshots reconcile path: removing a
+      // deadline-today task suppresses it; a later provider-driven refresh
+      // (NOT a full reload/restart) must not bring it back.
+      late int pinnedB;
+      await tester.runAsync(() async {
+        pinnedB = await db.insertTask(Task(name: 'Plain pinned B'));
+        await seedTodaysFive(db, [pinnedB]);
+        // Referenced by name in finders below, so its id isn't captured.
+        await db.insertTask(Task(name: 'Deadline A', deadline: _todayKey()));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      // Reconcile auto-pinned the deadline task alongside the manual pin.
+      expect(find.text('Deadline A'), findsOneWidget);
+      expect(find.text('Plain pinned B'), findsOneWidget);
+
+      // Remove the deadline task specifically (via its bottom sheet) → suppresses it.
+      await tester.tap(find.text('Deadline A'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.tap(find.text("Remove from Today’s 5"));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.tap(find.text('Remove'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await pumpAsync(tester, rounds: 10);
+      expect(find.text('Deadline A'), findsNothing);
+
+      // A provider-driven refresh must NOT re-pin the suppressed task.
+      final state = tester.state<TodaysFiveScreenState>(
+        find.byType(TodaysFiveScreen),
+      );
+      await tester.runAsync(() => state.refreshSnapshots());
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(
+            () => Future.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+
+      expect(find.text('Deadline A'), findsNothing);
+      expect(find.text('Plain pinned B'), findsOneWidget);
+    });
+
+    testWidgets('removing an auto-pinned deadline task suppresses it',
+        (tester) async {
+      late int id;
+      await tester.runAsync(() async {
+        id = await db.insertTask(Task(name: 'Auto-pinned', deadline: _todayKey()));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      expect(find.text('Auto-pinned'), findsOneWidget);
+
+      // Remove via the card's X button → confirm.
+      await tester.tap(find.widgetWithIcon(IconButton, Icons.close));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.tap(find.text('Remove'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await pumpAsync(tester, rounds: 10);
+
+      expect(find.text('Auto-pinned'), findsNothing);
+      // Removal recorded as a suppression so reconcile won't re-pin it today.
+      final suppressed =
+          await tester.runAsync(() => db.getDeadlineSuppressedIds(_todayKey()));
+      expect(suppressed, contains(id));
+      // Removing the only task leaves an empty (null) state — the task is gone.
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved?.taskIds ?? const <int>[], isNot(contains(id)));
+    });
+
+    // [Mechanism] The deadline auto-pin is a MERGE into the saved manual set,
+    // not a replacement: an existing user pin and a freshly-due deadline task
+    // must both appear. Existing group tests only exercise deadline-only sets.
+    testWidgets('merges deadline auto-pin with an existing manual pin',
+        (tester) async {
+      late int manualId;
+      late int deadlineId;
+      await tester.runAsync(() async {
+        manualId = await db.insertTask(Task(name: 'Manual pin'));
+        deadlineId =
+            await db.insertTask(Task(name: 'Due today', deadline: _todayKey()));
+        await seedTodaysFive(db, [manualId]);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Manual pin'), findsOneWidget);
+      expect(find.text('Due today'), findsOneWidget);
+      // Both persisted into the merged Today's 5 set.
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.taskIds, containsAll([manualId, deadlineId]));
+    });
+
+    // [Edge case] When more deadline-today tasks exist than the maxPins cap, the
+    // merge loop currently adds ALL of them (it has no cap) — so the auto-pin
+    // path can push the set beyond maxPins. This documents the actual behavior;
+    // if a cap is ever added, this test should be updated to assert it.
+    testWidgets('auto-pins every deadline task even beyond the maxPins cap',
+        (tester) async {
+      final ids = <int>[];
+      await tester.runAsync(() async {
+        for (var i = 0; i < maxPins + 1; i++) {
+          ids.add(await db
+              .insertTask(Task(name: 'Due $i', deadline: _todayKey())));
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // All maxPins+1 deadline tasks are pinned (no cap on the auto-pin merge).
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.taskIds, containsAll(ids));
+      expect(saved.taskIds.length, greaterThan(maxPins));
+    });
+
+    // [Edge case] A deadline-today task that's already completed must NOT be
+    // auto-pinned on load — getDeadlinePinLeafIds() excludes completed leaves,
+    // so a finished task doesn't reappear as a fresh pin the next day-load.
+    testWidgets('does NOT auto-pin a completed deadline-today task',
+        (tester) async {
+      await tester.runAsync(() async {
+        final id = await db
+            .insertTask(Task(name: 'Done deadline', deadline: _todayKey()));
+        await db.completeTask(id);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Done deadline'), findsNothing);
+      expect(find.text('Nothing pinned yet'), findsOneWidget);
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved?.taskIds ?? const <int>[], isEmpty);
+    });
+
+    // [Regression] Manually re-pinning a previously-suppressed deadline task
+    // must clear its suppression (via unsuppressDeadlineAutoPin), so it's once
+    // again treated as a normal member. This exercises the _pinTaskInTodaysFive
+    // unsuppress path — distinct from the existing tests, none of which re-pin.
+    testWidgets('re-pinning a suppressed deadline task clears its suppression',
+        (tester) async {
+      late int id;
+      await tester.runAsync(() async {
+        id = await db
+            .insertTask(Task(name: 'Re-pin me', deadline: _todayKey()));
+        // User removed it earlier today → suppressed, so it loads empty.
+        await db.suppressDeadlineAutoPin(_todayKey(), id);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      expect(find.text('Nothing pinned yet'), findsOneWidget);
+
+      // Re-pin via the FAB → Pick existing → tap the task.
+      Future<void> settle() async {
+        for (var i = 0; i < 10; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        await pumpAsync(tester, rounds: 15);
+      }
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await settle();
+      await tester.tap(find.text('Pick existing task'));
+      await settle();
+      await tester.tap(find.text('Re-pin me'));
+      await settle();
+
+      expect(find.text('Re-pin me'), findsOneWidget);
+      // Suppression is cleared, so the task is a normal member again.
+      final suppressed =
+          await tester.runAsync(() => db.getDeadlineSuppressedIds(_todayKey()));
+      expect(suppressed, isNot(contains(id)));
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.taskIds, contains(id));
+    });
+
+    // [Baseline] After the user removes an auto-pinned deadline task (recorded
+    // as a suppression), a subsequent full reload must keep it gone — the
+    // suppression persists for the rest of the day. Existing test 3 pre-seeds
+    // the suppression; this exercises remove → reload end-to-end.
+    testWidgets('suppression persists across a reload after removal',
+        (tester) async {
+      late int id;
+      await tester.runAsync(() async {
+        id = await db
+            .insertTask(Task(name: 'Gone for today', deadline: _todayKey()));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      expect(find.text('Gone for today'), findsOneWidget);
+
+      // Remove via the card's X → confirm.
+      await tester.tap(find.widgetWithIcon(IconButton, Icons.close));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.tap(find.text('Remove'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await pumpAsync(tester, rounds: 10);
+      expect(find.text('Gone for today'), findsNothing);
+
+      // Rebuild the screen from scratch (simulates the next reconcile / fresh
+      // load). The _loadTodaysTasksInner pipeline must honor the suppression and
+      // NOT re-pin the removed deadline task.
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Gone for today'), findsNothing);
+      expect(find.text('Nothing pinned yet'), findsOneWidget);
+      final suppressed =
+          await tester.runAsync(() => db.getDeadlineSuppressedIds(_todayKey()));
+      expect(suppressed, contains(id));
+    });
+  });
+
   group('Add to Today\'s 5 FAB sheet', () {
     // Advances route (sheet/dialog) animations AND async DB loads together.
     Future<void> settleRoute(WidgetTester tester) async {
