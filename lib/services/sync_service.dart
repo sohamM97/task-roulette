@@ -192,11 +192,17 @@ class SyncService {
         await _db.upsertScheduleFromRemote(schedule);
       }
 
-      // Pull Today's 5 state
+      // Pull Today's 5 state (+ deadline suppressions). Bug fix: this restore
+      // path used to drop suppressions, so a cross-device removal of a due-today
+      // task was resurrected after "Replace local with cloud" — deleteAllLocalData
+      // wiped the local suppression, the restore brought back members without it,
+      // and the next reconcile re-auto-pinned the removed task.
       final dateKey = _todayDateKey();
       final remote5 = await _firestore.pullTodaysFive(uid, idToken, dateKey);
-      if (remote5 != null && remote5.entries.isNotEmpty) {
-        await _db.upsertTodaysFiveFromRemote(dateKey, remote5.entries);
+      if (remote5 != null &&
+          (remote5.entries.isNotEmpty || remote5.suppressedSyncIds.isNotEmpty)) {
+        await _db.upsertTodaysFiveFromRemote(dateKey, remote5.entries,
+            remoteSuppressedSyncIds: remote5.suppressedSyncIds);
       }
 
       // Mark migration done

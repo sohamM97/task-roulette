@@ -199,9 +199,14 @@ class TaskListScreenState extends State<TaskListScreen>
     final wasMember = saved.taskIds.contains(taskId);
     final isMember = result.taskIds.contains(taskId);
     if (wasMember && !isMember) {
-      final deadlineToday = await db.getDeadlinePinLeafIds();
-      if (deadlineToday.contains(taskId)) {
-        await db.suppressDeadlineAutoPin(today, taskId);
+      // Gate the recursive descendant walk behind the cheap existence check, so
+      // an unpin costs ~nothing on days with no deadlines (matches the Today
+      // screen's reconcile guard).
+      if (await db.hasDeadlineDueToday()) {
+        final deadlineToday = await db.getDeadlinePinLeafIds();
+        if (deadlineToday.contains(taskId)) {
+          await db.suppressDeadlineAutoPin(today, taskId);
+        }
       }
     } else if (!wasMember && isMember) {
       await db.unsuppressDeadlineAutoPin(today, taskId);
