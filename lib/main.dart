@@ -114,6 +114,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       context.read<SyncService>().flushPush();
+    } else if (state == AppLifecycleState.resumed) {
+      // Treat a foreground resume like an app open: request a throttled full
+      // pull so a device that's been backgrounded reconciles missed changes.
+      context.read<SyncService>().pull(fullPullOnOpen: true);
     }
   }
 

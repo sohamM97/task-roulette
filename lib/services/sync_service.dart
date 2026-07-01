@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io' show SocketException;
 import 'dart:ui' show VoidCallback;
-import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database_helper.dart';
 import '../providers/auth_provider.dart';
@@ -14,7 +13,7 @@ import 'firestore_service.dart';
 /// - Initial migration: push all local data on first sign-in
 class SyncService {
   final DatabaseHelper _db = DatabaseHelper();
-  final FirestoreService _firestore = FirestoreService();
+  final FirestoreService _firestore;
   final AuthProvider _authProvider;
 
   Timer? _pushDebounceTimer;
@@ -34,6 +33,35 @@ class SyncService {
   static const _fullPullInterval = 10;
   static const _prefsKeyPullCycleCount = 'sync_pull_cycle_count';
 
+  /// On app/tab open, do a full reconciliation pull (not just delta) if it's
+  /// been at least this long since the last successful full pull.
+  ///
+  /// Bug fix: web sessions are often shorter than the ~50-min periodic
+  /// full-pull interval (users open a tab briefly and close it), and the pull
+  /// cycle counter is persisted — so a bursty user could go days on delta-only
+  /// pulls and never reconcile stranded/stale data. A full pull on open closes
+  /// that gap. Throttling by wall-clock (rather than firing on every open)
+  /// bounds the extra Firestore reads so frequent tab reopens don't blow the
+  /// read quota.
+  static const _fullPullOnOpenThrottle = Duration(hours: 2);
+  static const _prefsKeyLastFullPullAt = 'sync_last_full_pull_at';
+
+  /// Lookback margin subtracted from the delta-pull cursor when it's persisted.
+  ///
+  /// Root-cause fix for the "edit made on one device never reaches another"
+  /// bug: the cursor (`_prefsKeyLastSyncAt`) is stamped with THIS device's
+  /// wall clock, but remote `updated_at` values are stamped by the *writing*
+  /// device's clock. When this reader's clock runs ahead of a writer's, that
+  /// writer's edits (a rename, a completion) get an `updated_at` below the
+  /// cursor and are skipped by every future delta pull — a permanent miss,
+  /// previously only healed by the every-10th-cycle full pull (~50 min).
+  /// Rewinding the stored cursor by this margin means each delta pull re-scans
+  /// a short overlap window, so skew up to [_deltaCursorLookback] is tolerated
+  /// immediately. Re-scanning is cheap (only docs mutated inside the window
+  /// match the `updated_at` filter) and idempotent (upserts are last-writer-
+  /// wins). The periodic full pull remains the backstop for larger skew.
+  static const _deltaCursorLookback = Duration(minutes: 10);
+
   static const _prefsKeyLastSyncAt = 'sync_last_sync_at';
   static const _prefsKeyInitialMigrationDone = 'sync_initial_migration_done';
   static const _prefsKeyTodaysFivePersistedAt = 'sync_todays_five_persisted_at';
@@ -41,7 +69,10 @@ class SyncService {
   static const _pushDebounceDelay = Duration(seconds: 5);
   static const _pullInterval = Duration(minutes: 5);
 
-  SyncService(this._authProvider);
+  /// [firestore] is injectable so tests can drive `pull`/`push` against a fake
+  /// Firestore without real network/env config; production passes nothing.
+  SyncService(this._authProvider, {FirestoreService? firestore})
+      : _firestore = firestore ?? FirestoreService();
 
   /// Returns today's date as YYYY-MM-DD string for Firestore document key.
   String _todayDateKey() => todayDateKey();
@@ -63,8 +94,9 @@ class SyncService {
       }
       pull();
     });
-    // Immediate pull so we don't wait 5 minutes for the first sync.
-    if (_canSync) pull();
+    // Immediate pull so we don't wait 5 minutes for the first sync. Request a
+    // (throttled) full reconciliation since this is an app/tab open.
+    if (_canSync) pull(fullPullOnOpen: true);
   }
 
   /// Stop all timers.
@@ -450,7 +482,11 @@ class SyncService {
   }
 
   /// Pull remote changes and merge into local DB.
-  Future<void> pull() async {
+  ///
+  /// [fullPullOnOpen] requests a full reconciliation (not just a delta) when
+  /// this is an app/tab open, throttled by [_fullPullOnOpenThrottle] so rapid
+  /// reopens don't blow the Firestore read quota.
+  Future<void> pull({bool fullPullOnOpen = false}) async {
     if (!_canSync) return;
     if (_syncing) {
       _pullPending = true;
@@ -471,16 +507,30 @@ class SyncService {
       final prefs = await SharedPreferences.getInstance();
       var lastSyncAt = prefs.getInt(_prefsKeyLastSyncAt);
 
-      // Periodic full pull: every _fullPullInterval cycles, clear lastSyncAt
-      // to force a full reconciliation. Catches updates missed by delta pulls
-      // (e.g. when lastSyncAt advanced past a task's updated_at).
-      // Counter is persisted so it survives app restarts.
+      // Full reconciliation (clear lastSyncAt) is forced in two cases, both of
+      // which catch updates missed by delta pulls (e.g. when lastSyncAt advanced
+      // past a task's updated_at):
+      //   1. Every _fullPullInterval cycles (counter persisted across restarts).
+      //   2. On app/tab open, if it's been >= _fullPullOnOpenThrottle since the
+      //      last full pull — closes the "short web session never full-pulls"
+      //      gap without a full pull on every reopen.
       final pullCycleCount = (prefs.getInt(_prefsKeyPullCycleCount) ?? 0) + 1;
       await prefs.setInt(_prefsKeyPullCycleCount, pullCycleCount);
-      if (lastSyncAt != null && pullCycleCount % _fullPullInterval == 0) {
-        debugPrint('SyncService: periodic full pull (cycle $pullCycleCount)');
+      final periodicFull =
+          lastSyncAt != null && pullCycleCount % _fullPullInterval == 0;
+      final lastFullPullAt = prefs.getInt(_prefsKeyLastFullPullAt) ?? 0;
+      final openFull = fullPullOnOpen &&
+          lastSyncAt != null &&
+          DateTime.now().millisecondsSinceEpoch - lastFullPullAt >=
+              _fullPullOnOpenThrottle.inMilliseconds;
+      if (periodicFull || openFull) {
+        debugLog('SyncService: full pull (cycle $pullCycleCount, '
+            'onOpen=$openFull)');
         lastSyncAt = null;
       }
+      // A null cursor here (forced above, or first-ever sync) means this is a
+      // full pull — record it so the on-open throttle can measure from it.
+      final isFullPull = lastSyncAt == null;
 
       // Pull tasks
       final remoteTasks = await _firestore.pullTasksSince(
@@ -625,11 +675,11 @@ class SyncService {
         // a chance to see the tombstones.
         const tombstoneMaxAge = Duration(days: 7);
         _firestore.cleanupTombstones(uid, idToken, 'relationships', tombstoneMaxAge).catchError(
-            (e) => debugPrint('Tombstone cleanup (relationships) failed: $e'));
+            (e) => debugLog('Tombstone cleanup (relationships) failed: $e'));
         _firestore.cleanupTombstones(uid, idToken, 'dependencies', tombstoneMaxAge).catchError(
-            (e) => debugPrint('Tombstone cleanup (dependencies) failed: $e'));
+            (e) => debugLog('Tombstone cleanup (dependencies) failed: $e'));
         _firestore.cleanupTombstones(uid, idToken, 'schedules', tombstoneMaxAge).catchError(
-            (e) => debugPrint('Tombstone cleanup (schedules) failed: $e'));
+            (e) => debugLog('Tombstone cleanup (schedules) failed: $e'));
       }
 
       // Pull Today's 5 state (+ deadline suppressions)
@@ -648,8 +698,19 @@ class SyncService {
         if (todaysFiveChanged) anyChange = true;
       }
 
-      // Update last sync timestamp
-      await prefs.setInt(_prefsKeyLastSyncAt, DateTime.now().millisecondsSinceEpoch);
+      // Update last sync timestamp. Rewind by the skew lookback so a lagging
+      // writer's edits (updated_at stamped by a clock behind ours) aren't
+      // skipped by the next delta pull — see [_deltaCursorLookback].
+      await prefs.setInt(
+        _prefsKeyLastSyncAt,
+        DateTime.now().millisecondsSinceEpoch -
+            _deltaCursorLookback.inMilliseconds,
+      );
+      // Record a successful full pull so the on-open throttle measures from it.
+      if (isFullPull) {
+        await prefs.setInt(_prefsKeyLastFullPullAt,
+            DateTime.now().millisecondsSinceEpoch);
+      }
 
       _authProvider.setSyncStatus(SyncStatus.synced);
 
