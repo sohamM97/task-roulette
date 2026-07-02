@@ -1251,6 +1251,12 @@ void main() {
       expect(capturedWrite, isNotNull);
       final update = capturedWrite!['update'] as Map<String, dynamic>;
       expect(update['name'], contains('parent1_child1'));
+      // Regression: the resource name must be a relative path, NOT a full REST
+      // URL embedded after the resource prefix (which Firestore rejects, making
+      // the tombstone write fail and the deletion never propagate).
+      expect(update['name'], isNot(contains('https://')));
+      expect(update['name'],
+          endsWith('/documents/users/u/relationships/parent1_child1'));
       final fields = update['fields'] as Map<String, dynamic>;
       expect(fields['parent_sync_id'], {'stringValue': 'parent1'});
       expect(fields['child_sync_id'], {'stringValue': 'child1'});
@@ -1292,6 +1298,9 @@ void main() {
       expect(capturedWrite, isNotNull);
       final update = capturedWrite!['update'] as Map<String, dynamic>;
       expect(update['name'], contains('task1_dep1'));
+      expect(update['name'], isNot(contains('https://')));
+      expect(update['name'],
+          endsWith('/documents/users/u/dependencies/task1_dep1'));
       final fields = update['fields'] as Map<String, dynamic>;
       expect(fields['task_sync_id'], {'stringValue': 'task1'});
       expect(fields['depends_on_sync_id'], {'stringValue': 'dep1'});
@@ -1318,6 +1327,8 @@ void main() {
       expect(capturedWrite, isNotNull);
       final update = capturedWrite!['update'] as Map<String, dynamic>;
       expect(update['name'], contains('sched-abc'));
+      expect(update['name'], isNot(contains('https://')));
+      expect(update['name'], endsWith('/documents/users/u/schedules/sched-abc'));
       final fields = update['fields'] as Map<String, dynamic>;
       expect(fields.containsKey('deleted_at'), isTrue);
       expect(fields.containsKey('updated_at'), isTrue);

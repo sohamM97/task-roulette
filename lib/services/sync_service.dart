@@ -21,6 +21,11 @@ class SyncService {
   bool _syncing = false;
   bool _pushPending = false;
   bool _pullPending = false;
+  // Whether the deferred (queued-because-syncing) pull should be a full pull.
+  // Bug fix: without carrying this, a pull(fullPullOnOpen: true) that lands
+  // while a sync is in flight was re-dispatched as a plain delta pull, so the
+  // on-open/on-resume full reconciliation silently didn't happen.
+  bool _pendingPullFull = false;
   bool _skipNextPeriodicPull = false;
 
   /// Every Nth pull does a full reconciliation instead of delta, catching any
@@ -123,11 +128,15 @@ class SyncService {
   /// Records that Today's 5 was persisted locally, then schedules a push.
   /// The timestamp is used during pull merge to determine whether remote
   /// or local state is newer (last-writer-wins).
-  void onTodaysFivePersisted() {
-    SharedPreferences.getInstance().then((prefs) {
-      prefs.setInt(
-          _prefsKeyTodaysFivePersistedAt, DateTime.now().millisecondsSinceEpoch);
-    });
+  ///
+  /// The pref write is awaited (not fire-and-forget): otherwise, if the OS
+  /// killed the app after a pin but before the timestamp flushed to disk, the
+  /// next launch could compute last-writer-wins against a stale timestamp and
+  /// drop the unpushed local pin.
+  Future<void> onTodaysFivePersisted() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+        _prefsKeyTodaysFivePersistedAt, DateTime.now().millisecondsSinceEpoch);
     schedulePush();
   }
 
@@ -476,7 +485,9 @@ class SyncService {
         schedulePush();
       } else if (_pullPending) {
         _pullPending = false;
-        pull();
+        final full = _pendingPullFull;
+        _pendingPullFull = false;
+        pull(fullPullOnOpen: full);
       }
     }
   }
@@ -490,6 +501,7 @@ class SyncService {
     if (!_canSync) return;
     if (_syncing) {
       _pullPending = true;
+      _pendingPullFull = _pendingPullFull || fullPullOnOpen;
       return;
     }
     _syncing = true;
@@ -551,11 +563,19 @@ class SyncService {
         // can apply remote deletions without a full reconciliation.
         final recentRels = await _firestore.pullRelationshipsSince(
             uid, idToken, lastSyncAt);
+        // Don't drop an edge that has a pending local add (re-created but not
+        // yet pushed) just because a stale tombstone is still in the delta
+        // window — it would flicker out of the UI until the push re-asserts it.
+        // Same guard the full-pull path uses.
+        final pendingRelKeys = await _db.getPendingSyncAddKeys('relationship');
         for (final rel in recentRels) {
           if (rel.deleted) {
-            await _db.removeRelationshipFromRemote(
-                rel.parentSyncId, rel.childSyncId);
-            anyChange = true;
+            if (!pendingRelKeys.contains(
+                '${rel.parentSyncId}:${rel.childSyncId}')) {
+              await _db.removeRelationshipFromRemote(
+                  rel.parentSyncId, rel.childSyncId);
+              anyChange = true;
+            }
           } else {
             final wouldCycle = await _db.wouldRelationshipCreateCycle(
                 rel.parentSyncId, rel.childSyncId);
@@ -596,11 +616,16 @@ class SyncService {
       if (lastSyncAt != null) {
         final recentDeps = await _firestore.pullDependenciesSince(
             uid, idToken, lastSyncAt);
+        // See relationship branch: skip removal when a pending local add exists.
+        final pendingDepKeys = await _db.getPendingSyncAddKeys('dependency');
         for (final dep in recentDeps) {
           if (dep.deleted) {
-            await _db.removeDependencyFromRemote(
-                dep.taskSyncId, dep.dependsOnSyncId);
-            anyChange = true;
+            if (!pendingDepKeys.contains(
+                '${dep.taskSyncId}:${dep.dependsOnSyncId}')) {
+              await _db.removeDependencyFromRemote(
+                  dep.taskSyncId, dep.dependsOnSyncId);
+              anyChange = true;
+            }
           } else {
             final wouldCycle = await _db.wouldDependencyCreateCycle(
                 dep.taskSyncId, dep.dependsOnSyncId);
@@ -640,10 +665,12 @@ class SyncService {
       if (lastSyncAt != null) {
         final recentSchedules = await _firestore.pullSchedulesSince(
             uid, idToken, lastSyncAt);
+        // See relationship branch: skip removal when a pending local add exists.
+        final pendingScheduleKeys = await _db.getPendingSyncAddKeys('schedule');
         for (final schedule in recentSchedules) {
           if (schedule['deleted'] == true) {
             final syncId = schedule['sync_id'] as String?;
-            if (syncId != null) {
+            if (syncId != null && !pendingScheduleKeys.contains(syncId)) {
               await _db.deleteScheduleBySyncId(syncId);
               anyChange = true;
             }
@@ -727,7 +754,9 @@ class SyncService {
         schedulePush();
       } else if (_pullPending) {
         _pullPending = false;
-        pull();
+        final full = _pendingPullFull;
+        _pendingPullFull = false;
+        pull(fullPullOnOpen: full);
       }
     }
   }

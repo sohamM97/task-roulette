@@ -182,7 +182,12 @@ class FirestoreService {
   ) async {
     final docId = '${parentSyncId}_$childSyncId';
     final now = DateTime.now().millisecondsSinceEpoch;
-    await _softDelete('${_relationshipsPath(uid)}/$docId', idToken, {
+    // Pass the RELATIVE document path — _softDelete prepends the resource
+    // prefix. Bug fix: previously passed _relationshipsPath (a full REST URL),
+    // producing an invalid `projects/.../documents/https://.../users/...` name
+    // that Firestore rejected, so tombstone writes failed and remote deletions
+    // never propagated (the sync_queue entry stayed stuck).
+    await _softDelete('users/$uid/relationships/$docId', idToken, {
       'parent_sync_id': {'stringValue': parentSyncId},
       'child_sync_id': {'stringValue': childSyncId},
       'updated_at': {'integerValue': now.toString()},
@@ -199,7 +204,8 @@ class FirestoreService {
   ) async {
     final docId = '${taskSyncId}_$dependsOnSyncId';
     final now = DateTime.now().millisecondsSinceEpoch;
-    await _softDelete('${_dependenciesPath(uid)}/$docId', idToken, {
+    // Relative path — see deleteRelationship for why a full URL here is a bug.
+    await _softDelete('users/$uid/dependencies/$docId', idToken, {
       'task_sync_id': {'stringValue': taskSyncId},
       'depends_on_sync_id': {'stringValue': dependsOnSyncId},
       'updated_at': {'integerValue': now.toString()},
@@ -447,7 +453,8 @@ class FirestoreService {
     String scheduleSyncId,
   ) async {
     final now = DateTime.now().millisecondsSinceEpoch;
-    await _softDelete('${_schedulesPath(uid)}/$scheduleSyncId', idToken, {
+    // Relative path — see deleteRelationship for why a full URL here is a bug.
+    await _softDelete('users/$uid/schedules/$scheduleSyncId', idToken, {
       'updated_at': {'integerValue': now.toString()},
       'deleted_at': {'integerValue': now.toString()},
     });
@@ -835,6 +842,10 @@ class FirestoreService {
   /// Soft-delete: PATCH (update) the document with the given fields
   /// (which should include deleted_at + updated_at). Uses the commit
   /// API with an update write so the doc is created-or-updated.
+  ///
+  /// [docPath] must be the RELATIVE document path (e.g.
+  /// `users/{uid}/relationships/{docId}`) — NOT a full REST URL. This method
+  /// prepends the `projects/.../documents/` resource prefix itself.
   Future<void> _softDelete(String docPath, String idToken, Map<String, dynamic> fields) async {
     final commitUrl = Uri.parse(
       'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',

@@ -366,7 +366,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       pinnedIds: currentIds.toSet(),
     );
     if (mounted) {
-      context.read<SyncService>().onTodaysFivePersisted();
+      await context.read<SyncService>().onTodaysFivePersisted();
     }
   }
 

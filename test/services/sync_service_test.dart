@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -27,6 +29,19 @@ class _FakeAuthProvider extends AuthProvider {
 class _FakeFirestoreService extends FirestoreService {
   final List<int?> capturedTaskCursors = [];
 
+  /// Relationships the delta pull should return (defaults to none).
+  List<({String parentSyncId, String childSyncId, bool deleted})> relsSince =
+      const [];
+
+  /// Dependencies the delta pull should return (defaults to none).
+  List<({String taskSyncId, String dependsOnSyncId, bool deleted})> depsSince =
+      const [];
+
+  /// If set, the FIRST task pull awaits this before returning — lets a test
+  /// hold `_syncing` true and issue a second pull that gets queued.
+  Completer<void>? gateFirstTaskPull;
+  bool _firstTaskPullGated = false;
+
   @override
   bool get isConfigured => true;
 
@@ -34,6 +49,10 @@ class _FakeFirestoreService extends FirestoreService {
   Future<List<Task>> pullTasksSince(String uid, String idToken,
       {int? lastSyncAt}) async {
     capturedTaskCursors.add(lastSyncAt);
+    if (gateFirstTaskPull != null && !_firstTaskPullGated) {
+      _firstTaskPullGated = true;
+      await gateFirstTaskPull!.future;
+    }
     return const [];
   }
 
@@ -44,7 +63,7 @@ class _FakeFirestoreService extends FirestoreService {
   @override
   Future<List<({String parentSyncId, String childSyncId, bool deleted})>>
       pullRelationshipsSince(String uid, String idToken, int lastSyncAt) async =>
-          const [];
+          relsSince;
 
   @override
   Future<List<({String taskSyncId, String dependsOnSyncId})>>
@@ -53,7 +72,7 @@ class _FakeFirestoreService extends FirestoreService {
   @override
   Future<List<({String taskSyncId, String dependsOnSyncId, bool deleted})>>
       pullDependenciesSince(String uid, String idToken, int lastSyncAt) async =>
-          const [];
+          depsSince;
 
   @override
   Future<List<Map<String, dynamic>>> pullAllSchedules(
@@ -187,6 +206,101 @@ void main() {
       await sync.pull(); // fullPullOnOpen defaults to false
 
       expect(fakeFs.capturedTaskCursors.single, 1000); // delta, not full
+    });
+  });
+
+  group('fullPullOnOpen carried through a deferred pull (bug: on-open full pull '
+      'downgraded to delta when it lands during an in-flight sync)', () {
+    test('a fullPullOnOpen queued while syncing is re-dispatched as a full pull',
+        () async {
+      SharedPreferences.setMockInitialValues({
+        'sync_last_sync_at': 1000,
+        'sync_last_full_pull_at': 0, // full-pull throttle is elapsed
+      });
+      final fakeFs = _FakeFirestoreService()..gateFirstTaskPull = Completer<void>();
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      // First pull (delta) parks inside pullTasksSince holding _syncing = true.
+      final first = sync.pull();
+      // Give it a moment to reach the gate.
+      await Future.delayed(const Duration(milliseconds: 20));
+      // This lands while syncing → gets queued as a pending pull.
+      final second = sync.pull(fullPullOnOpen: true);
+      // Release the first pull; its finally re-dispatches the queued pull.
+      fakeFs.gateFirstTaskPull!.complete();
+      await Future.wait([first, second]);
+      // Wait for the re-dispatched pull to run.
+      for (var i = 0; i < 100 && fakeFs.capturedTaskCursors.length < 2; i++) {
+        await Future.delayed(const Duration(milliseconds: 5));
+      }
+
+      expect(fakeFs.capturedTaskCursors.first, 1000); // first pull: delta
+      // The re-dispatched pull must honour fullPullOnOpen → full pull (null
+      // cursor), not silently downgrade to a delta pull.
+      expect(fakeFs.capturedTaskCursors.last, isNull);
+    });
+  });
+
+  group('delta tombstone removal respects pending local adds (bug: a re-added '
+      'edge flickers away)', () {
+    Future<({String p, String c})> seedEdge() async {
+      final pid = await db.insertTask(Task(name: 'Parent', syncId: 'sp'));
+      final cid = await db.insertTask(Task(name: 'Child', syncId: 'sc'));
+      await db.addRelationship(pid, cid); // also enqueues a pending 'add'
+      return (p: 'sp', c: 'sc');
+    }
+
+    test('keeps the edge when its add is still pending push', () async {
+      SharedPreferences.setMockInitialValues({'sync_last_sync_at': 1000});
+      await seedEdge();
+
+      final fakeFs = _FakeFirestoreService()
+        ..relsSince = [(parentSyncId: 'sp', childSyncId: 'sc', deleted: true)];
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.pull();
+
+      // The pending local add protects the just-re-created edge from the stale
+      // remote tombstone — it must survive.
+      final rels = await db.getAllRelationshipsWithSyncIds();
+      expect(rels.any((r) => r.parentSyncId == 'sp' && r.childSyncId == 'sc'),
+          isTrue);
+    });
+
+    test('removes the edge when there is no pending add', () async {
+      SharedPreferences.setMockInitialValues({'sync_last_sync_at': 1000});
+      await seedEdge();
+      await db.drainSyncQueue(); // simulate the add already pushed
+
+      final fakeFs = _FakeFirestoreService()
+        ..relsSince = [(parentSyncId: 'sp', childSyncId: 'sc', deleted: true)];
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.pull();
+
+      final rels = await db.getAllRelationshipsWithSyncIds();
+      expect(rels.any((r) => r.parentSyncId == 'sp' && r.childSyncId == 'sc'),
+          isFalse);
+    });
+
+    test('dependency branch: keeps the dep when its add is still pending',
+        () async {
+      SharedPreferences.setMockInitialValues({'sync_last_sync_at': 1000});
+      final tid = await db.insertTask(Task(name: 'Task', syncId: 'st'));
+      final did = await db.insertTask(Task(name: 'Blocker', syncId: 'sd'));
+      await db.addDependency(tid, did); // enqueues a pending 'add'
+
+      final fakeFs = _FakeFirestoreService()
+        ..depsSince = [
+          (taskSyncId: 'st', dependsOnSyncId: 'sd', deleted: true)
+        ];
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.pull();
+
+      final deps = await db.getAllDependenciesWithSyncIds();
+      expect(deps.any((d) => d.taskSyncId == 'st' && d.dependsOnSyncId == 'sd'),
+          isTrue);
     });
   });
 }
