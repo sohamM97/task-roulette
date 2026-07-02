@@ -2640,6 +2640,13 @@ class DatabaseHelper {
 
   // --- Today's 5 state methods ---
 
+  /// SharedPreferences key holding the epoch-ms of the last LOCAL Today's 5
+  /// save. It is the last-writer-wins authority for pin state in
+  /// [upsertTodaysFiveFromRemote]. Stamped centrally by [saveTodaysFiveState]
+  /// (below). Public so [SyncService] reads the same key without duplicating
+  /// the string.
+  static const prefsKeyTodaysFivePersistedAt = 'sync_todays_five_persisted_at';
+
   /// Saves Today's 5 state to the DB, replacing any existing data for [date].
   Future<void> saveTodaysFiveState({
     required String date,
@@ -2663,6 +2670,18 @@ class DatabaseHelper {
         });
       }
     });
+    // Stamp the LWW timestamp on EVERY local Today's 5 save — mirrors how
+    // _dirtyFields() stamps updated_at on task writes. Bug fix (Codex P2):
+    // previously only the Today screen's persist path stamped this (via
+    // SyncService.onTodaysFivePersisted); pins/unpins from All Tasks and Add
+    // Task saved without stamping, so localPersistedAt stayed stale — a pull
+    // arriving before the debounced push judged the remote newer and discarded
+    // the local pin change. Centralising it here guarantees no path is missed.
+    // NOTE: upsertTodaysFiveFromRemote writes todays_five_state via its own txn
+    // (not this method), so a remote merge correctly does NOT bump this.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+        prefsKeyTodaysFivePersistedAt, DateTime.now().millisecondsSinceEpoch);
   }
 
   /// Deletes Today's 5 state for [date]. Debug/test only — used to simulate
@@ -2897,7 +2916,13 @@ class DatabaseHelper {
           sortOrder: r.sortOrder,
         ));
       }
-      // Append local-only pinned tasks (always preserved, up to maxSlots total)
+      // Append local-only pinned tasks (always preserved, up to maxSlots total).
+      // NOTE: these are NOT dropped on a remote-newer merge — whole-doc LWW
+      // can't tell "remote removed this" from "this is a fresh local pin the
+      // remote hasn't seen yet", so dropping here would lose an unpushed local
+      // pin whenever the remote was touched more recently for any reason. The
+      // bounce-back of an intentional non-deadline removal (Codex P2) needs a
+      // per-task removal tombstone (like deadline suppression), not this path.
       var nextOrder = mergedList.length;
       for (final localId in localState.taskIds) {
         if (mergedList.length >= maxSlots) break;

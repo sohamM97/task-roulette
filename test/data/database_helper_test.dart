@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:task_roulette/data/database_helper.dart';
 import 'package:task_roulette/data/todays_five_pin_helper.dart';
@@ -7,6 +8,10 @@ import 'package:task_roulette/models/task.dart';
 import 'package:task_roulette/models/task_schedule.dart';
 
 void main() {
+  // saveTodaysFiveState stamps the LWW timestamp in SharedPreferences, so the
+  // prefs mock must be available to these DB tests.
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late DatabaseHelper db;
 
   setUpAll(() {
@@ -16,6 +21,7 @@ void main() {
   });
 
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     db = DatabaseHelper();
     await db.reset();
     // Force initialization
@@ -3830,6 +3836,19 @@ void main() {
       expect(state!.completedIds, {id1, id2});
       // Task A should be worked_on (remote true OR local false)
       expect(state.workedOnIds, {id1});
+    });
+
+    test('saveTodaysFiveState stamps the LWW persisted-at timestamp', () async {
+      // Bug fix (Codex P2): the LWW authority must be stamped on EVERY local
+      // save (not just the Today screen's path), else pins from All Tasks / Add
+      // Task leave it stale and a pull discards the local change.
+      final before = DateTime.now().millisecondsSinceEpoch;
+      await db.saveTodaysFiveState(
+        date: date, taskIds: [], completedIds: {}, workedOnIds: {});
+      final prefs = await SharedPreferences.getInstance();
+      final ts = prefs.getInt(DatabaseHelper.prefsKeyTodaysFivePersistedAt);
+      expect(ts, isNotNull);
+      expect(ts, greaterThanOrEqualTo(before));
     });
 
     test('upsertTodaysFiveFromRemote: appends local-only pinned/completed tasks', () async {
