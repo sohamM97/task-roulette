@@ -1,5 +1,6 @@
 import 'dart:math' show sqrt;
-import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, listEquals, setEquals, visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
@@ -2804,6 +2805,8 @@ class DatabaseHelper {
   ///   for tasks in both lists; append local-only pinned/completed tasks up
   ///   to max 5 slots.
   ///
+  /// Returns true if the local DB was actually changed, false if already equal.
+  ///
   /// [remoteSuppressedSyncIds] carries the pushing device's deadline-today
   /// suppressions (tasks the user removed despite being due today). Bug fix:
   /// without syncing these, a removal on one device bounced back — another
@@ -2813,10 +2816,17 @@ class DatabaseHelper {
   /// state so the OR-merge's local-only-pinned append can't re-add it. A task
   /// the remote still lists as a member is treated as un-suppressed, so a
   /// re-pin on another device propagates too.
-  Future<void> upsertTodaysFiveFromRemote(
+  ///
+  /// [remoteUpdatedAt] / [localPersistedAt] drive last-writer-wins for pin
+  /// state: when remote is newer its pin bit wins (so a cross-device unpin
+  /// propagates); when local is newer the local pin is preserved. Completion
+  /// and worked-on are always OR-merged (monotonic — undo is a local action).
+  Future<bool> upsertTodaysFiveFromRemote(
     String date,
     List<Map<String, dynamic>> remoteEntries, {
     List<String> remoteSuppressedSyncIds = const [],
+    int remoteUpdatedAt = 0,
+    int localPersistedAt = 0,
   }) async {
     final db = await database;
 
@@ -2857,26 +2867,33 @@ class DatabaseHelper {
     if (resolved.isEmpty) {
       // No mergeable remote entries, but a synced suppression must still drop
       // the task from our local Today's 5 so the removal sticks here too.
+      var changed = false;
       for (final id in remoteSuppressedIds) {
-        await db.delete('todays_five_state',
+        final n = await db.delete('todays_five_state',
             where: 'date = ? AND task_id = ?', whereArgs: [date, id]);
+        if (n > 0) changed = true;
       }
-      return;
+      return changed;
     }
 
     final localState = await loadTodaysFiveState(date);
+    // Pin state uses last-writer-wins so a cross-device unpin propagates
+    // instead of being resurrected by the OR-merge.
+    final remoteIsNewer = remoteUpdatedAt >= localPersistedAt;
     final mergedList = <({int taskId, bool isCompleted, bool isWorkedOn, bool isPinned, int sortOrder})>[];
 
     if (localState == null) {
       mergedList.addAll(resolved);
     } else {
-      // OR-merge status bits for tasks present in both.
+      // OR-merge completion/worked-on (monotonic); LWW for pins.
       for (final r in resolved) {
         mergedList.add((
           taskId: r.taskId,
           isCompleted: r.isCompleted || localState.completedIds.contains(r.taskId),
           isWorkedOn: r.isWorkedOn || localState.workedOnIds.contains(r.taskId),
-          isPinned: r.isPinned || localState.pinnedIds.contains(r.taskId),
+          isPinned: remoteIsNewer
+              ? r.isPinned
+              : (r.isPinned || localState.pinnedIds.contains(r.taskId)),
           sortOrder: r.sortOrder,
         ));
       }
@@ -2915,6 +2932,24 @@ class DatabaseHelper {
     final suppressedNow = await getDeadlineSuppressedIds(date);
     mergedList.removeWhere((m) => suppressedNow.contains(m.taskId));
 
+    // Skip the write (and the resulting UI reload) if the merged state is
+    // identical to what's already stored locally.
+    if (localState != null) {
+      final mergedTaskIds = mergedList.map((m) => m.taskId).toList();
+      final mergedCompletedIds =
+          mergedList.where((m) => m.isCompleted).map((m) => m.taskId).toSet();
+      final mergedWorkedOnIds =
+          mergedList.where((m) => m.isWorkedOn).map((m) => m.taskId).toSet();
+      final mergedPinnedIds =
+          mergedList.where((m) => m.isPinned).map((m) => m.taskId).toSet();
+      if (listEquals(mergedTaskIds, localState.taskIds) &&
+          setEquals(mergedCompletedIds, localState.completedIds) &&
+          setEquals(mergedWorkedOnIds, localState.workedOnIds) &&
+          setEquals(mergedPinnedIds, localState.pinnedIds)) {
+        return false;
+      }
+    }
+
     await db.transaction((txn) async {
       await txn.delete('todays_five_state', where: 'date = ?', whereArgs: [date]);
       for (final m in mergedList) {
@@ -2928,6 +2963,7 @@ class DatabaseHelper {
         });
       }
     });
+    return true;
   }
 
   /// Migrates Today's 5 state from SharedPreferences to the DB (idempotent).

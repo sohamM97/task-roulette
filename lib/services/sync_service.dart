@@ -13,21 +13,71 @@ import 'firestore_service.dart';
 /// - Initial migration: push all local data on first sign-in
 class SyncService {
   final DatabaseHelper _db = DatabaseHelper();
-  final FirestoreService _firestore = FirestoreService();
+  final FirestoreService _firestore;
   final AuthProvider _authProvider;
 
   Timer? _pushDebounceTimer;
   Timer? _periodicPullTimer;
   bool _syncing = false;
   bool _pushPending = false;
+  bool _pullPending = false;
+  // Whether the deferred (queued-because-syncing) pull should be a full pull.
+  // Bug fix: without carrying this, a pull(fullPullOnOpen: true) that lands
+  // while a sync is in flight was re-dispatched as a plain delta pull, so the
+  // on-open/on-resume full reconciliation silently didn't happen.
+  bool _pendingPullFull = false;
+  bool _skipNextPeriodicPull = false;
+
+  /// Every Nth pull does a full reconciliation instead of delta, catching any
+  /// updates that were missed due to lastSyncAt advancing past their updated_at.
+  /// Bug fix: without this, a task updated on device A could be permanently
+  /// invisible to device B's delta pulls if B's lastSyncAt advanced past the
+  /// task's updated_at (e.g. due to quota errors or timing).
+  /// Counter is persisted so it survives app restarts (especially important
+  /// for web where users frequently close/reopen the tab).
+  static const _fullPullInterval = 10;
+  static const _prefsKeyPullCycleCount = 'sync_pull_cycle_count';
+
+  /// On app/tab open, do a full reconciliation pull (not just delta) if it's
+  /// been at least this long since the last successful full pull.
+  ///
+  /// Bug fix: web sessions are often shorter than the ~50-min periodic
+  /// full-pull interval (users open a tab briefly and close it), and the pull
+  /// cycle counter is persisted — so a bursty user could go days on delta-only
+  /// pulls and never reconcile stranded/stale data. A full pull on open closes
+  /// that gap. Throttling by wall-clock (rather than firing on every open)
+  /// bounds the extra Firestore reads so frequent tab reopens don't blow the
+  /// read quota.
+  static const _fullPullOnOpenThrottle = Duration(hours: 2);
+  static const _prefsKeyLastFullPullAt = 'sync_last_full_pull_at';
+
+  /// Lookback margin subtracted from the delta-pull cursor when it's persisted.
+  ///
+  /// Root-cause fix for the "edit made on one device never reaches another"
+  /// bug: the cursor (`_prefsKeyLastSyncAt`) is stamped with THIS device's
+  /// wall clock, but remote `updated_at` values are stamped by the *writing*
+  /// device's clock. When this reader's clock runs ahead of a writer's, that
+  /// writer's edits (a rename, a completion) get an `updated_at` below the
+  /// cursor and are skipped by every future delta pull — a permanent miss,
+  /// previously only healed by the every-10th-cycle full pull (~50 min).
+  /// Rewinding the stored cursor by this margin means each delta pull re-scans
+  /// a short overlap window, so skew up to [_deltaCursorLookback] is tolerated
+  /// immediately. Re-scanning is cheap (only docs mutated inside the window
+  /// match the `updated_at` filter) and idempotent (upserts are last-writer-
+  /// wins). The periodic full pull remains the backstop for larger skew.
+  static const _deltaCursorLookback = Duration(minutes: 10);
 
   static const _prefsKeyLastSyncAt = 'sync_last_sync_at';
   static const _prefsKeyInitialMigrationDone = 'sync_initial_migration_done';
+  static const _prefsKeyTodaysFivePersistedAt = 'sync_todays_five_persisted_at';
 
   static const _pushDebounceDelay = Duration(seconds: 5);
   static const _pullInterval = Duration(minutes: 5);
 
-  SyncService(this._authProvider);
+  /// [firestore] is injectable so tests can drive `pull`/`push` against a fake
+  /// Firestore without real network/env config; production passes nothing.
+  SyncService(this._authProvider, {FirestoreService? firestore})
+      : _firestore = firestore ?? FirestoreService();
 
   /// Returns today's date as YYYY-MM-DD string for Firestore document key.
   String _todayDateKey() => todayDateKey();
@@ -42,10 +92,16 @@ class SyncService {
   void startPeriodicPull() {
     _periodicPullTimer?.cancel();
     _periodicPullTimer = Timer.periodic(_pullInterval, (_) {
-      if (_canSync) pull();
+      if (!_canSync) return;
+      if (_skipNextPeriodicPull) {
+        _skipNextPeriodicPull = false;
+        return;
+      }
+      pull();
     });
-    // Immediate pull so we don't wait 5 minutes for the first sync.
-    if (_canSync) pull();
+    // Immediate pull so we don't wait 5 minutes for the first sync. Request a
+    // (throttled) full reconciliation since this is an app/tab open.
+    if (_canSync) pull(fullPullOnOpen: true);
   }
 
   /// Stop all timers.
@@ -67,6 +123,32 @@ class SyncService {
     _pushDebounceTimer = Timer(_pushDebounceDelay, () {
       if (_canSync) push();
     });
+  }
+
+  /// Records that Today's 5 was persisted locally, then schedules a push.
+  /// The timestamp is used during pull merge to determine whether remote
+  /// or local state is newer (last-writer-wins).
+  ///
+  /// The pref write is awaited (not fire-and-forget): otherwise, if the OS
+  /// killed the app after a pin but before the timestamp flushed to disk, the
+  /// next launch could compute last-writer-wins against a stale timestamp and
+  /// drop the unpushed local pin.
+  Future<void> onTodaysFivePersisted() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+        _prefsKeyTodaysFivePersistedAt, DateTime.now().millisecondsSinceEpoch);
+    schedulePush();
+  }
+
+  /// Cancel any pending debounce timer and push immediately.
+  /// Called when the app goes to the background so unsaved changes
+  /// aren't lost if the OS kills the process.
+  void flushPush() {
+    if (_pushDebounceTimer?.isActive ?? false) {
+      _pushDebounceTimer!.cancel();
+      _pushDebounceTimer = null;
+      if (_canSync) push();
+    }
   }
 
   /// Returns true if this is the first sign-in (migration not yet done).
@@ -391,6 +473,9 @@ class SyncService {
       }
 
       _authProvider.setSyncStatus(SyncStatus.synced);
+      // Skip the next periodic pull — we just pushed, so remote matches local.
+      // Explicit pull() calls (startup, manual sync) are not affected.
+      _skipNextPeriodicPull = true;
     } catch (e) {
       _authProvider.setSyncStatus(SyncStatus.error, error: _userFriendlyError(e));
     } finally {
@@ -398,13 +483,27 @@ class SyncService {
       if (_pushPending) {
         _pushPending = false;
         schedulePush();
+      } else if (_pullPending) {
+        _pullPending = false;
+        final full = _pendingPullFull;
+        _pendingPullFull = false;
+        pull(fullPullOnOpen: full);
       }
     }
   }
 
   /// Pull remote changes and merge into local DB.
-  Future<void> pull() async {
-    if (!_canSync || _syncing) return;
+  ///
+  /// [fullPullOnOpen] requests a full reconciliation (not just a delta) when
+  /// this is an app/tab open, throttled by [_fullPullOnOpenThrottle] so rapid
+  /// reopens don't blow the Firestore read quota.
+  Future<void> pull({bool fullPullOnOpen = false}) async {
+    if (!_canSync) return;
+    if (_syncing) {
+      _pullPending = true;
+      _pendingPullFull = _pendingPullFull || fullPullOnOpen;
+      return;
+    }
     _syncing = true;
 
     _authProvider.setSyncStatus(SyncStatus.syncing);
@@ -418,7 +517,32 @@ class SyncService {
       final uid = _authProvider.uid!;
 
       final prefs = await SharedPreferences.getInstance();
-      final lastSyncAt = prefs.getInt(_prefsKeyLastSyncAt);
+      var lastSyncAt = prefs.getInt(_prefsKeyLastSyncAt);
+
+      // Full reconciliation (clear lastSyncAt) is forced in two cases, both of
+      // which catch updates missed by delta pulls (e.g. when lastSyncAt advanced
+      // past a task's updated_at):
+      //   1. Every _fullPullInterval cycles (counter persisted across restarts).
+      //   2. On app/tab open, if it's been >= _fullPullOnOpenThrottle since the
+      //      last full pull — closes the "short web session never full-pulls"
+      //      gap without a full pull on every reopen.
+      final pullCycleCount = (prefs.getInt(_prefsKeyPullCycleCount) ?? 0) + 1;
+      await prefs.setInt(_prefsKeyPullCycleCount, pullCycleCount);
+      final periodicFull =
+          lastSyncAt != null && pullCycleCount % _fullPullInterval == 0;
+      final lastFullPullAt = prefs.getInt(_prefsKeyLastFullPullAt) ?? 0;
+      final openFull = fullPullOnOpen &&
+          lastSyncAt != null &&
+          DateTime.now().millisecondsSinceEpoch - lastFullPullAt >=
+              _fullPullOnOpenThrottle.inMilliseconds;
+      if (periodicFull || openFull) {
+        debugLog('SyncService: full pull (cycle $pullCycleCount, '
+            'onOpen=$openFull)');
+        lastSyncAt = null;
+      }
+      // A null cursor here (forced above, or first-ever sync) means this is a
+      // full pull — record it so the on-open throttle can measure from it.
+      final isFullPull = lastSyncAt == null;
 
       // Pull tasks
       final remoteTasks = await _firestore.pullTasksSince(
@@ -433,77 +557,156 @@ class SyncService {
         if (changed) anyChange = true;
       }
 
-      // Pull all relationships and dependencies, then reconcile with local
-      final remoteRels = await _firestore.pullAllRelationships(uid, idToken);
-      for (final rel in remoteRels) {
-        // Check for DAG cycle before inserting
-        final wouldCycle = await _db.wouldRelationshipCreateCycle(
-            rel.parentSyncId, rel.childSyncId);
-        if (!wouldCycle) {
-          await _db.upsertRelationshipFromRemote(rel.parentSyncId, rel.childSyncId);
+      // Pull relationships: delta when possible, full on first sync
+      if (lastSyncAt != null) {
+        // Delta pull — includes tombstoned docs (deleted_at set) so we
+        // can apply remote deletions without a full reconciliation.
+        final recentRels = await _firestore.pullRelationshipsSince(
+            uid, idToken, lastSyncAt);
+        // Don't drop an edge that has a pending local add (re-created but not
+        // yet pushed) just because a stale tombstone is still in the delta
+        // window — it would flicker out of the UI until the push re-asserts it.
+        // Same guard the full-pull path uses.
+        final pendingRelKeys = await _db.getPendingSyncAddKeys('relationship');
+        for (final rel in recentRels) {
+          if (rel.deleted) {
+            if (!pendingRelKeys.contains(
+                '${rel.parentSyncId}:${rel.childSyncId}')) {
+              await _db.removeRelationshipFromRemote(
+                  rel.parentSyncId, rel.childSyncId);
+              anyChange = true;
+            }
+          } else {
+            final wouldCycle = await _db.wouldRelationshipCreateCycle(
+                rel.parentSyncId, rel.childSyncId);
+            if (!wouldCycle) {
+              await _db.upsertRelationshipFromRemote(
+                  rel.parentSyncId, rel.childSyncId);
+              anyChange = true;
+            }
+          }
+        }
+      } else {
+        // Full pull — first sync after sign-in, reconcile deletions
+        final remoteRels = await _firestore.pullAllRelationships(uid, idToken);
+        for (final rel in remoteRels) {
+          final wouldCycle = await _db.wouldRelationshipCreateCycle(
+              rel.parentSyncId, rel.childSyncId);
+          if (!wouldCycle) {
+            await _db.upsertRelationshipFromRemote(
+                rel.parentSyncId, rel.childSyncId);
+          }
+        }
+        final remoteRelSet = remoteRels
+            .map((r) => '${r.parentSyncId}:${r.childSyncId}')
+            .toSet();
+        final pendingRelKeys = await _db.getPendingSyncAddKeys('relationship');
+        final localRels = await _db.getAllRelationshipsWithSyncIds();
+        for (final local in localRels) {
+          final key = '${local.parentSyncId}:${local.childSyncId}';
+          if (!remoteRelSet.contains(key) && !pendingRelKeys.contains(key)) {
+            await _db.removeRelationshipFromRemote(
+                local.parentSyncId, local.childSyncId);
+            anyChange = true;
+          }
         }
       }
 
-      // Remove local synced relationships that no longer exist remotely
-      // but skip any that are pending push (locally created, not yet synced)
-      final remoteRelSet = remoteRels
-          .map((r) => '${r.parentSyncId}:${r.childSyncId}')
-          .toSet();
-      final pendingRelKeys = await _db.getPendingSyncAddKeys('relationship');
-      final localRels = await _db.getAllRelationshipsWithSyncIds();
-      for (final local in localRels) {
-        final key = '${local.parentSyncId}:${local.childSyncId}';
-        if (!remoteRelSet.contains(key) && !pendingRelKeys.contains(key)) {
-          await _db.removeRelationshipFromRemote(
-              local.parentSyncId, local.childSyncId);
-          anyChange = true;
+      // Pull dependencies: delta when possible, full on first sync
+      if (lastSyncAt != null) {
+        final recentDeps = await _firestore.pullDependenciesSince(
+            uid, idToken, lastSyncAt);
+        // See relationship branch: skip removal when a pending local add exists.
+        final pendingDepKeys = await _db.getPendingSyncAddKeys('dependency');
+        for (final dep in recentDeps) {
+          if (dep.deleted) {
+            if (!pendingDepKeys.contains(
+                '${dep.taskSyncId}:${dep.dependsOnSyncId}')) {
+              await _db.removeDependencyFromRemote(
+                  dep.taskSyncId, dep.dependsOnSyncId);
+              anyChange = true;
+            }
+          } else {
+            final wouldCycle = await _db.wouldDependencyCreateCycle(
+                dep.taskSyncId, dep.dependsOnSyncId);
+            if (!wouldCycle) {
+              await _db.upsertDependencyFromRemote(
+                  dep.taskSyncId, dep.dependsOnSyncId);
+              anyChange = true;
+            }
+          }
+        }
+      } else {
+        final remoteDeps = await _firestore.pullAllDependencies(uid, idToken);
+        for (final dep in remoteDeps) {
+          final wouldCycle = await _db.wouldDependencyCreateCycle(
+              dep.taskSyncId, dep.dependsOnSyncId);
+          if (!wouldCycle) {
+            await _db.upsertDependencyFromRemote(
+                dep.taskSyncId, dep.dependsOnSyncId);
+          }
+        }
+        final remoteDepSet = remoteDeps
+            .map((d) => '${d.taskSyncId}:${d.dependsOnSyncId}')
+            .toSet();
+        final pendingDepKeys = await _db.getPendingSyncAddKeys('dependency');
+        final localDeps = await _db.getAllDependenciesWithSyncIds();
+        for (final local in localDeps) {
+          final key = '${local.taskSyncId}:${local.dependsOnSyncId}';
+          if (!remoteDepSet.contains(key) && !pendingDepKeys.contains(key)) {
+            await _db.removeDependencyFromRemote(
+                local.taskSyncId, local.dependsOnSyncId);
+            anyChange = true;
+          }
         }
       }
 
-      final remoteDeps = await _firestore.pullAllDependencies(uid, idToken);
-      for (final dep in remoteDeps) {
-        // Check for dependency cycle before inserting
-        final wouldCycle = await _db.wouldDependencyCreateCycle(
-            dep.taskSyncId, dep.dependsOnSyncId);
-        if (!wouldCycle) {
-          await _db.upsertDependencyFromRemote(dep.taskSyncId, dep.dependsOnSyncId);
+      // Pull schedules: delta when possible, full on first sync
+      if (lastSyncAt != null) {
+        final recentSchedules = await _firestore.pullSchedulesSince(
+            uid, idToken, lastSyncAt);
+        // See relationship branch: skip removal when a pending local add exists.
+        final pendingScheduleKeys = await _db.getPendingSyncAddKeys('schedule');
+        for (final schedule in recentSchedules) {
+          if (schedule['deleted'] == true) {
+            final syncId = schedule['sync_id'] as String?;
+            if (syncId != null && !pendingScheduleKeys.contains(syncId)) {
+              await _db.deleteScheduleBySyncId(syncId);
+              anyChange = true;
+            }
+          } else {
+            await _db.upsertScheduleFromRemote(schedule);
+            anyChange = true;
+          }
         }
-      }
+      } else {
+        final remoteSchedules = await _firestore.pullAllSchedules(uid, idToken);
+        for (final schedule in remoteSchedules) {
+          await _db.upsertScheduleFromRemote(schedule);
+        }
+        final remoteScheduleIds = remoteSchedules
+            .map((s) => s['sync_id'] as String)
+            .toSet();
+        final pendingScheduleKeys = await _db.getPendingSyncAddKeys('schedule');
+        final localScheduleIds = await _db.getAllScheduleSyncIds();
+        for (final localSyncId in localScheduleIds) {
+          if (!remoteScheduleIds.contains(localSyncId) &&
+              !pendingScheduleKeys.contains(localSyncId)) {
+            await _db.deleteScheduleBySyncId(localSyncId);
+            anyChange = true;
+          }
+        }
 
-      // Remove local synced dependencies that no longer exist remotely
-      // but skip any that are pending push (locally created, not yet synced)
-      final remoteDepSet = remoteDeps
-          .map((d) => '${d.taskSyncId}:${d.dependsOnSyncId}')
-          .toSet();
-      final pendingDepKeys = await _db.getPendingSyncAddKeys('dependency');
-      final localDeps = await _db.getAllDependenciesWithSyncIds();
-      for (final local in localDeps) {
-        final key = '${local.taskSyncId}:${local.dependsOnSyncId}';
-        if (!remoteDepSet.contains(key) && !pendingDepKeys.contains(key)) {
-          await _db.removeDependencyFromRemote(
-              local.taskSyncId, local.dependsOnSyncId);
-          anyChange = true;
-        }
-      }
-
-      // Pull schedules
-      final remoteSchedules = await _firestore.pullAllSchedules(uid, idToken);
-      for (final schedule in remoteSchedules) {
-        await _db.upsertScheduleFromRemote(schedule);
-      }
-      // Remove local schedules not in remote
-      // but skip any that are pending push (locally created, not yet synced)
-      final remoteScheduleIds = remoteSchedules
-          .map((s) => s['sync_id'] as String)
-          .toSet();
-      final pendingScheduleKeys = await _db.getPendingSyncAddKeys('schedule');
-      final localScheduleIds = await _db.getAllScheduleSyncIds();
-      for (final localSyncId in localScheduleIds) {
-        if (!remoteScheduleIds.contains(localSyncId) &&
-            !pendingScheduleKeys.contains(localSyncId)) {
-          await _db.deleteScheduleBySyncId(localSyncId);
-          anyChange = true;
-        }
+        // Clean up old tombstones (fire-and-forget, best-effort).
+        // Only on full pull (app startup) — when all devices have had
+        // a chance to see the tombstones.
+        const tombstoneMaxAge = Duration(days: 7);
+        _firestore.cleanupTombstones(uid, idToken, 'relationships', tombstoneMaxAge).catchError(
+            (e) => debugLog('Tombstone cleanup (relationships) failed: $e'));
+        _firestore.cleanupTombstones(uid, idToken, 'dependencies', tombstoneMaxAge).catchError(
+            (e) => debugLog('Tombstone cleanup (dependencies) failed: $e'));
+        _firestore.cleanupTombstones(uid, idToken, 'schedules', tombstoneMaxAge).catchError(
+            (e) => debugLog('Tombstone cleanup (schedules) failed: $e'));
       }
 
       // Pull Today's 5 state (+ deadline suppressions)
@@ -511,13 +714,30 @@ class SyncService {
       final remote5 = await _firestore.pullTodaysFive(uid, idToken, dateKey);
       if (remote5 != null &&
           (remote5.entries.isNotEmpty || remote5.suppressedSyncIds.isNotEmpty)) {
-        await _db.upsertTodaysFiveFromRemote(dateKey, remote5.entries,
-            remoteSuppressedSyncIds: remote5.suppressedSyncIds);
-        anyChange = true;
+        final localPersistedAt = prefs.getInt(_prefsKeyTodaysFivePersistedAt) ?? 0;
+        final todaysFiveChanged = await _db.upsertTodaysFiveFromRemote(
+          dateKey,
+          remote5.entries,
+          remoteSuppressedSyncIds: remote5.suppressedSyncIds,
+          remoteUpdatedAt: remote5.updatedAt,
+          localPersistedAt: localPersistedAt,
+        );
+        if (todaysFiveChanged) anyChange = true;
       }
 
-      // Update last sync timestamp
-      await prefs.setInt(_prefsKeyLastSyncAt, DateTime.now().millisecondsSinceEpoch);
+      // Update last sync timestamp. Rewind by the skew lookback so a lagging
+      // writer's edits (updated_at stamped by a clock behind ours) aren't
+      // skipped by the next delta pull — see [_deltaCursorLookback].
+      await prefs.setInt(
+        _prefsKeyLastSyncAt,
+        DateTime.now().millisecondsSinceEpoch -
+            _deltaCursorLookback.inMilliseconds,
+      );
+      // Record a successful full pull so the on-open throttle measures from it.
+      if (isFullPull) {
+        await prefs.setInt(_prefsKeyLastFullPullAt,
+            DateTime.now().millisecondsSinceEpoch);
+      }
 
       _authProvider.setSyncStatus(SyncStatus.synced);
 
@@ -529,6 +749,15 @@ class SyncService {
       _authProvider.setSyncStatus(SyncStatus.error, error: _userFriendlyError(e));
     } finally {
       _syncing = false;
+      if (_pushPending) {
+        _pushPending = false;
+        schedulePush();
+      } else if (_pullPending) {
+        _pullPending = false;
+        final full = _pendingPullFull;
+        _pendingPullFull = false;
+        pull(fullPullOnOpen: full);
+      }
     }
   }
 

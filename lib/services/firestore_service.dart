@@ -16,12 +16,40 @@ class FirestoreService {
 
   static const _httpTimeout = Duration(seconds: 30);
 
+  /// Optional HTTP client for dependency injection (testing).
+  /// When null, uses the top-level http functions.
+  final http.Client? _client;
+
+  /// Creates a FirestoreService. Pass a [client] for testing.
+  FirestoreService({http.Client? client}) : _client = client;
+
   bool get isConfigured => _projectId.isNotEmpty;
 
   Map<String, String> _headers(String idToken) => {
         'Authorization': 'Bearer $idToken',
         'Content-Type': 'application/json',
       };
+
+  Future<http.Response> _get(Uri url, {required Map<String, String> headers}) {
+    final future = _client != null
+        ? _client.get(url, headers: headers)
+        : http.get(url, headers: headers);
+    return future.timeout(_httpTimeout);
+  }
+
+  Future<http.Response> _post(Uri url, {required Map<String, String> headers, Object? body}) {
+    final future = _client != null
+        ? _client.post(url, headers: headers, body: body)
+        : http.post(url, headers: headers, body: body);
+    return future.timeout(_httpTimeout);
+  }
+
+  Future<http.Response> _delete(Uri url, {required Map<String, String> headers}) {
+    final future = _client != null
+        ? _client.delete(url, headers: headers)
+        : http.delete(url, headers: headers);
+    return future.timeout(_httpTimeout);
+  }
 
   String _tasksPath(String uid) => '$_baseUrl/users/$uid/tasks';
   String _relationshipsPath(String uid) => '$_baseUrl/users/$uid/relationships';
@@ -47,11 +75,11 @@ class FirestoreService {
       final commitUrl = Uri.parse(
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
       );
-      final response = await http.post(
+      final response = await _post(
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': writes}),
-      ).timeout(_httpTimeout);
+      );
       if (response.statusCode != 200) {
         throw FirestoreException('Push tasks failed: ${response.statusCode} ${response.body}');
       }
@@ -67,6 +95,7 @@ class FirestoreService {
     if (relationships.isEmpty) return;
     for (var i = 0; i < relationships.length; i += 500) {
       final batch = relationships.skip(i).take(500).toList();
+      final now = DateTime.now().millisecondsSinceEpoch;
       final writes = batch.map((rel) {
         final docId = '${rel.parentSyncId}_${rel.childSyncId}';
         return {
@@ -75,6 +104,7 @@ class FirestoreService {
             'fields': {
               'parent_sync_id': {'stringValue': rel.parentSyncId},
               'child_sync_id': {'stringValue': rel.childSyncId},
+              'updated_at': {'integerValue': now.toString()},
             },
           },
         };
@@ -83,11 +113,11 @@ class FirestoreService {
       final commitUrl = Uri.parse(
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
       );
-      final response = await http.post(
+      final response = await _post(
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': writes}),
-      ).timeout(_httpTimeout);
+      );
       if (response.statusCode != 200) {
         throw FirestoreException('Push relationships failed: ${response.statusCode} ${response.body}');
       }
@@ -103,6 +133,7 @@ class FirestoreService {
     if (dependencies.isEmpty) return;
     for (var i = 0; i < dependencies.length; i += 500) {
       final batch = dependencies.skip(i).take(500).toList();
+      final now = DateTime.now().millisecondsSinceEpoch;
       final writes = batch.map((dep) {
         final docId = '${dep.taskSyncId}_${dep.dependsOnSyncId}';
         return {
@@ -111,6 +142,7 @@ class FirestoreService {
             'fields': {
               'task_sync_id': {'stringValue': dep.taskSyncId},
               'depends_on_sync_id': {'stringValue': dep.dependsOnSyncId},
+              'updated_at': {'integerValue': now.toString()},
             },
           },
         };
@@ -119,11 +151,11 @@ class FirestoreService {
       final commitUrl = Uri.parse(
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
       );
-      final response = await http.post(
+      final response = await _post(
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': writes}),
-      ).timeout(_httpTimeout);
+      );
       if (response.statusCode != 200) {
         throw FirestoreException('Push dependencies failed: ${response.statusCode} ${response.body}');
       }
@@ -133,14 +165,15 @@ class FirestoreService {
   /// Deletes a task document from Firestore.
   Future<void> deleteTask(String uid, String idToken, String syncId) async {
     final url = Uri.parse('${_tasksPath(uid)}/$syncId');
-    final response = await http.delete(url, headers: _headers(idToken)).timeout(_httpTimeout);
+    final response = await _delete(url, headers: _headers(idToken));
     // 404 is OK — document may already be deleted
     if (response.statusCode != 200 && response.statusCode != 404) {
       throw FirestoreException('Delete task failed: ${response.statusCode} ${response.body}');
     }
   }
 
-  /// Deletes a relationship document from Firestore.
+  /// Soft-deletes a relationship by setting deleted_at + updated_at (tombstone).
+  /// Delta pulls will pick this up and apply the deletion locally.
   Future<void> deleteRelationship(
     String uid,
     String idToken,
@@ -148,14 +181,21 @@ class FirestoreService {
     String childSyncId,
   ) async {
     final docId = '${parentSyncId}_$childSyncId';
-    final url = Uri.parse('${_relationshipsPath(uid)}/$docId');
-    final response = await http.delete(url, headers: _headers(idToken)).timeout(_httpTimeout);
-    if (response.statusCode != 200 && response.statusCode != 404) {
-      throw FirestoreException('Delete relationship failed: ${response.statusCode} ${response.body}');
-    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    // Pass the RELATIVE document path — _softDelete prepends the resource
+    // prefix. Bug fix: previously passed _relationshipsPath (a full REST URL),
+    // producing an invalid `projects/.../documents/https://.../users/...` name
+    // that Firestore rejected, so tombstone writes failed and remote deletions
+    // never propagated (the sync_queue entry stayed stuck).
+    await _softDelete('users/$uid/relationships/$docId', idToken, {
+      'parent_sync_id': {'stringValue': parentSyncId},
+      'child_sync_id': {'stringValue': childSyncId},
+      'updated_at': {'integerValue': now.toString()},
+      'deleted_at': {'integerValue': now.toString()},
+    });
   }
 
-  /// Deletes a dependency document from Firestore.
+  /// Soft-deletes a dependency by setting deleted_at + updated_at (tombstone).
   Future<void> deleteDependency(
     String uid,
     String idToken,
@@ -163,11 +203,14 @@ class FirestoreService {
     String dependsOnSyncId,
   ) async {
     final docId = '${taskSyncId}_$dependsOnSyncId';
-    final url = Uri.parse('${_dependenciesPath(uid)}/$docId');
-    final response = await http.delete(url, headers: _headers(idToken)).timeout(_httpTimeout);
-    if (response.statusCode != 200 && response.statusCode != 404) {
-      throw FirestoreException('Delete dependency failed: ${response.statusCode} ${response.body}');
-    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    // Relative path — see deleteRelationship for why a full URL here is a bug.
+    await _softDelete('users/$uid/dependencies/$docId', idToken, {
+      'task_sync_id': {'stringValue': taskSyncId},
+      'depends_on_sync_id': {'stringValue': dependsOnSyncId},
+      'updated_at': {'integerValue': now.toString()},
+      'deleted_at': {'integerValue': now.toString()},
+    });
   }
 
   // --- Check ---
@@ -175,7 +218,7 @@ class FirestoreService {
   /// Returns true if the user has any task documents in Firestore.
   Future<bool> hasRemoteData(String uid, String idToken) async {
     final url = Uri.parse('${_tasksPath(uid)}?pageSize=1');
-    final response = await http.get(url, headers: _headers(idToken)).timeout(_httpTimeout);
+    final response = await _get(url, headers: _headers(idToken));
     if (response.statusCode != 200) {
       throw FirestoreException('Check remote data failed: ${response.statusCode}');
     }
@@ -211,7 +254,7 @@ class FirestoreService {
     do {
       var url = '${_relationshipsPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
-      final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
+      final response = await _get(Uri.parse(url), headers: _headers(idToken));
       if (response.statusCode != 200) {
         throw FirestoreException('Pull relationships failed: ${response.statusCode}');
       }
@@ -220,6 +263,8 @@ class FirestoreService {
       for (final doc in docs) {
         final fields = (doc as Map<String, dynamic>)['fields'] as Map<String, dynamic>?;
         if (fields == null) continue;
+        // Skip tombstoned docs — full pull only includes live data
+        if (_intFieldNullable(fields, 'deleted_at') != null) continue;
         final parentSyncId = _stringField(fields, 'parent_sync_id');
         final childSyncId = _stringField(fields, 'child_sync_id');
         if (parentSyncId != null && childSyncId != null) {
@@ -228,6 +273,52 @@ class FirestoreService {
       }
       pageToken = body['nextPageToken'] as String?;
     } while (pageToken != null);
+    return results;
+  }
+
+  /// Pulls relationships updated since [lastSyncAt] using a structured query.
+  Future<List<({String parentSyncId, String childSyncId, bool deleted})>> pullRelationshipsSince(
+    String uid,
+    String idToken,
+    int lastSyncAt,
+  ) async {
+    final queryUrl = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
+    );
+    final response = await _post(
+      queryUrl,
+      headers: _headers(idToken),
+      body: json.encode({
+        'structuredQuery': {
+          'from': [{'collectionId': 'relationships'}],
+          'where': {
+            'fieldFilter': {
+              'field': {'fieldPath': 'updated_at'},
+              'op': 'GREATER_THAN',
+              'value': {'integerValue': lastSyncAt.toString()},
+            },
+          },
+        },
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw FirestoreException('Query relationships failed: ${response.statusCode}');
+    }
+    final decoded = json.decode(response.body);
+    if (decoded is! List) return [];
+    final results = <({String parentSyncId, String childSyncId, bool deleted})>[];
+    for (final result in decoded) {
+      final doc = (result as Map<String, dynamic>)['document'] as Map<String, dynamic>?;
+      if (doc == null) continue;
+      final fields = doc['fields'] as Map<String, dynamic>?;
+      if (fields == null) continue;
+      final parentSyncId = _stringField(fields, 'parent_sync_id');
+      final childSyncId = _stringField(fields, 'child_sync_id');
+      final deletedAt = _intFieldNullable(fields, 'deleted_at');
+      if (parentSyncId != null && childSyncId != null) {
+        results.add((parentSyncId: parentSyncId, childSyncId: childSyncId, deleted: deletedAt != null));
+      }
+    }
     return results;
   }
 
@@ -241,7 +332,7 @@ class FirestoreService {
     do {
       var url = '${_dependenciesPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
-      final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
+      final response = await _get(Uri.parse(url), headers: _headers(idToken));
       if (response.statusCode != 200) {
         throw FirestoreException('Pull dependencies failed: ${response.statusCode}');
       }
@@ -250,6 +341,8 @@ class FirestoreService {
       for (final doc in docs) {
         final fields = (doc as Map<String, dynamic>)['fields'] as Map<String, dynamic>?;
         if (fields == null) continue;
+        // Skip tombstoned docs — full pull only includes live data
+        if (_intFieldNullable(fields, 'deleted_at') != null) continue;
         final taskSyncId = _stringField(fields, 'task_sync_id');
         final dependsOnSyncId = _stringField(fields, 'depends_on_sync_id');
         if (taskSyncId != null && dependsOnSyncId != null) {
@@ -258,6 +351,53 @@ class FirestoreService {
       }
       pageToken = body['nextPageToken'] as String?;
     } while (pageToken != null);
+    return results;
+  }
+
+  /// Pulls dependencies updated since [lastSyncAt] using a structured query.
+  /// Includes tombstoned docs (deleted_at set) so caller can apply deletions.
+  Future<List<({String taskSyncId, String dependsOnSyncId, bool deleted})>> pullDependenciesSince(
+    String uid,
+    String idToken,
+    int lastSyncAt,
+  ) async {
+    final queryUrl = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
+    );
+    final response = await _post(
+      queryUrl,
+      headers: _headers(idToken),
+      body: json.encode({
+        'structuredQuery': {
+          'from': [{'collectionId': 'dependencies'}],
+          'where': {
+            'fieldFilter': {
+              'field': {'fieldPath': 'updated_at'},
+              'op': 'GREATER_THAN',
+              'value': {'integerValue': lastSyncAt.toString()},
+            },
+          },
+        },
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw FirestoreException('Query dependencies failed: ${response.statusCode}');
+    }
+    final decoded = json.decode(response.body);
+    if (decoded is! List) return [];
+    final results = <({String taskSyncId, String dependsOnSyncId, bool deleted})>[];
+    for (final result in decoded) {
+      final doc = (result as Map<String, dynamic>)['document'] as Map<String, dynamic>?;
+      if (doc == null) continue;
+      final fields = doc['fields'] as Map<String, dynamic>?;
+      if (fields == null) continue;
+      final taskSyncId = _stringField(fields, 'task_sync_id');
+      final dependsOnSyncId = _stringField(fields, 'depends_on_sync_id');
+      final deletedAt = _intFieldNullable(fields, 'deleted_at');
+      if (taskSyncId != null && dependsOnSyncId != null) {
+        results.add((taskSyncId: taskSyncId, dependsOnSyncId: dependsOnSyncId, deleted: deletedAt != null));
+      }
+    }
     return results;
   }
 
@@ -295,28 +435,29 @@ class FirestoreService {
       final commitUrl = Uri.parse(
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
       );
-      final response = await http.post(
+      final response = await _post(
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': writes}),
-      ).timeout(_httpTimeout);
+      );
       if (response.statusCode != 200) {
         throw FirestoreException('Push schedules failed: ${response.statusCode} ${response.body}');
       }
     }
   }
 
-  /// Deletes a schedule document from Firestore.
+  /// Soft-deletes a schedule by setting deleted_at + updated_at (tombstone).
   Future<void> deleteSchedule(
     String uid,
     String idToken,
     String scheduleSyncId,
   ) async {
-    final url = Uri.parse('${_schedulesPath(uid)}/$scheduleSyncId');
-    final response = await http.delete(url, headers: _headers(idToken)).timeout(_httpTimeout);
-    if (response.statusCode != 200 && response.statusCode != 404) {
-      throw FirestoreException('Delete schedule failed: ${response.statusCode} ${response.body}');
-    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    // Relative path — see deleteRelationship for why a full URL here is a bug.
+    await _softDelete('users/$uid/schedules/$scheduleSyncId', idToken, {
+      'updated_at': {'integerValue': now.toString()},
+      'deleted_at': {'integerValue': now.toString()},
+    });
   }
 
   /// Pulls all schedules from Firestore.
@@ -329,7 +470,7 @@ class FirestoreService {
     do {
       var url = '${_schedulesPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
-      final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
+      final response = await _get(Uri.parse(url), headers: _headers(idToken));
       if (response.statusCode != 200) {
         throw FirestoreException('Pull schedules failed: ${response.statusCode}');
       }
@@ -338,6 +479,8 @@ class FirestoreService {
       for (final doc in docs) {
         final fields = (doc as Map<String, dynamic>)['fields'] as Map<String, dynamic>?;
         if (fields == null) continue;
+        // Skip tombstoned docs — full pull only includes live data
+        if (_intFieldNullable(fields, 'deleted_at') != null) continue;
         final docName = doc['name'] as String;
         final syncId = docName.split('/').last;
         results.add({
@@ -350,6 +493,56 @@ class FirestoreService {
       }
       pageToken = body['nextPageToken'] as String?;
     } while (pageToken != null);
+    return results;
+  }
+
+  /// Pulls schedules updated since [lastSyncAt] using a structured query.
+  Future<List<Map<String, dynamic>>> pullSchedulesSince(
+    String uid,
+    String idToken,
+    int lastSyncAt,
+  ) async {
+    final queryUrl = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
+    );
+    final response = await _post(
+      queryUrl,
+      headers: _headers(idToken),
+      body: json.encode({
+        'structuredQuery': {
+          'from': [{'collectionId': 'schedules'}],
+          'where': {
+            'fieldFilter': {
+              'field': {'fieldPath': 'updated_at'},
+              'op': 'GREATER_THAN',
+              'value': {'integerValue': lastSyncAt.toString()},
+            },
+          },
+        },
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw FirestoreException('Query schedules failed: ${response.statusCode}');
+    }
+    final decoded = json.decode(response.body);
+    if (decoded is! List) return [];
+    final results = <Map<String, dynamic>>[];
+    for (final result in decoded) {
+      final doc = (result as Map<String, dynamic>)['document'] as Map<String, dynamic>?;
+      if (doc == null) continue;
+      final fields = doc['fields'] as Map<String, dynamic>?;
+      if (fields == null) continue;
+      final docName = doc['name'] as String;
+      final syncId = docName.split('/').last;
+      results.add({
+        'sync_id': syncId,
+        'task_sync_id': _stringField(fields, 'task_sync_id') ?? '',
+        'schedule_type': _stringField(fields, 'schedule_type') ?? 'weekly',
+        'day_of_week': _intFieldNullable(fields, 'day_of_week'),
+        'updated_at': _intFieldNullable(fields, 'updated_at'),
+        'deleted': _intFieldNullable(fields, 'deleted_at') != null,
+      });
+    }
     return results;
   }
 
@@ -387,7 +580,7 @@ class FirestoreService {
     final suppressedValues =
         suppressedSyncIds.map((id) => {'stringValue': id}).toList();
 
-    final response = await http.post(
+    final response = await _post(
       commitUrl,
       headers: _headers(idToken),
       body: json.encode({
@@ -408,7 +601,7 @@ class FirestoreService {
           },
         ],
       }),
-    ).timeout(_httpTimeout);
+    );
     if (response.statusCode != 200) {
       throw FirestoreException(
           'Push todays_five failed: ${response.statusCode} ${response.body}');
@@ -424,7 +617,7 @@ class FirestoreService {
   ) async {
     final url = Uri.parse('${_todaysFivePath(uid)}/$date');
     final response =
-        await http.get(url, headers: _headers(idToken)).timeout(_httpTimeout);
+        await _get(url, headers: _headers(idToken));
     if (response.statusCode == 404) return null;
     if (response.statusCode != 200) {
       throw FirestoreException(
@@ -486,7 +679,7 @@ class FirestoreService {
     do {
       var url = '${_tasksPath(uid)}?pageSize=300';
       if (pageToken != null) url += '&pageToken=$pageToken';
-      final response = await http.get(Uri.parse(url), headers: _headers(idToken)).timeout(_httpTimeout);
+      final response = await _get(Uri.parse(url), headers: _headers(idToken));
       if (response.statusCode != 200) {
         throw FirestoreException('List tasks failed: ${response.statusCode}');
       }
@@ -509,7 +702,7 @@ class FirestoreService {
     final queryUrl = Uri.parse(
       'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
     );
-    final response = await http.post(
+    final response = await _post(
       queryUrl,
       headers: _headers(idToken),
       body: json.encode({
@@ -526,7 +719,7 @@ class FirestoreService {
           },
         },
       }),
-    ).timeout(_httpTimeout);
+    );
     if (response.statusCode != 200) {
       throw FirestoreException('Query tasks failed: ${response.statusCode}');
     }
@@ -644,6 +837,108 @@ class FirestoreService {
     if (val is int) return val;
     if (val is String) return int.tryParse(val);
     return null;
+  }
+
+  /// Soft-delete: PATCH (update) the document with the given fields
+  /// (which should include deleted_at + updated_at). Uses the commit
+  /// API with an update write so the doc is created-or-updated.
+  ///
+  /// [docPath] must be the RELATIVE document path (e.g.
+  /// `users/{uid}/relationships/{docId}`) — NOT a full REST URL. This method
+  /// prepends the `projects/.../documents/` resource prefix itself.
+  Future<void> _softDelete(String docPath, String idToken, Map<String, dynamic> fields) async {
+    final commitUrl = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
+    );
+    final response = await _post(
+      commitUrl,
+      headers: _headers(idToken),
+      body: json.encode({
+        'writes': [
+          {
+            'update': {
+              'name': 'projects/$_projectId/databases/(default)/documents/$docPath',
+              'fields': fields,
+            },
+          },
+        ],
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw FirestoreException('Soft-delete failed ($docPath): ${response.statusCode} ${response.body}');
+    }
+  }
+
+  /// Hard-deletes tombstoned documents older than [maxAge] from a collection.
+  /// Called on app startup (full pull) to clean up old tombstones.
+  Future<void> cleanupTombstones(
+    String uid,
+    String idToken,
+    String collectionId,
+    Duration maxAge,
+  ) async {
+    final cutoff = DateTime.now().subtract(maxAge).millisecondsSinceEpoch;
+    // Query for documents where deleted_at exists and is older than cutoff.
+    // Firestore REST doesn't support "field exists" directly, so we query
+    // deleted_at > 0 AND deleted_at < cutoff (tombstones are always > 0).
+    final queryUrl = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
+    );
+    final response = await _post(
+      queryUrl,
+      headers: _headers(idToken),
+      body: json.encode({
+        'structuredQuery': {
+          'from': [{'collectionId': collectionId}],
+          'where': {
+            'compositeFilter': {
+              'op': 'AND',
+              'filters': [
+                {
+                  'fieldFilter': {
+                    'field': {'fieldPath': 'deleted_at'},
+                    'op': 'GREATER_THAN',
+                    'value': {'integerValue': '0'},
+                  },
+                },
+                {
+                  'fieldFilter': {
+                    'field': {'fieldPath': 'deleted_at'},
+                    'op': 'LESS_THAN',
+                    'value': {'integerValue': cutoff.toString()},
+                  },
+                },
+              ],
+            },
+          },
+          'select': {'fields': []}, // Only need doc names, not fields
+        },
+      }),
+    );
+    if (response.statusCode != 200) return; // Best-effort cleanup
+    final decoded = json.decode(response.body);
+    if (decoded is! List) return;
+    final writes = <Map<String, dynamic>>[];
+    for (final result in decoded) {
+      final doc = (result as Map<String, dynamic>)['document'] as Map<String, dynamic>?;
+      if (doc == null) continue;
+      final name = doc['name'] as String?;
+      if (name == null) continue;
+      writes.add({'delete': name});
+    }
+    if (writes.isEmpty) return;
+    // Batch delete in chunks of 500
+    final commitUrl = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents:commit',
+    );
+    for (var i = 0; i < writes.length; i += 500) {
+      final batch = writes.skip(i).take(500).toList();
+      await _post(
+        commitUrl,
+        headers: _headers(idToken),
+        body: json.encode({'writes': batch}),
+      );
+    }
   }
 }
 

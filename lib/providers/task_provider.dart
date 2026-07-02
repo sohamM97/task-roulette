@@ -59,6 +59,12 @@ class TaskProvider extends ChangeNotifier {
 
   /// Reload the current view (root or children) without resetting navigation.
   Future<void> refreshCurrentView() async {
+    // Rebuild _currentParent from DB so leaf detail views pick up
+    // remote changes (e.g. renames, priority, deadline) after pull.
+    if (_currentParent != null) {
+      _currentParent =
+          await _db.getTaskById(_currentParent!.id!) ?? _currentParent;
+    }
     await _refreshCurrentList();
   }
 
