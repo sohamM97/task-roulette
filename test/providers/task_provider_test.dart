@@ -1,10 +1,14 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:task_roulette/data/database_helper.dart';
 import 'package:task_roulette/models/task.dart';
 import 'package:task_roulette/providers/task_provider.dart';
 
 void main() {
+  // saveTodaysFiveState stamps the LWW timestamp in SharedPreferences.
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late DatabaseHelper db;
   late TaskProvider provider;
 
@@ -15,6 +19,7 @@ void main() {
   });
 
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     db = DatabaseHelper();
     await db.reset();
     await db.database;

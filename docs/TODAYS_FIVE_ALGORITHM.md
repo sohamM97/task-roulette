@@ -45,13 +45,26 @@ today's deadlines:
 3. The remaining IDs are merged into the saved task list and persisted as
    normal pinned members.
 
-**Removals are respected per task.** When the user removes a deadline-today
-task (X button / "Remove" tile), `suppressDeadlineAutoPin(today, id)` records
-it so the next reconcile won't re-pin *that* task — but a *different* task that
-becomes due today still auto-pins. Manually pinning a task back clears its
-suppression (`unsuppressDeadlineAutoPin`). Suppression rows are date-keyed and
-old ones are purged on load (`purgeOldDeadlineSuppressed`), so the suppression
-naturally only applies to the day the task was due.
+**Removals are respected per task.** When the user removes *any* Today's 5 task
+— pinned or deadline-forced — via the X button / "Remove" tile / All Tasks
+unpin, `suppressDeadlineAutoPin(today, id)` records a per-task suppression
+tombstone. This does two jobs: (a) the next reconcile won't re-auto-pin a
+*deadline* task the user removed (a *different* task that becomes due today
+still auto-pins); and (b) the tombstone is **synced** (`deadline_suppressed_
+sync_ids`) so a removal propagates across devices instead of bouncing back —
+the merge drops any suppressed task even if a device still has it locally
+pinned. (Codex P2 fix: this used to be recorded only for deadline-today tasks,
+so removing a plain pinned task left no tombstone and it was resurrected on the
+next pull.) Manually pinning a task back clears its suppression
+(`unsuppressDeadlineAutoPin`), as does giving the task a **today deadline**
+(`updateTaskDeadline` — "due today" deliberately overrides an earlier same-day
+unpin). On merge, a task the remote lists as a member clears the local
+suppression **only when the remote doc is genuinely newer** (`remoteIsNewer`) —
+a real cross-device re-pin. It must NOT clear when the remote is merely *stale*
+(still listing a task we just unpinned but haven't pushed yet), or a pull racing
+ahead of our debounced push would erase the fresh tombstone and resurrect the
+removal. Suppression rows are date-keyed and old ones are purged on load
+(`purgeOldDeadlineSuppressed`).
 
 The deadline-today indicator on the card is the existing proximity-coloured
 clock icon (deepOrange for ≤2 days) — there is no separate "Today"-specific

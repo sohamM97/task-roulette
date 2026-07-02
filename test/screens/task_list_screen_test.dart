@@ -418,5 +418,42 @@ void main() {
           .runAsync(() => db.getDeadlineSuppressedIds(todayDateKey()));
       expect(suppressed, contains(id));
     });
+
+    // [Regression] Codex P2 (round 2): the suppression was gated to due-today
+    // tasks only, so unpinning a NON-deadline pinned task left no tombstone and
+    // the removal bounced back (re-added by the local-only-pinned merge append
+    // on the next pull). It must now suppress regardless of deadline.
+    testWidgets('unpinning a non-deadline task from All Tasks suppresses it',
+        (tester) async {
+      late int id;
+      await tester.runAsync(() async {
+        id = await db.insertTask(Task(name: 'Plain pinned leaf'));
+        await db.saveTodaysFiveState(
+          date: todayDateKey(),
+          taskIds: [id],
+          completedIds: const {},
+          workedOnIds: const {},
+          pinnedIds: {id},
+        );
+        await provider.loadRootTasks();
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Plain pinned leaf'));
+      await pumpAsync(tester);
+
+      await tester.runAsync(() async {
+        await tester.tap(find.byTooltip('Unpin'));
+      });
+      await pumpAsync(tester);
+
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(todayDateKey()));
+      expect(saved?.taskIds ?? const <int>[], isNot(contains(id)));
+      final suppressed = await tester
+          .runAsync(() => db.getDeadlineSuppressedIds(todayDateKey()));
+      expect(suppressed, contains(id));
+    });
   });
 }

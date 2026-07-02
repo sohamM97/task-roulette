@@ -1066,6 +1066,17 @@ class DatabaseHelper {
   Future<void> updateTaskDeadline(int taskId, String? deadline, {String deadlineType = 'due_by'}) async {
     final db = await database;
     await db.update('tasks', {'deadline': deadline, 'deadline_type': deadlineType, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
+    // If the task is now due today, clear any Today's 5 removal tombstone so it
+    // can auto-pin. Bug fix (PR #72 review finding #2): once every unpin writes
+    // a tombstone, a task unpinned earlier today would stay suppressed and NOT
+    // auto-pin when later given a today deadline. "Due today" is a deliberate
+    // prioritization that overrides an earlier same-day unpin.
+    final now = DateTime.now();
+    final today =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    if (deadline == today) {
+      await unsuppressDeadlineAutoPin(today, taskId);
+    }
   }
 
   /// Returns leaf task IDs that should be auto-pinned due to deadlines.
@@ -2640,6 +2651,13 @@ class DatabaseHelper {
 
   // --- Today's 5 state methods ---
 
+  /// SharedPreferences key holding the epoch-ms of the last LOCAL Today's 5
+  /// save. It is the last-writer-wins authority for pin state in
+  /// [upsertTodaysFiveFromRemote]. Stamped centrally by [saveTodaysFiveState]
+  /// (below). Public so [SyncService] reads the same key without duplicating
+  /// the string.
+  static const prefsKeyTodaysFivePersistedAt = 'sync_todays_five_persisted_at';
+
   /// Saves Today's 5 state to the DB, replacing any existing data for [date].
   Future<void> saveTodaysFiveState({
     required String date,
@@ -2663,6 +2681,18 @@ class DatabaseHelper {
         });
       }
     });
+    // Stamp the LWW timestamp on EVERY local Today's 5 save — mirrors how
+    // _dirtyFields() stamps updated_at on task writes. Bug fix (Codex P2):
+    // previously only the Today screen's persist path stamped this (via
+    // SyncService.onTodaysFivePersisted); pins/unpins from All Tasks and Add
+    // Task saved without stamping, so localPersistedAt stayed stale — a pull
+    // arriving before the debounced push judged the remote newer and discarded
+    // the local pin change. Centralising it here guarantees no path is missed.
+    // NOTE: upsertTodaysFiveFromRemote writes todays_five_state via its own txn
+    // (not this method), so a remote merge correctly does NOT bump this.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+        prefsKeyTodaysFivePersistedAt, DateTime.now().millisecondsSinceEpoch);
   }
 
   /// Deletes Today's 5 state for [date]. Debug/test only — used to simulate
@@ -2852,13 +2882,20 @@ class DatabaseHelper {
       if (rows.isNotEmpty) remoteSuppressedIds.add(rows.first['id'] as int);
     }
 
-    // Sync the deadline suppressions. A current remote member is by definition
-    // not suppressed there → clear any stale local suppression (lets a re-pin
-    // on another device propagate). A remote-suppressed task → suppress locally
-    // so our reconcile won't re-auto-pin it.
+    // Sync suppressions. Clear a local suppression for a remote member ONLY
+    // when the remote is genuinely newer (a real cross-device re-pin). Bug fix
+    // (PR #72 review): clearing unconditionally also wiped a just-written LOCAL
+    // removal tombstone whenever the remote doc was merely STALE — it still
+    // listed the task as a member because our unpin hadn't been pushed yet — so
+    // a pull landing in that window resurrected the removal (the exact
+    // bounce-back this set out to fix). A remote-suppressed task → suppress
+    // locally regardless.
+    final remoteIsNewer = remoteUpdatedAt >= localPersistedAt;
     final remoteIdSet = resolved.map((r) => r.taskId).toSet();
-    for (final id in remoteIdSet) {
-      await unsuppressDeadlineAutoPin(date, id);
+    if (remoteIsNewer) {
+      for (final id in remoteIdSet) {
+        await unsuppressDeadlineAutoPin(date, id);
+      }
     }
     for (final id in remoteSuppressedIds) {
       await suppressDeadlineAutoPin(date, id);
@@ -2877,9 +2914,8 @@ class DatabaseHelper {
     }
 
     final localState = await loadTodaysFiveState(date);
-    // Pin state uses last-writer-wins so a cross-device unpin propagates
-    // instead of being resurrected by the OR-merge.
-    final remoteIsNewer = remoteUpdatedAt >= localPersistedAt;
+    // Pin state uses last-writer-wins (remoteIsNewer, computed above) so a
+    // cross-device unpin propagates instead of being resurrected by the OR-merge.
     final mergedList = <({int taskId, bool isCompleted, bool isWorkedOn, bool isPinned, int sortOrder})>[];
 
     if (localState == null) {
@@ -2897,7 +2933,13 @@ class DatabaseHelper {
           sortOrder: r.sortOrder,
         ));
       }
-      // Append local-only pinned tasks (always preserved, up to maxSlots total)
+      // Append local-only pinned tasks (always preserved, up to maxSlots total).
+      // NOTE: these are NOT dropped on a remote-newer merge — whole-doc LWW
+      // can't tell "remote removed this" from "this is a fresh local pin the
+      // remote hasn't seen yet", so dropping here would lose an unpushed local
+      // pin whenever the remote was touched more recently for any reason. The
+      // bounce-back of an intentional non-deadline removal (Codex P2) needs a
+      // per-task removal tombstone (like deadline suppression), not this path.
       var nextOrder = mergedList.length;
       for (final localId in localState.taskIds) {
         if (mergedList.length >= maxSlots) break;

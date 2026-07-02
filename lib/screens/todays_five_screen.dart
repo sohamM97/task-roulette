@@ -366,7 +366,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       pinnedIds: currentIds.toSet(),
     );
     if (mounted) {
-      await context.read<SyncService>().onTodaysFivePersisted();
+      context.read<SyncService>().onTodaysFivePersisted();
     }
   }
 
@@ -534,15 +534,16 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       ),
     );
     if (confirmed != true || !mounted) return;
-    // If this task was force-pinned because its deadline is today, record the
-    // removal so the next reconcile doesn't immediately re-pin it. Suppression is
-    // per task-id, so removing this one never affects another task that becomes
-    // due today — that one still auto-pins.
-    if (_deadlineTodayIds.contains(task.id)) {
-      await DatabaseHelper().suppressDeadlineAutoPin(_todayKey(), task.id!);
-      _deadlineTodayIds.remove(task.id);
-      if (!mounted) return;
-    }
+    // Record the removal as a suppression tombstone. Bug fix (Codex P2): this
+    // used to fire only for deadline-today tasks, so removing a *non-deadline*
+    // pinned task left no tombstone — another device (or a pull before our
+    // push) re-added it via the local-only-pinned append and the removal
+    // bounced back. The tombstone is synced (getDeadlineSuppressedSyncIds) and
+    // drops the task from the merge on every device. Suppression is per task-id,
+    // so removing this one never affects another task; a later re-pin clears it.
+    await DatabaseHelper().suppressDeadlineAutoPin(_todayKey(), task.id!);
+    _deadlineTodayIds.remove(task.id);
+    if (!mounted) return;
     setState(() {
       _todaysTasks.removeWhere((t) => t.id == task.id);
       _completedIds.remove(task.id);

@@ -69,7 +69,9 @@ class SyncService {
 
   static const _prefsKeyLastSyncAt = 'sync_last_sync_at';
   static const _prefsKeyInitialMigrationDone = 'sync_initial_migration_done';
-  static const _prefsKeyTodaysFivePersistedAt = 'sync_todays_five_persisted_at';
+  // The Today's 5 LWW timestamp is owned + stamped by DatabaseHelper (every
+  // local save stamps it); we only read it here — see
+  // [DatabaseHelper.prefsKeyTodaysFivePersistedAt].
 
   static const _pushDebounceDelay = Duration(seconds: 5);
   static const _pullInterval = Duration(minutes: 5);
@@ -125,18 +127,10 @@ class SyncService {
     });
   }
 
-  /// Records that Today's 5 was persisted locally, then schedules a push.
-  /// The timestamp is used during pull merge to determine whether remote
-  /// or local state is newer (last-writer-wins).
-  ///
-  /// The pref write is awaited (not fire-and-forget): otherwise, if the OS
-  /// killed the app after a pin but before the timestamp flushed to disk, the
-  /// next launch could compute last-writer-wins against a stale timestamp and
-  /// drop the unpushed local pin.
-  Future<void> onTodaysFivePersisted() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(
-        _prefsKeyTodaysFivePersistedAt, DateTime.now().millisecondsSinceEpoch);
+  /// Signals that Today's 5 was persisted locally → schedule a push.
+  /// The LWW timestamp is stamped by [DatabaseHelper.saveTodaysFiveState]
+  /// itself (on every local save), so this only needs to trigger the push.
+  void onTodaysFivePersisted() {
     schedulePush();
   }
 
@@ -714,7 +708,8 @@ class SyncService {
       final remote5 = await _firestore.pullTodaysFive(uid, idToken, dateKey);
       if (remote5 != null &&
           (remote5.entries.isNotEmpty || remote5.suppressedSyncIds.isNotEmpty)) {
-        final localPersistedAt = prefs.getInt(_prefsKeyTodaysFivePersistedAt) ?? 0;
+        final localPersistedAt =
+            prefs.getInt(DatabaseHelper.prefsKeyTodaysFivePersistedAt) ?? 0;
         final todaysFiveChanged = await _db.upsertTodaysFiveFromRemote(
           dateKey,
           remote5.entries,
