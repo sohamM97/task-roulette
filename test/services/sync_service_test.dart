@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:task_roulette/data/database_helper.dart';
 import 'package:task_roulette/models/task.dart';
+import 'package:task_roulette/models/task_schedule.dart';
 import 'package:task_roulette/providers/auth_provider.dart';
 import 'package:task_roulette/services/firestore_service.dart';
 import 'package:task_roulette/services/sync_service.dart';
@@ -36,6 +37,9 @@ class _FakeFirestoreService extends FirestoreService {
   /// Dependencies the delta pull should return (defaults to none).
   List<({String taskSyncId, String dependsOnSyncId, bool deleted})> depsSince =
       const [];
+
+  /// Schedules the delta pull should return (defaults to none).
+  List<Map<String, dynamic>> schedulesSince = const [];
 
   /// If set, the FIRST task pull awaits this before returning — lets a test
   /// hold `_syncing` true and issue a second pull that gets queued.
@@ -80,7 +84,7 @@ class _FakeFirestoreService extends FirestoreService {
 
   @override
   Future<List<Map<String, dynamic>>> pullSchedulesSince(
-      String uid, String idToken, int lastSyncAt) async => const [];
+      String uid, String idToken, int lastSyncAt) async => schedulesSince;
 
   @override
   Future<({List<Map<String, dynamic>> entries, List<String> suppressedSyncIds, int updatedAt})?>
@@ -301,6 +305,26 @@ void main() {
       final deps = await db.getAllDependenciesWithSyncIds();
       expect(deps.any((d) => d.taskSyncId == 'st' && d.dependsOnSyncId == 'sd'),
           isTrue);
+    });
+
+    test('schedule branch (key1-only shape): keeps the schedule when its add '
+        'is still pending', () async {
+      SharedPreferences.setMockInitialValues({'sync_last_sync_at': 1000});
+      final tid = await db.insertTask(Task(name: 'Scheduled', syncId: 'stk'));
+      await db.replaceSchedules(tid, [TaskSchedule(taskId: tid, dayOfWeek: 1)]);
+      // The generated schedule sync_id (and its pending 'add' in sync_queue).
+      final scheduleSyncId = (await db.getAllScheduleSyncIds()).single;
+
+      final fakeFs = _FakeFirestoreService()
+        ..schedulesSince = [
+          {'sync_id': scheduleSyncId, 'deleted': true}
+        ];
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.pull();
+
+      // Pending add (keyed by sync_id alone) protects it from the tombstone.
+      expect(await db.getAllScheduleSyncIds(), contains(scheduleSyncId));
     });
   });
 }
