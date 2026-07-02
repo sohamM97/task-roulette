@@ -4,7 +4,7 @@ Last updated: 2026-06-25
 
 ## Summary
 
-~1414 tests across 36 active test files. Models and data layer are well-covered. Task card at 100%. Triage dialog at 93%. Screens and services have remaining gaps, though `firestore_service` now has HTTP-mocked tests (sync tombstones, delta pulls, soft-delete). `notification_service_test.dart` is block-commented out because the notification service itself is disabled.
+~1417 tests across 36 active test files. Models and data layer are well-covered. Task card at 100%. Triage dialog at 93%. Screens and services have remaining gaps, though `firestore_service` now has HTTP-mocked tests (sync tombstones, delta pulls, soft-delete). `notification_service_test.dart` is block-commented out because the notification service itself is disabled.
 
 **Manual Today's 5 model (`feature/manual-todays-five`):** Today's 5 is now fully manual — auto-pick/reroll/per-card-swap removed; tasks are pinned via a FAB sheet ("Create new task" / "Pick existing task"). New `PickTaskForTodayDialog` (search + leaf-only browse picker) covered in `test/widgets/pick_task_for_today_dialog_test.dart`. FAB sheet + pick-existing integration covered in `todays_five_screen_test.dart`. The old `_generateNewSet` auto-pick simulation tests were removed from `task_provider_test.dart`.
 

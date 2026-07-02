@@ -1066,6 +1066,17 @@ class DatabaseHelper {
   Future<void> updateTaskDeadline(int taskId, String? deadline, {String deadlineType = 'due_by'}) async {
     final db = await database;
     await db.update('tasks', {'deadline': deadline, 'deadline_type': deadlineType, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
+    // If the task is now due today, clear any Today's 5 removal tombstone so it
+    // can auto-pin. Bug fix (PR #72 review finding #2): once every unpin writes
+    // a tombstone, a task unpinned earlier today would stay suppressed and NOT
+    // auto-pin when later given a today deadline. "Due today" is a deliberate
+    // prioritization that overrides an earlier same-day unpin.
+    final now = DateTime.now();
+    final today =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    if (deadline == today) {
+      await unsuppressDeadlineAutoPin(today, taskId);
+    }
   }
 
   /// Returns leaf task IDs that should be auto-pinned due to deadlines.
@@ -2871,13 +2882,20 @@ class DatabaseHelper {
       if (rows.isNotEmpty) remoteSuppressedIds.add(rows.first['id'] as int);
     }
 
-    // Sync the deadline suppressions. A current remote member is by definition
-    // not suppressed there → clear any stale local suppression (lets a re-pin
-    // on another device propagate). A remote-suppressed task → suppress locally
-    // so our reconcile won't re-auto-pin it.
+    // Sync suppressions. Clear a local suppression for a remote member ONLY
+    // when the remote is genuinely newer (a real cross-device re-pin). Bug fix
+    // (PR #72 review): clearing unconditionally also wiped a just-written LOCAL
+    // removal tombstone whenever the remote doc was merely STALE — it still
+    // listed the task as a member because our unpin hadn't been pushed yet — so
+    // a pull landing in that window resurrected the removal (the exact
+    // bounce-back this set out to fix). A remote-suppressed task → suppress
+    // locally regardless.
+    final remoteIsNewer = remoteUpdatedAt >= localPersistedAt;
     final remoteIdSet = resolved.map((r) => r.taskId).toSet();
-    for (final id in remoteIdSet) {
-      await unsuppressDeadlineAutoPin(date, id);
+    if (remoteIsNewer) {
+      for (final id in remoteIdSet) {
+        await unsuppressDeadlineAutoPin(date, id);
+      }
     }
     for (final id in remoteSuppressedIds) {
       await suppressDeadlineAutoPin(date, id);
@@ -2896,9 +2914,8 @@ class DatabaseHelper {
     }
 
     final localState = await loadTodaysFiveState(date);
-    // Pin state uses last-writer-wins so a cross-device unpin propagates
-    // instead of being resurrected by the OR-merge.
-    final remoteIsNewer = remoteUpdatedAt >= localPersistedAt;
+    // Pin state uses last-writer-wins (remoteIsNewer, computed above) so a
+    // cross-device unpin propagates instead of being resurrected by the OR-merge.
     final mergedList = <({int taskId, bool isCompleted, bool isWorkedOn, bool isPinned, int sortOrder})>[];
 
     if (localState == null) {

@@ -4107,20 +4107,78 @@ void main() {
       expect(await db.getDeadlineSuppressedIds(date), contains(idX));
     });
 
-    test('upsertTodaysFiveFromRemote: remote membership clears a stale local '
+    test('upsertTodaysFiveFromRemote: a NEWER remote member clears the local '
         'suppression (re-pin propagates)', () async {
       final idX = await insertTaskWithSyncId('Re-pinned X', 'sync-x');
       // X was previously removed/suppressed on this device.
       await db.suppressDeadlineAutoPin(date, idX);
 
-      // Remote: another device re-pinned X — it's a member, not suppressed.
+      // Remote (NEWER) re-pinned X — a genuine cross-device re-pin.
       await db.upsertTodaysFiveFromRemote(date, [
         {'task_sync_id': 'sync-x', 'is_completed': false, 'is_worked_on': false, 'is_pinned': true, 'sort_order': 0},
-      ]);
+      ], remoteUpdatedAt: 200, localPersistedAt: 100);
 
       expect(await db.getDeadlineSuppressedIds(date), isNot(contains(idX)));
       final state = await db.loadTodaysFiveState(date);
       expect(state!.taskIds, contains(idX));
+    });
+
+    test('upsertTodaysFiveFromRemote: a STALE remote member does NOT erase a '
+        'fresh local removal tombstone (pull-before-push)', () async {
+      // [Regression] PR #72 review finding #1: the unsuppress-on-member loop
+      // used to run unconditionally, so a pull that raced ahead of our unpin's
+      // debounced push — seeing the remote still list X as a member — wiped the
+      // just-written tombstone and resurrected the removal. Now gated on
+      // remoteIsNewer: a local removal newer than the (stale) remote survives.
+      final idX = await insertTaskWithSyncId('Removed X', 'sync-x');
+      final idY = await insertTaskWithSyncId('Kept Y', 'sync-y');
+      // Local: X was just unpinned (tombstone written), Y still pinned.
+      await db.suppressDeadlineAutoPin(date, idX);
+      await db.saveTodaysFiveState(
+        date: date, taskIds: [idY], completedIds: {}, workedOnIds: {},
+        pinnedIds: {idY});
+
+      // Remote is STALE (older): still lists X (and Y) as members.
+      await db.upsertTodaysFiveFromRemote(date, [
+        {'task_sync_id': 'sync-x', 'is_completed': false, 'is_worked_on': false, 'is_pinned': true, 'sort_order': 0},
+        {'task_sync_id': 'sync-y', 'is_completed': false, 'is_worked_on': false, 'is_pinned': true, 'sort_order': 1},
+      ], remoteUpdatedAt: 100, localPersistedAt: 200);
+
+      // Tombstone preserved and X stays removed; Y remains.
+      expect(await db.getDeadlineSuppressedIds(date), contains(idX));
+      final state = await db.loadTodaysFiveState(date);
+      expect(state!.taskIds, isNot(contains(idX)));
+      expect(state.taskIds, contains(idY));
+    });
+
+    test('updateTaskDeadline to today clears the removal tombstone '
+        '(deadline overrides an earlier unpin)', () async {
+      // [Regression] PR #72 review finding #2: once every unpin tombstones the
+      // task, one unpinned earlier today must still auto-pin if later given a
+      // today deadline — so setting the deadline to today clears the tombstone.
+      final now = DateTime.now();
+      final today =
+          '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final id = await insertTaskWithSyncId('X', 'sync-x');
+      await db.suppressDeadlineAutoPin(today, id); // unpinned earlier today
+      expect(await db.getDeadlineSuppressedIds(today), contains(id));
+
+      await db.updateTaskDeadline(id, today);
+
+      expect(await db.getDeadlineSuppressedIds(today), isNot(contains(id)));
+    });
+
+    test('updateTaskDeadline to a non-today date leaves the tombstone intact',
+        () async {
+      final now = DateTime.now();
+      final today =
+          '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final id = await insertTaskWithSyncId('X', 'sync-x');
+      await db.suppressDeadlineAutoPin(today, id);
+
+      await db.updateTaskDeadline(id, '2099-01-01'); // future deadline
+
+      expect(await db.getDeadlineSuppressedIds(today), contains(id));
     });
 
     test('upsertTodaysFiveFromRemote: suppression with no remote entries still '

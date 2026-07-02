@@ -56,9 +56,15 @@ the merge drops any suppressed task even if a device still has it locally
 pinned. (Codex P2 fix: this used to be recorded only for deadline-today tasks,
 so removing a plain pinned task left no tombstone and it was resurrected on the
 next pull.) Manually pinning a task back clears its suppression
-(`unsuppressDeadlineAutoPin`); a task the remote still lists as a member is
-treated as un-suppressed on merge, so a re-pin propagates too. Suppression rows
-are date-keyed and old ones are purged on load (`purgeOldDeadlineSuppressed`).
+(`unsuppressDeadlineAutoPin`), as does giving the task a **today deadline**
+(`updateTaskDeadline` — "due today" deliberately overrides an earlier same-day
+unpin). On merge, a task the remote lists as a member clears the local
+suppression **only when the remote doc is genuinely newer** (`remoteIsNewer`) —
+a real cross-device re-pin. It must NOT clear when the remote is merely *stale*
+(still listing a task we just unpinned but haven't pushed yet), or a pull racing
+ahead of our debounced push would erase the fresh tombstone and resurrect the
+removal. Suppression rows are date-keyed and old ones are purged on load
+(`purgeOldDeadlineSuppressed`).
 
 The deadline-today indicator on the card is the existing proximity-coloured
 clock icon (deepOrange for ≤2 days) — there is no separate "Today"-specific
