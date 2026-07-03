@@ -4,14 +4,14 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:task_roulette/data/database_helper.dart';
 import 'package:task_roulette/models/task.dart';
 import 'package:task_roulette/providers/task_provider.dart';
-import 'package:task_roulette/widgets/pick_task_for_today_dialog.dart';
+import 'package:task_roulette/widgets/task_picker_dialog.dart';
 
 import '../helpers/async_pump.dart';
 
-/// Widget tests for [PickTaskForTodayDialog] — the manual-model "pick existing
-/// task" picker that replaced the old auto-pick/reroll flow.
+/// Widget tests for [TaskPickerDialog] in *browse mode* (`browse:` set) — the
+/// manual-model "pick existing task" flow that pins into Today's 5.
 ///
-/// The dialog queries the real DB via the provider (getRootTasks/getChildren/
+/// Browse mode queries the real DB via the provider (getRootTasks/getChildren/
 /// getAllLeafTasks/getParentNamesMap), so these use the sqflite-ffi NoIsolate
 /// widget harness with the pumpAndLoad/pumpAsync pattern.
 void main() {
@@ -48,9 +48,12 @@ void main() {
             onPressed: () async {
               final r = await showDialog<Task>(
                 context: context,
-                builder: (_) => PickTaskForTodayDialog(
-                  provider: provider,
-                  excludeIds: excludeIds,
+                builder: (_) => TaskPickerDialog(
+                  title: "Pin a task to Today’s 5",
+                  browse: TaskBrowseConfig(
+                    provider: provider,
+                    excludeIds: excludeIds,
+                  ),
                 ),
               );
               resultHolder.add(r);
@@ -67,7 +70,7 @@ void main() {
     await pumpAsync(tester);
   }
 
-  group('PickTaskForTodayDialog — browse', () {
+  group('TaskPickerDialog browse — browse', () {
     testWidgets('shows root tasks, hiding inbox tasks', (tester) async {
       await tester.runAsync(() async {
         await db.insertTask(Task(name: 'Groceries'));
@@ -233,7 +236,7 @@ void main() {
     });
   });
 
-  group('PickTaskForTodayDialog — search', () {
+  group('TaskPickerDialog browse — search', () {
     testWidgets('typing filters to matching leaf tasks by name',
         (tester) async {
       await tester.runAsync(() async {
@@ -363,6 +366,85 @@ void main() {
 
       expect(result, hasLength(1));
       expect(result.first?.id, leafId);
+    });
+  });
+
+  group('TaskPickerDialog browse — create from empty search', () {
+    // Host that wires the opt-in onCreateTask callback and captures the query
+    // it fires with.
+    Widget buildHostWithCreate({required List<String> capturedQueries}) {
+      return MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () async {
+                await showDialog<Task>(
+                  context: context,
+                  builder: (dialogCtx) => TaskPickerDialog(
+                    browse: TaskBrowseConfig(provider: provider),
+                    onCreateTask: (q) {
+                      Navigator.of(dialogCtx).pop();
+                      capturedQueries.add(q);
+                    },
+                  ),
+                );
+              },
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('shows Create button when search matches nothing',
+        (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Apple'));
+      });
+
+      await pumpAndLoad(tester, buildHostWithCreate(capturedQueries: []));
+      await openDialog(tester);
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await pumpAsync(tester);
+
+      expect(find.text('No matching tasks'), findsOneWidget);
+      expect(find.text('Create "buy milk"'), findsOneWidget);
+    });
+
+    testWidgets('tapping Create fires onCreateTask with the trimmed query',
+        (tester) async {
+      final captured = <String>[];
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Apple'));
+      });
+
+      await pumpAndLoad(
+          tester, buildHostWithCreate(capturedQueries: captured));
+      await openDialog(tester);
+
+      await tester.enterText(find.byType(TextField), '  buy milk  ');
+      await pumpAsync(tester);
+      await tester.tap(find.text('Create "buy milk"'));
+      await pumpAsync(tester);
+
+      expect(captured, ['buy milk']);
+    });
+
+    testWidgets('no Create button when onCreateTask is null (default host)',
+        (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Apple'));
+      });
+
+      await pumpAndLoad(tester, buildHost(resultHolder: []));
+      await openDialog(tester);
+
+      await tester.enterText(find.byType(TextField), 'zzzz');
+      await pumpAsync(tester);
+
+      expect(find.text('No matching tasks'), findsOneWidget);
+      expect(find.textContaining('Create'), findsNothing);
     });
   });
 }

@@ -11,7 +11,7 @@ import '../services/sync_service.dart';
 import '../utils/display_utils.dart';
 import '../widgets/add_task_dialog.dart';
 import '../widgets/completion_animation.dart';
-import '../widgets/pick_task_for_today_dialog.dart';
+import '../widgets/task_picker_dialog.dart';
 import '../widgets/profile_icon.dart';
 import 'completed_tasks_screen.dart';
 
@@ -743,8 +743,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   }
 
   /// Create-new flow: opens AddTaskDialog (no pin toggle — pin is implicit),
-  /// inserts the task at root, then pins it.
-  Future<void> _handleCreateNewForToday() async {
+  /// inserts the task at root, then pins it. [initialName] pre-fills the name
+  /// field — used by the pick-existing dialog's "Create ..." affordance so
+  /// an empty search can spin up (and pin) a brand-new task named after the
+  /// search term.
+  Future<void> _handleCreateNewForToday({String? initialName}) async {
     if (_todaysTasks.length >= maxPins) {
       ScaffoldMessenger.of(context).clearSnackBars();
       showInfoSnackBar(context, "Today’s 5 is full — remove one first");
@@ -752,7 +755,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     }
     final result = await showDialog<AddTaskResult>(
       context: context,
-      builder: (_) => const AddTaskDialog(showPinOption: false, showInboxOption: true),
+      builder: (_) => AddTaskDialog(
+        showPinOption: false,
+        showInboxOption: true,
+        initialName: initialName,
+      ),
     );
     if (!mounted || result == null) return;
     if (result is! SingleTask) return; // brain dump not offered for this flow
@@ -787,9 +794,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     final selected = await showDialog<Task>(
       context: context,
-      builder: (_) => PickTaskForTodayDialog(
-        provider: provider,
-        excludeIds: alreadyIn,
+      builder: (dialogCtx) => TaskPickerDialog(
+        title: "Pin a task to Today’s 5",
+        browse: TaskBrowseConfig(provider: provider, excludeIds: alreadyIn),
+        // Empty search → create a brand-new task named after the query and pin
+        // it, reusing the create-new flow (pin implicit) with the name filled.
+        onCreateTask: (name) {
+          Navigator.of(dialogCtx).pop();
+          _handleCreateNewForToday(initialName: name);
+        },
       ),
     );
     if (selected == null || !mounted) return;

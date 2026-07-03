@@ -861,15 +861,62 @@ class TaskListScreenState extends State<TaskListScreen>
 
     final selected = await showDialog<Task>(
       context: context,
-      builder: (_) => TaskPickerDialog(
+      builder: (dialogCtx) => TaskPickerDialog(
         candidates: allTasks,
         title: 'Search tasks',
         parentNamesMap: parentNamesMap,
+        // Empty results → offer to create a task named after the search term.
+        onCreateTask: (name) {
+          Navigator.of(dialogCtx).pop();
+          _createTaskFromSearch(name);
+        },
       ),
     );
 
     if (selected == null || !mounted) return;
     await provider.navigateToTask(selected);
+  }
+
+  /// Creates a task from an empty search result, named after the search term.
+  /// Search is a global action, so the task is always filed at the root with
+  /// the Inbox toggle offered (default on) regardless of the currently open
+  /// task — see the `atRoot: true` on the add closures below. The search term
+  /// pre-fills the Add dialog so the user can tweak the name / options first.
+  Future<void> _createTaskFromSearch(String name) async {
+    if (!mounted) return;
+    final provider = context.read<TaskProvider>();
+    // Pin is offered only when there's a free Today's 5 slot, matching the
+    // root-level add flow.
+    final showPin = (_todays5PinnedIds?.length ?? 0) < maxPins;
+    await AddTaskFlow(
+      initialName: name,
+      parentName: null,
+      showPinOption: showPin,
+      showInboxOption: true,
+      // Force root insertion even when drilled into a task: create-from-search
+      // always files at the root (Inbox by default), never under the open task.
+      addSingle: ({required name, url, required isInbox, required deferNotify}) =>
+          provider.addTask(name,
+              url: url,
+              isInbox: isInbox,
+              deferNotify: deferNotify,
+              atRoot: true),
+      addBatch: (names, {required isInbox}) =>
+          provider.addTasksBatch(names, isInbox: isInbox, atRoot: true),
+      onTodaysFiveChanged: (result) {
+        if (!mounted) return;
+        setState(() {
+          _todaysFiveIds = result.taskIds.toSet();
+          _todays5PinnedIds = result.pinnedIds;
+        });
+      },
+      onProviderRefresh: provider.refreshAfterMutation,
+      // Always refresh the Inbox count — the new task lands at root even when
+      // the user is currently drilled into a parent.
+      onCompleted: (_) async {
+        if (mounted) await _loadInboxCount();
+      },
+    ).run(context);
   }
 
   Future<void> _pickRandom() async {

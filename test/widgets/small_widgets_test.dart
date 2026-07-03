@@ -203,6 +203,74 @@ void main() {
       expect(find.byType(TextField), findsOneWidget);
     });
 
+    testWidgets('initialName pre-fills the name field (create-from-search)',
+        (tester) async {
+      AddTaskResult? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  result = await showDialog<AddTaskResult>(
+                    context: context,
+                    builder: (_) => const AddTaskDialog(initialName: 'buy milk'),
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      // Field is pre-filled with the searched term, and submitting as-is keeps
+      // it (cursor is placed at the end so autofocus doesn't overwrite).
+      expect(find.text('buy milk'), findsOneWidget);
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+      expect((result as SingleTask).name, 'buy milk');
+    });
+
+    testWidgets(
+        'initialName carries into brain dump when "Add multiple" tapped '
+        'without typing (create-from-search seeding)', (tester) async {
+      // AddTaskFlow documents that initialName also seeds the brain-dump text
+      // if the user switches to "Add multiple". That seeding happens via the
+      // shared name controller (pre-filled with initialName), which the "Add
+      // multiple" button reads into SwitchToBrainDump.initialText. This guards
+      // the seeding path for the case where the user does NOT type anything —
+      // distinct from the existing "preserves typed text" test.
+      AddTaskResult? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  result = await showDialog<AddTaskResult>(
+                    context: context,
+                    builder: (_) => const AddTaskDialog(initialName: 'buy milk'),
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Add multiple'));
+      await tester.pumpAndSettle();
+
+      expect(result, isA<SwitchToBrainDump>());
+      expect((result as SwitchToBrainDump).initialText, 'buy milk');
+    });
+
     testWidgets('entering text and tapping Add returns SingleTask',
         (tester) async {
       AddTaskResult? result;
