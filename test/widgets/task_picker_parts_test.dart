@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:task_roulette/models/task.dart';
 import 'package:task_roulette/widgets/task_picker_parts.dart';
@@ -81,6 +82,72 @@ void main() {
       // "task" matches a and c (case-insensitive), in original order.
       final result = filterTasksBySearch([a, b, c], 'task', null);
       expect(result, [a, c]);
+    });
+  });
+
+  // The unified picker refactor made PickerTaskCard's leadingIcon optional so
+  // flat-mode rows (link/move/search pickers) render with no leading icon,
+  // while browse rows keep the folder/push-pin icon that hints at the tap
+  // action. These guard that contract directly.
+  group('PickerTaskCard leadingIcon', () {
+    Widget host(Widget child) =>
+        MaterialApp(home: Scaffold(body: child));
+
+    testWidgets('[Mechanism] renders the leading icon when one is provided',
+        (tester) async {
+      await tester.pumpWidget(host(
+        PickerTaskCard(
+          task: t(1, 'Browse row'),
+          leadingIcon: Icons.folder_outlined,
+        ),
+      ));
+
+      expect(find.text('Browse row'), findsOneWidget);
+      expect(find.byIcon(Icons.folder_outlined), findsOneWidget);
+    });
+
+    testWidgets('[Mechanism] omits the leading icon when leadingIcon is null',
+        (tester) async {
+      // Flat-picker contract: no leading icon on plain selectable rows.
+      await tester.pumpWidget(host(
+        PickerTaskCard(task: t(2, 'Flat row')),
+      ));
+
+      expect(find.text('Flat row'), findsOneWidget);
+      // No Icon renders inside the card when leadingIcon is null and no
+      // trailing widget is supplied.
+      expect(find.byType(Icon), findsNothing);
+    });
+
+    testWidgets('[Mechanism] tapping the card invokes onTap', (tester) async {
+      var tapped = false;
+      await tester.pumpWidget(host(
+        PickerTaskCard(
+          task: t(3, 'Tappable'),
+          onTap: () => tapped = true,
+        ),
+      ));
+
+      await tester.tap(find.text('Tappable'));
+      await tester.pumpAndSettle();
+      expect(tapped, isTrue);
+    });
+
+    testWidgets('[Regression] task name wraps to 2 lines before truncating',
+        (tester) async {
+      // Regression guard for the card-look unification: single-line ellipsis
+      // made two long same-prefix names indistinguishable in the link/move/
+      // dependency pickers. The name now wraps to 2 lines.
+      await tester.pumpWidget(host(
+        PickerTaskCard(
+          task: t(4, 'A very long task name that would otherwise be truncated'),
+        ),
+      ));
+
+      final nameText = tester.widget<Text>(find.text(
+          'A very long task name that would otherwise be truncated'));
+      expect(nameText.maxLines, 2);
+      expect(nameText.overflow, TextOverflow.ellipsis);
     });
   });
 }

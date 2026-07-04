@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:task_roulette/models/task.dart';
 import 'package:task_roulette/widgets/task_picker_dialog.dart';
+import 'package:task_roulette/widgets/task_picker_parts.dart';
 
 void main() {
   final now = DateTime.now().millisecondsSinceEpoch;
@@ -41,13 +42,12 @@ void main() {
     );
   }
 
-  /// Returns the displayed task names in order from the ListView.
+  /// Returns the displayed task names in order from the result list. Flat-mode
+  /// rows render as [PickerTaskCard]s (shared card chrome).
   List<String> getDisplayedTaskNames(WidgetTester tester) {
-    final listTiles = tester.widgetList<ListTile>(find.byType(ListTile));
-    return listTiles.map((tile) {
-      final titleWidget = tile.title as Text;
-      return titleWidget.data!;
-    }).toList();
+    final cards =
+        tester.widgetList<PickerTaskCard>(find.byType(PickerTaskCard));
+    return cards.map((card) => card.task.name).toList();
   }
 
   group('TaskPickerDialog priorityIds', () {
@@ -526,6 +526,126 @@ void main() {
 
       // Verify no overflow errors were reported
       // (Flutter test framework automatically fails on layout overflow)
+    });
+  });
+
+  group('TaskPickerDialog onCreateTask (create-from-search)', () {
+    // Local builder that wires an opt-in onCreateTask callback. Captures the
+    // query the button fires with so tests can assert on it.
+    Widget buildWithCreate({
+      required List<Task> candidates,
+      required void Function(String query)? onCreateTask,
+    }) {
+      return MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () {
+                showDialog<Task>(
+                  context: context,
+                  builder: (_) => TaskPickerDialog(
+                    candidates: candidates,
+                    onCreateTask: onCreateTask,
+                  ),
+                );
+              },
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('shows Create button when query matches nothing', (tester) async {
+      await tester.pumpWidget(
+        buildWithCreate(candidates: makeTasks(['Apple']), onCreateTask: (_) {}),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      // Search filter is debounced by 200ms.
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No matching tasks'), findsOneWidget);
+      expect(find.text('Create "buy milk"'), findsOneWidget);
+    });
+
+    testWidgets('tapping Create fires onCreateTask with the trimmed query',
+        (tester) async {
+      String? captured;
+      await tester.pumpWidget(
+        buildWithCreate(
+          candidates: makeTasks(['Apple']),
+          onCreateTask: (q) => captured = q,
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      // Leading/trailing whitespace should be trimmed before creation.
+      await tester.enterText(find.byType(TextField), '  buy milk  ');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Create "buy milk"'));
+      await tester.pumpAndSettle();
+
+      expect(captured, 'buy milk');
+    });
+
+    testWidgets('no Create button when onCreateTask is null (other pickers)',
+        (tester) async {
+      await tester.pumpWidget(
+        buildWithCreate(candidates: makeTasks(['Apple']), onCreateTask: null),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No matching tasks'), findsOneWidget);
+      expect(find.textContaining('Create'), findsNothing);
+    });
+
+    testWidgets('no Create button when query is blank', (tester) async {
+      // No candidates → empty list, but with no query there is nothing to name
+      // the new task, so the create affordance stays hidden.
+      await tester.pumpWidget(
+        buildWithCreate(candidates: const [], onCreateTask: (_) {}),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No matching tasks'), findsOneWidget);
+      expect(find.textContaining('Create'), findsNothing);
+    });
+
+    testWidgets('clearing the field removes the stale Create button immediately',
+        (tester) async {
+      // Bug fix: the flat filter is debounced 200ms, but clearing the field
+      // must take effect at once — otherwise the "Create <old query>" button
+      // lingers over an empty field for ~200ms and a fast tap creates a task
+      // named after the deleted text.
+      await tester.pumpWidget(
+        buildWithCreate(candidates: makeTasks(['Apple']), onCreateTask: (_) {}),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'zzz');
+      await tester.pump(const Duration(milliseconds: 250)); // past debounce
+      expect(find.text('Create "zzz"'), findsOneWidget);
+
+      // Clear the field and pump only a single short frame — well under the
+      // 200ms debounce. The Create button must already be gone.
+      await tester.enterText(find.byType(TextField), '');
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(find.textContaining('Create'), findsNothing);
+      expect(find.text('Apple'), findsOneWidget); // full list restored
     });
   });
 }

@@ -34,6 +34,7 @@ class AddTaskFlow {
     this.parentIsPinned = false,
     this.showPinOption = false,
     this.showInboxOption = false,
+    this.initialName,
     this.onTodaysFiveChanged,
     this.onProviderRefresh,
     this.onCompleted,
@@ -72,6 +73,11 @@ class AddTaskFlow {
   /// Whether to show the "Add to Inbox" toggle (root level only).
   final bool showInboxOption;
 
+  /// Optional text to pre-fill the task name field with (e.g. the term the
+  /// user searched for when creating a task from empty search results). Also
+  /// seeds the brain-dump text if the user switches to "Add multiple".
+  final String? initialName;
+
   /// Called after any Today's 5 mutation with the new state, so the screen can
   /// refresh its local mirrors (e.g. `_todaysFiveIds`) / pin indicators.
   final void Function(PinResult result)? onTodaysFiveChanged;
@@ -105,6 +111,7 @@ class AddTaskFlow {
       builder: (_) => AddTaskDialog(
         showPinOption: showPinOption,
         showInboxOption: showInboxOption,
+        initialName: initialName,
       ),
     );
     if (!context.mounted || result == null) return;
