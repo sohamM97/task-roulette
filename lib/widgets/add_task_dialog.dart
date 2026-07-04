@@ -89,6 +89,71 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
     Navigator.pop(context, SingleTask(name, url: url, pinInTodays5: _pin, addToInbox: widget.showInboxOption && _inbox));
   }
 
+  /// The Inbox / Pin toggle chips, shared between the "Add multiple" row and
+  /// the actions bar so both placements stay identical.
+  List<Widget> _buildToggles(ColorScheme colorScheme) {
+    return [
+      if (widget.showInboxOption)
+        InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => setState(() => _inbox = !_inbox),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _inbox ? Icons.inbox : Icons.inbox_outlined,
+                  size: 16,
+                  color: _inbox
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'Inbox',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _inbox
+                        ? colorScheme.primary
+                        : colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      if (widget.showPinOption)
+        InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => setState(() => _pin = !_pin),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _pin ? Icons.push_pin : Icons.push_pin_outlined,
+                  size: 16,
+                  color: _pin
+                      ? colorScheme.tertiary
+                      : colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  widget.showInboxOption ? 'Pin' : 'Pin for today',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _pin
+                        ? colorScheme.tertiary
+                        : colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -129,10 +194,15 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
               onSubmitted: (_) => _submit(),
             ),
           ],
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              if (widget.showAddMultiple)
+          // When "Add multiple" is shown it anchors the left of a dedicated
+          // toggle row (Spacer pushes Inbox/Pin right). When it's hidden
+          // (e.g. Today's 5 create flow), that row would be just a lone chip
+          // stranded next to a wide empty gap, so we drop the row entirely and
+          // fold the toggles into the actions bar beside Cancel/Add instead.
+          if (widget.showAddMultiple) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
                 TextButton(
                   onPressed: () => Navigator.pop(context, SwitchToBrainDump(initialText: _controller.text.trim())),
                   style: TextButton.styleFrom(
@@ -141,70 +211,17 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                   ),
                   child: const Text('Add multiple'),
                 ),
-              const Spacer(),
-              if (widget.showInboxOption)
-                InkWell(
-                  borderRadius: BorderRadius.circular(8),
-                  onTap: () => setState(() => _inbox = !_inbox),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _inbox ? Icons.inbox : Icons.inbox_outlined,
-                          size: 16,
-                          color: _inbox
-                              ? colorScheme.primary
-                              : colorScheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Inbox',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: _inbox
-                                ? colorScheme.primary
-                                : colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              if (widget.showPinOption)
-                InkWell(
-                  borderRadius: BorderRadius.circular(8),
-                  onTap: () => setState(() => _pin = !_pin),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _pin ? Icons.push_pin : Icons.push_pin_outlined,
-                          size: 16,
-                          color: _pin
-                              ? colorScheme.tertiary
-                              : colorScheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          widget.showInboxOption ? 'Pin' : 'Pin for today',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: _pin
-                                ? colorScheme.tertiary
-                                : colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
-          ),
+                const Spacer(),
+                ..._buildToggles(colorScheme),
+              ],
+            ),
+          ],
         ],
       ),
       actions: [
+        // Toggles live inline with Cancel/Add when there's no "Add multiple"
+        // row to host them (see comment above).
+        if (!widget.showAddMultiple) ..._buildToggles(colorScheme),
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('Cancel'),
