@@ -1027,14 +1027,14 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
               deferNotify: deferNotify),
       addBatch: (names, {required isInbox}) =>
           provider.addTasksBatch(names, parentId: widget.task.id!),
-      // Refresh local Today's 5 mirrors: the parent's pin may have dropped (it's
-      // now a non-leaf) and a new subtask may have been pinned, changing the
-      // count that gates the toggle on the next add.
-      onTodaysFiveChanged: (result) {
-        _starredTaskPinnedInTodays5 = result.pinnedIds.contains(widget.task.id);
-        _todays5PinnedCount = result.pinnedIds.length;
-      },
       onProviderRefresh: provider.refreshAfterMutation,
+      // No onTodaysFiveChanged mirror-write here (unlike task_list_screen's
+      // flow, which has no post-add reload): _reloadAfterAdd runs on every add
+      // and calls _loadTodays5PinState, which re-reads the authoritative pin
+      // state (parent-pinned + count) from the DB. A direct write would just be
+      // overwritten by that re-fetch — and would be stale anyway, since the
+      // PinResult reflects only the newly-pinned task, not the parent dropping
+      // out of Today's 5 as it becomes a non-leaf.
       onCompleted: (_) => _reloadAfterAdd(),
       // The expanded dialog covers the page's snackbar, and its tree refreshes
       // in place — so the "Added N tasks" snackbar would just flash behind it.
