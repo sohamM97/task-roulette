@@ -710,6 +710,186 @@ void main() {
       expect(find.text('This task is pinned'), findsNothing);
       expect(find.text('Add Task'), findsOneWidget);
     });
+
+    // [Mechanism] The subtask add dialog now offers a "Pin for today" toggle
+    // (so a new subtask can go straight into Today's 5) but NO Inbox toggle
+    // (subtasks aren't root-level) — mirrors the All Tasks drill-in flow.
+    testWidgets('subtask dialog shows "Pin for today" toggle, no Inbox toggle',
+        (tester) async {
+      await tester.runAsync(() => createStarredTask('Plain project'));
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Plain project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byTooltip('Add subtask'));
+      await pumpAsync(tester);
+
+      expect(find.text('Pin for today'), findsOneWidget);
+      expect(find.text('Inbox'), findsNothing);
+    });
+
+    // [Mechanism] Toggling "Pin for today" ON when adding a subtask actually
+    // pins the new subtask into Today's 5.
+    testWidgets('toggling "Pin for today" pins the new subtask into Today\'s 5',
+        (tester) async {
+      late int starredId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Plain project');
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Plain project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byTooltip('Add subtask'));
+      await pumpAsync(tester);
+
+      await tester.enterText(find.byType(TextField).first, 'Pinned child');
+      // Turn the pin toggle on, then add.
+      await tester.tap(find.text('Pin for today'));
+      await pumpAsync(tester);
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Add'));
+      });
+      await pumpAsync(tester);
+
+      final state =
+          await tester.runAsync(() => db.loadTodaysFiveState(todayDateKey()));
+      final children = await tester.runAsync(() => db.getChildren(starredId));
+      final childId =
+          children!.firstWhere((t) => t.name == 'Pinned child').id;
+      expect(state!.pinnedIds, contains(childId));
+      expect(state.taskIds, contains(childId));
+    });
+
+    // [Edge case] When the starred task is ITSELF pinned in Today's 5, the pin
+    // toggle is hidden — adding a subtask makes the parent a non-leaf so it
+    // drops out anyway (mirrors task_list_screen._runAddFlow). The user still
+    // gets the "this task is pinned" warning first.
+    testWidgets('pinned starred parent hides the "Pin for today" toggle',
+        (tester) async {
+      late int starredId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Pinned project');
+        await db.saveTodaysFiveState(
+          date: todayDateKey(),
+          taskIds: [starredId],
+          completedIds: const {},
+          workedOnIds: const {},
+          pinnedIds: {starredId},
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Pinned project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byTooltip('Add subtask'));
+      await pumpAsync(tester);
+
+      // Clear the pinned warning first.
+      expect(find.text('This task is pinned'), findsOneWidget);
+      await tester.tap(find.text('Add anyway'));
+      await pumpAsync(tester);
+
+      // Dialog is open but the pin toggle is suppressed.
+      expect(find.text('Add Task'), findsOneWidget);
+      expect(find.text('Pin for today'), findsNothing);
+    });
+
+    // [Edge case] When Today's 5 is already full (5 pinned), the pin toggle is
+    // hidden — there's no slot to pin the new subtask into. The starred parent
+    // here is NOT one of the pinned five, so fullness is the only reason.
+    testWidgets('full Today\'s 5 hides the "Pin for today" toggle',
+        (tester) async {
+      await tester.runAsync(() async {
+        await createStarredTask('Plain project');
+        // Pin five unrelated tasks to fill Today's 5.
+        final ids = <int>[];
+        for (var i = 0; i < 5; i++) {
+          ids.add(await db.insertTask(Task(name: 'Filler $i')));
+        }
+        await db.saveTodaysFiveState(
+          date: todayDateKey(),
+          taskIds: ids,
+          completedIds: const {},
+          workedOnIds: const {},
+          pinnedIds: ids.toSet(),
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Plain project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byTooltip('Add subtask'));
+      await pumpAsync(tester);
+
+      // No warning (parent isn't pinned), dialog open, but no pin toggle.
+      expect(find.text('This task is pinned'), findsNothing);
+      expect(find.text('Add Task'), findsOneWidget);
+      expect(find.text('Pin for today'), findsNothing);
+    });
+
+    // [Regression] Pin-state must refresh WITHIN the expanded dialog across
+    // consecutive adds. Start with 4 pinned fillers (one free slot), so the
+    // pin toggle shows on the first add. Pinning the new subtask fills Today's
+    // 5 to 5; on the SECOND add the toggle must be gone. Guards the
+    // `_reloadAfterAdd` -> `_loadTodays5PinState` refresh + the
+    // `onTodaysFiveChanged` count update — without them `_todays5PinnedCount`
+    // stays stale at 4 and the toggle would wrongly reappear.
+    testWidgets(
+        'pin toggle disappears on the next add once pinning fills Today\'s 5',
+        (tester) async {
+      await tester.runAsync(() async {
+        await createStarredTask('Plain project');
+        // Fill 4 of 5 Today's 5 slots with unrelated tasks (one slot free).
+        final ids = <int>[];
+        for (var i = 0; i < 4; i++) {
+          ids.add(await db.insertTask(Task(name: 'Filler $i')));
+        }
+        await db.saveTodaysFiveState(
+          date: todayDateKey(),
+          taskIds: ids,
+          completedIds: const {},
+          workedOnIds: const {},
+          pinnedIds: ids.toSet(),
+        );
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Plain project'));
+      await pumpAsync(tester);
+
+      // First add: free slot exists, so the toggle is offered. Pin the subtask.
+      await tester.tap(find.byTooltip('Add subtask'));
+      await pumpAsync(tester);
+      expect(find.text('Pin for today'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).first, 'First child');
+      await tester.tap(find.text('Pin for today'));
+      await pumpAsync(tester);
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Add'));
+      });
+      await pumpAsync(tester);
+
+      // Today's 5 is now full (4 fillers + pinned subtask = 5).
+      final state =
+          await tester.runAsync(() => db.loadTodaysFiveState(todayDateKey()));
+      expect(state!.pinnedIds.length, 5);
+
+      // Second add within the same dialog: no free slot, toggle must be gone.
+      await tester.tap(find.byTooltip('Add subtask'));
+      await pumpAsync(tester);
+      expect(find.text('Add Task'), findsOneWidget);
+      expect(find.text('Pin for today'), findsNothing);
+    });
   });
 
   group('StarredScreen - screen-level Add task FAB', () {
