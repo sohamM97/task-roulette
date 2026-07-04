@@ -456,4 +456,63 @@ void main() {
       expect(suppressed, contains(id));
     });
   });
+
+  group('Add via + FAB nesting (_runAddFlow refactor)', () {
+    // [Regression] The "+" FAB add was extracted into _runAddFlow(atRoot: false)
+    // when create-from-search (atRoot: true) was unified into the same helper.
+    // atRoot: false must keep filing under the currently drilled-in parent
+    // (parentId = currentParent.id). If the refactor had wired the FAB to
+    // atRoot: true (as create-from-search does), a subtask added while drilled
+    // into a parent would wrongly land at the root instead of under the parent.
+    testWidgets('+ FAB while drilled into a parent nests the task under it',
+        (tester) async {
+      late int parentId;
+      await tester.runAsync(() async {
+        parentId = await db.insertTask(Task(name: 'My Project'));
+        final childId = await db.insertTask(Task(name: 'Existing sub'));
+        await db.addRelationship(parentId, childId);
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Drill into the parent, then add via the + FAB.
+      await tester.tap(find.text('My Project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byIcon(Icons.add));
+      await pumpAsync(tester);
+      await tester.enterText(find.byType(TextField).first, 'New sub');
+      await tester.runAsync(() async {
+        await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+      });
+      await pumpAsync(tester);
+
+      // The new task is a child of the drilled-in parent, NOT a root task.
+      final children =
+          await tester.runAsync(() => db.getChildren(parentId)) ?? [];
+      expect(children.map((t) => t.name), contains('New sub'));
+      final roots = await tester.runAsync(() => db.getRootTasks()) ?? [];
+      expect(roots.map((t) => t.name), isNot(contains('New sub')));
+    });
+
+    // [Baseline] atRoot: false at the root level (not drilled in) still files at
+    // root — currentParent is null so parentId resolves to null either way. This
+    // pins the "no parent → root" leg of the same branch so a future change to
+    // the atRoot ternary can't silently break root adds.
+    testWidgets('+ FAB at root files the task at root', (tester) async {
+      await tester.runAsync(() => provider.loadRootTasks());
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.add));
+      await pumpAsync(tester);
+      await tester.enterText(find.byType(TextField).first, 'Root task');
+      await tester.runAsync(() async {
+        await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+      });
+      await pumpAsync(tester);
+
+      final roots = await tester.runAsync(() => db.getRootTasks()) ?? [];
+      expect(roots.map((t) => t.name), contains('Root task'));
+    });
+  });
 }
