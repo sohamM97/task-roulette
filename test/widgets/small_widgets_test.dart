@@ -271,6 +271,32 @@ void main() {
       expect((result as SwitchToBrainDump).initialText, 'buy milk');
     });
 
+    testWidgets('"Add multiple" is hidden when showAddMultiple is false',
+        (tester) async {
+      // Bug fix: the Today's 5 create flow only handles SingleTask, so it must
+      // hide "Add multiple" — otherwise tapping it silently discards the task.
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () => showDialog<AddTaskResult>(
+                  context: context,
+                  builder: (_) => const AddTaskDialog(showAddMultiple: false),
+                ),
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Add Task'), findsOneWidget); // dialog is open
+      expect(find.text('Add multiple'), findsNothing);
+    });
+
     testWidgets('entering text and tapping Add returns SingleTask',
         (tester) async {
       AddTaskResult? result;

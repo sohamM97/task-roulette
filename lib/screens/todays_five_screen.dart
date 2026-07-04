@@ -759,25 +759,40 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         showPinOption: false,
         showInboxOption: true,
         initialName: initialName,
+        // This flow only accepts a SingleTask (pin is implicit), so hide the
+        // "Add multiple" button — otherwise tapping it would silently discard
+        // the task (SwitchToBrainDump is dropped by the `is! SingleTask`
+        // guard below).
+        showAddMultiple: false,
       ),
     );
     if (!mounted || result == null) return;
     if (result is! SingleTask) return; // brain dump not offered for this flow
 
     final provider = context.read<TaskProvider>();
-    // deferNotify so we can pin before refreshSnapshots fires and overwrites
-    // (same race fixed in task_list_screen for the All Tasks tab pin flow).
-    final taskId = await provider.addTask(
-      result.name,
-      url: result.url,
-      isInbox: result.addToInbox,
-      atRoot: true,
-      deferNotify: true,
-    );
     try {
-      if (mounted) await _pinTaskInTodaysFive(taskId);
-    } finally {
-      await provider.refreshAfterMutation();
+      // deferNotify so we can pin before refreshSnapshots fires and overwrites
+      // (same race fixed in task_list_screen for the All Tasks tab pin flow).
+      final taskId = await provider.addTask(
+        result.name,
+        url: result.url,
+        isInbox: result.addToInbox,
+        atRoot: true,
+        deferNotify: true,
+      );
+      try {
+        if (mounted) await _pinTaskInTodaysFive(taskId);
+      } finally {
+        await provider.refreshAfterMutation();
+      }
+    } catch (e) {
+      // Fired un-awaited from the pick-existing "Create" callback, so a
+      // DB/sync throw would otherwise escape to FlutterError.onError with no
+      // user feedback.
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        showInfoSnackBar(context, "Couldn't add task — please retry");
+      }
     }
   }
 

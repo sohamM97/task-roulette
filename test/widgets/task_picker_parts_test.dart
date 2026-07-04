@@ -132,5 +132,22 @@ void main() {
       await tester.pumpAndSettle();
       expect(tapped, isTrue);
     });
+
+    testWidgets('[Regression] task name wraps to 2 lines before truncating',
+        (tester) async {
+      // Regression guard for the card-look unification: single-line ellipsis
+      // made two long same-prefix names indistinguishable in the link/move/
+      // dependency pickers. The name now wraps to 2 lines.
+      await tester.pumpWidget(host(
+        PickerTaskCard(
+          task: t(4, 'A very long task name that would otherwise be truncated'),
+        ),
+      ));
+
+      final nameText = tester.widget<Text>(find.text(
+          'A very long task name that would otherwise be truncated'));
+      expect(nameText.maxLines, 2);
+      expect(nameText.overflow, TextOverflow.ellipsis);
+    });
   });
 }

@@ -372,9 +372,17 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   /// Adds task(s) under the current parent via the shared [AddTaskFlow].
-  Future<void> _addTask() async {
+  Future<void> _addTask() => _runAddFlow(atRoot: false);
+
+  /// Shared add-task flow for both the "+" FAB ([atRoot] false — files under the
+  /// current parent, or at root when not drilled in) and create-from-search
+  /// ([atRoot] true — always files at root regardless of navigation, with the
+  /// searched term pre-filled via [initialName]). Extracted so the AddTaskFlow
+  /// wiring (Today's 5 pin mirror, inbox refresh, add closures) lives once.
+  Future<void> _runAddFlow({required bool atRoot, String? initialName}) async {
     final provider = context.read<TaskProvider>();
-    final parentId = provider.currentParent?.id;
+    // atRoot forces root insertion and ignores the current parent entirely.
+    final parentId = atRoot ? null : provider.currentParent?.id;
     final parentIsPinned = parentId != null &&
         (_todays5PinnedIds?.contains(parentId) ?? false);
     // Hide "Pin for today" when the parent is already pinned: adding a subtask
@@ -383,29 +391,44 @@ class TaskListScreenState extends State<TaskListScreen>
     // would be misleading.
     final showPin = !parentIsPinned &&
         (_todays5PinnedIds?.length ?? 0) < maxPins;
-    await AddTaskFlow(
-      parentId: parentId,
-      parentName: provider.currentParent?.name,
-      parentIsPinned: parentIsPinned,
-      showPinOption: showPin,
-      showInboxOption: provider.isRoot,
-      addSingle: ({required name, url, required isInbox, required deferNotify}) =>
-          provider.addTask(name,
-              url: url, isInbox: isInbox, deferNotify: deferNotify),
-      addBatch: (names, {required isInbox}) =>
-          provider.addTasksBatch(names, isInbox: isInbox),
-      onTodaysFiveChanged: (result) {
-        if (!mounted) return;
-        setState(() {
-          _todaysFiveIds = result.taskIds.toSet();
-          _todays5PinnedIds = result.pinnedIds;
-        });
-      },
-      onProviderRefresh: provider.refreshAfterMutation,
-      onCompleted: (_) async {
-        if (provider.isRoot && mounted) await _loadInboxCount();
-      },
-    ).run(context);
+    // Inbox toggle shows whenever the add lands at root (always for atRoot,
+    // else only when not drilled in).
+    final showInbox = atRoot || provider.isRoot;
+    try {
+      await AddTaskFlow(
+        initialName: initialName,
+        parentId: parentId,
+        parentName: atRoot ? null : provider.currentParent?.name,
+        parentIsPinned: parentIsPinned,
+        showPinOption: showPin,
+        showInboxOption: showInbox,
+        addSingle: ({required name, url, required isInbox, required deferNotify}) =>
+            provider.addTask(name,
+                url: url,
+                isInbox: isInbox,
+                deferNotify: deferNotify,
+                atRoot: atRoot),
+        addBatch: (names, {required isInbox}) =>
+            provider.addTasksBatch(names, isInbox: isInbox, atRoot: atRoot),
+        onTodaysFiveChanged: (result) {
+          if (!mounted) return;
+          setState(() {
+            _todaysFiveIds = result.taskIds.toSet();
+            _todays5PinnedIds = result.pinnedIds;
+          });
+        },
+        onProviderRefresh: provider.refreshAfterMutation,
+        // Refresh the Inbox count whenever the add could have touched root.
+        onCompleted: (_) async {
+          if (showInbox && mounted) await _loadInboxCount();
+        },
+      ).run(context);
+    } catch (e) {
+      // The create-from-search path fires this un-awaited from a picker
+      // callback, so a DB/sync throw would otherwise escape to
+      // FlutterError.onError with the user just seeing the dialog vanish.
+      if (mounted) showInfoSnackBar(context, "Couldn't add task — please retry");
+    }
   }
 
   /// Fetches allTasks and parentNamesMap concurrently.
@@ -878,46 +901,12 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   /// Creates a task from an empty search result, named after the search term.
-  /// Search is a global action, so the task is always filed at the root with
-  /// the Inbox toggle offered (default on) regardless of the currently open
-  /// task — see the `atRoot: true` on the add closures below. The search term
-  /// pre-fills the Add dialog so the user can tweak the name / options first.
-  Future<void> _createTaskFromSearch(String name) async {
-    if (!mounted) return;
-    final provider = context.read<TaskProvider>();
-    // Pin is offered only when there's a free Today's 5 slot, matching the
-    // root-level add flow.
-    final showPin = (_todays5PinnedIds?.length ?? 0) < maxPins;
-    await AddTaskFlow(
-      initialName: name,
-      parentName: null,
-      showPinOption: showPin,
-      showInboxOption: true,
-      // Force root insertion even when drilled into a task: create-from-search
-      // always files at the root (Inbox by default), never under the open task.
-      addSingle: ({required name, url, required isInbox, required deferNotify}) =>
-          provider.addTask(name,
-              url: url,
-              isInbox: isInbox,
-              deferNotify: deferNotify,
-              atRoot: true),
-      addBatch: (names, {required isInbox}) =>
-          provider.addTasksBatch(names, isInbox: isInbox, atRoot: true),
-      onTodaysFiveChanged: (result) {
-        if (!mounted) return;
-        setState(() {
-          _todaysFiveIds = result.taskIds.toSet();
-          _todays5PinnedIds = result.pinnedIds;
-        });
-      },
-      onProviderRefresh: provider.refreshAfterMutation,
-      // Always refresh the Inbox count — the new task lands at root even when
-      // the user is currently drilled into a parent.
-      onCompleted: (_) async {
-        if (mounted) await _loadInboxCount();
-      },
-    ).run(context);
-  }
+  /// Search is a global action, so the task is always filed at the root (Inbox
+  /// toggle default on) regardless of the currently open task — hence
+  /// `atRoot: true`. The term pre-fills the Add dialog so the user can tweak the
+  /// name / options first.
+  Future<void> _createTaskFromSearch(String name) =>
+      _runAddFlow(atRoot: true, initialName: name);
 
   Future<void> _pickRandom() async {
     final provider = context.read<TaskProvider>();

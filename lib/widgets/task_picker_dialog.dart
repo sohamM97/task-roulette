@@ -103,6 +103,10 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
   List<Task> _searchResults = [];
   // All leaf ids — used in browse to decide tap = select vs. drill in.
   Set<int>? _leafIds;
+  // Trimmed/lowercased names of leaves that ARE excluded (e.g. already in
+  // Today's 5). Used to catch a search for an already-in task's exact name so
+  // the empty state doesn't offer "Create" and let the user make a duplicate.
+  Set<String> _excludedLeafNames = {};
 
   bool get _browsing => widget.browse != null;
   TaskProvider get _provider => widget.browse!.provider;
@@ -136,6 +140,10 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
       _leafIds = leaves.map((t) => t.id!).toSet();
       _searchLeaves =
           leaves.where((t) => !_excludeIds.contains(t.id)).toList();
+      _excludedLeafNames = leaves
+          .where((t) => _excludeIds.contains(t.id))
+          .map((t) => t.name.trim().toLowerCase())
+          .toSet();
     });
     // If the user typed before leaves finished loading, fill in results now.
     if (_isSearching) _recomputeSearchResults();
@@ -223,9 +231,20 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_searchResults.isEmpty) {
+      // Bug fix: excluded leaves (e.g. tasks already in Today's 5) are kept out
+      // of the search pool, so searching an already-in task's exact name yields
+      // no results and the "Create" button would let the user make a duplicate
+      // and pin it twice. If the query exactly matches an excluded leaf, say so
+      // and suppress the create affordance instead.
+      final trimmedQuery = _searchFilter.trim().toLowerCase();
+      final matchesExcluded = trimmedQuery.isNotEmpty &&
+          _excludedLeafNames.contains(trimmedQuery);
       return PickerSearchEmptyState(
         query: _searchFilter,
-        onCreateTask: widget.onCreateTask,
+        onCreateTask: matchesExcluded ? null : widget.onCreateTask,
+        message: matchesExcluded
+            ? '"${_searchFilter.trim()}" is already in Today’s 5'
+            : null,
       );
     }
     return ListView.builder(
@@ -447,6 +466,15 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
                   ),
                   onChanged: (value) {
                     _debounce?.cancel();
+                    // Bug fix: apply an emptied field immediately instead of
+                    // debouncing. Otherwise, for ~200ms after clearing a
+                    // no-match query, the stale "Create <old query>" button
+                    // stays rendered over an empty field and a fast tap would
+                    // create a task named after the deleted text.
+                    if (value.isEmpty) {
+                      setState(() => _filter = '');
+                      return;
+                    }
                     _debounce = Timer(const Duration(milliseconds: 200), () {
                       if (mounted) setState(() => _filter = value);
                     });

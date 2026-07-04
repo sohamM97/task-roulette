@@ -26,12 +26,20 @@ class AddTaskDialog extends StatefulWidget {
   /// Optional text to pre-fill the task name field with (e.g. the term the
   /// user searched for when creating a task from empty search results).
   final String? initialName;
+  /// Whether to show the "Add multiple" (brain dump) button. Callers whose
+  /// result handler only accepts a [SingleTask] MUST set this false — otherwise
+  /// tapping "Add multiple" pops a [SwitchToBrainDump] the caller silently
+  /// drops (bug: Today's 5 create-from-search discarded the task with no
+  /// feedback). Default true for the standard AddTaskFlow path, which handles
+  /// the brain-dump branch.
+  final bool showAddMultiple;
 
   const AddTaskDialog({
     super.key,
     this.showPinOption = false,
     this.showInboxOption = false,
     this.initialName,
+    this.showAddMultiple = true,
   });
 
   @override
@@ -124,14 +132,15 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
           const SizedBox(height: 4),
           Row(
             children: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, SwitchToBrainDump(initialText: _controller.text.trim())),
-                style: TextButton.styleFrom(
-                  foregroundColor: colorScheme.onSurfaceVariant,
-                  textStyle: Theme.of(context).textTheme.bodySmall,
+              if (widget.showAddMultiple)
+                TextButton(
+                  onPressed: () => Navigator.pop(context, SwitchToBrainDump(initialText: _controller.text.trim())),
+                  style: TextButton.styleFrom(
+                    foregroundColor: colorScheme.onSurfaceVariant,
+                    textStyle: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  child: const Text('Add multiple'),
                 ),
-                child: const Text('Add multiple'),
-              ),
               const Spacer(),
               if (widget.showInboxOption)
                 InkWell(

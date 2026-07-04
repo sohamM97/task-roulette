@@ -446,5 +446,45 @@ void main() {
       expect(find.text('No matching tasks'), findsOneWidget);
       expect(find.textContaining('Create'), findsNothing);
     });
+
+    testWidgets(
+        'searching an already-in (excluded) task by exact name shows '
+        '"already in Today\'s 5" and no Create button', (tester) async {
+      // Bug fix: excluded leaves (already in Today's 5) are kept out of the
+      // search pool, so their exact name yields no results. The Create button
+      // would then let the user make a duplicate and pin it twice.
+      late int pinnedId;
+      await tester.runAsync(() async {
+        pinnedId = await db.insertTask(Task(name: 'Buy milk'));
+      });
+
+      final host = MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () => showDialog<Task>(
+                context: context,
+                builder: (dialogCtx) => TaskPickerDialog(
+                  browse: TaskBrowseConfig(
+                    provider: provider,
+                    excludeIds: {pinnedId},
+                  ),
+                  onCreateTask: (_) => Navigator.of(dialogCtx).pop(),
+                ),
+              ),
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      );
+      await pumpAndLoad(tester, host);
+      await openDialog(tester);
+
+      await tester.enterText(find.byType(TextField), 'buy milk'); // case-insensitive
+      await pumpAsync(tester);
+
+      expect(find.text('"buy milk" is already in Today’s 5'), findsOneWidget);
+      expect(find.textContaining('Create'), findsNothing);
+    });
   });
 }

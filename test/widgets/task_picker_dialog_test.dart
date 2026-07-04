@@ -623,5 +623,29 @@ void main() {
       expect(find.text('No matching tasks'), findsOneWidget);
       expect(find.textContaining('Create'), findsNothing);
     });
+
+    testWidgets('clearing the field removes the stale Create button immediately',
+        (tester) async {
+      // Bug fix: the flat filter is debounced 200ms, but clearing the field
+      // must take effect at once — otherwise the "Create <old query>" button
+      // lingers over an empty field for ~200ms and a fast tap creates a task
+      // named after the deleted text.
+      await tester.pumpWidget(
+        buildWithCreate(candidates: makeTasks(['Apple']), onCreateTask: (_) {}),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'zzz');
+      await tester.pump(const Duration(milliseconds: 250)); // past debounce
+      expect(find.text('Create "zzz"'), findsOneWidget);
+
+      // Clear the field and pump only a single short frame — well under the
+      // 200ms debounce. The Create button must already be gone.
+      await tester.enterText(find.byType(TextField), '');
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(find.textContaining('Create'), findsNothing);
+      expect(find.text('Apple'), findsOneWidget); // full list restored
+    });
   });
 }

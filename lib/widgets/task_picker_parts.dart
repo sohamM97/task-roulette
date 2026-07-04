@@ -67,7 +67,11 @@ class PickerTaskCard extends StatelessWidget {
                       Text(
                         task.name,
                         style: Theme.of(context).textTheme.bodyMedium,
-                        maxLines: 1,
+                        // Wrap to 2 lines before truncating: single-line
+                        // ellipsis made two long same-prefix task names
+                        // indistinguishable in the link/move/dependency
+                        // pickers, so the user could pick the wrong one.
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
                       if (subtitle != null)
@@ -147,10 +151,16 @@ class PickerSearchEmptyState extends StatelessWidget {
   /// Opt-in create callback, invoked with the trimmed query.
   final void Function(String query)? onCreateTask;
 
+  /// Overrides the default "No matching tasks" line. Used when the query
+  /// matches a task that exists but is hidden from the pool (e.g. a leaf
+  /// already in Today's 5) to say so instead of implying nothing matches.
+  final String? message;
+
   const PickerSearchEmptyState({
     super.key,
     required this.query,
     this.onCreateTask,
+    this.message,
   });
 
   @override
@@ -162,7 +172,7 @@ class PickerSearchEmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('No matching tasks'),
+            Text(message ?? 'No matching tasks', textAlign: TextAlign.center),
             if (onCreateTask != null && trimmed.isNotEmpty) ...[
               const SizedBox(height: 16),
               FilledButton.icon(
