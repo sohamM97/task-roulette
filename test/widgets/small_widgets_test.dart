@@ -581,6 +581,210 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // AddTaskDialog — toggle placement driven by showAddMultiple
+  // ---------------------------------------------------------------------------
+  // The Inbox/Pin chips were extracted into a shared _buildToggles() helper.
+  // With showAddMultiple:true they live in the dedicated "Add multiple" row
+  // inside the dialog content (right-aligned via a Spacer). With
+  // showAddMultiple:false that row is dropped and the chips fold into the
+  // actions bar (an OverflowBar) beside Cancel/Add. These tests pin down the
+  // button visibility, the placement in each mode, and that toggle state is
+  // still honoured in the returned SingleTask regardless of where the chips
+  // render.
+  group('AddTaskDialog toggle placement (showAddMultiple)', () {
+    Future<void> openDialog(WidgetTester tester,
+        {required ValueChanged<AddTaskResult?> onResult,
+        required bool showAddMultiple,
+        bool showPinOption = true,
+        bool showInboxOption = true}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  final result = await showDialog<AddTaskResult>(
+                    context: context,
+                    builder: (_) => AddTaskDialog(
+                      showAddMultiple: showAddMultiple,
+                      showPinOption: showPinOption,
+                      showInboxOption: showInboxOption,
+                    ),
+                  );
+                  onResult(result);
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+    }
+
+    // -- "Add multiple" button visibility -------------------------------------
+
+    testWidgets('shows "Add multiple" button when showAddMultiple is true',
+        (tester) async {
+      await openDialog(tester, onResult: (_) {}, showAddMultiple: true);
+      expect(find.text('Add multiple'), findsOneWidget);
+    });
+
+    testWidgets('hides "Add multiple" button when showAddMultiple is false',
+        (tester) async {
+      await openDialog(tester, onResult: (_) {}, showAddMultiple: false);
+      expect(find.text('Add Task'), findsOneWidget); // dialog is open
+      expect(find.text('Add multiple'), findsNothing);
+    });
+
+    // -- Toggle placement ------------------------------------------------------
+
+    testWidgets(
+        'toggles live in the content (not the actions bar) when '
+        'showAddMultiple is true', (tester) async {
+      await openDialog(tester, onResult: (_) {}, showAddMultiple: true);
+
+      // Both chips render.
+      expect(find.text('Inbox'), findsOneWidget);
+      expect(find.text('Pin'), findsOneWidget);
+
+      // AlertDialog wraps its actions in an OverflowBar. In the true case the
+      // chips belong to the "Add multiple" content row, so they must NOT be
+      // descendants of the actions OverflowBar.
+      expect(
+        find.ancestor(
+            of: find.text('Inbox'), matching: find.byType(OverflowBar)),
+        findsNothing,
+      );
+      expect(
+        find.ancestor(
+            of: find.text('Pin'), matching: find.byType(OverflowBar)),
+        findsNothing,
+      );
+    });
+
+    testWidgets(
+        'toggles fold into the actions bar (OverflowBar) when '
+        'showAddMultiple is false', (tester) async {
+      await openDialog(tester, onResult: (_) {}, showAddMultiple: false);
+
+      // Both chips still render.
+      expect(find.text('Inbox'), findsOneWidget);
+      expect(find.text('Pin'), findsOneWidget);
+
+      // With no "Add multiple" row to host them, the chips render inline in the
+      // actions OverflowBar beside Cancel/Add.
+      expect(
+        find.ancestor(
+            of: find.text('Inbox'), matching: find.byType(OverflowBar)),
+        findsOneWidget,
+      );
+      expect(
+        find.ancestor(
+            of: find.text('Pin'), matching: find.byType(OverflowBar)),
+        findsOneWidget,
+      );
+      // Sanity: Cancel/Add share that same actions bar.
+      expect(
+        find.ancestor(
+            of: find.text('Cancel'), matching: find.byType(OverflowBar)),
+        findsOneWidget,
+      );
+    });
+
+    // -- Toggle state honoured regardless of placement -------------------------
+
+    testWidgets(
+        'toggle state (pin on, inbox off) reflected in SingleTask when '
+        'showAddMultiple is false (actions-bar placement)', (tester) async {
+      AddTaskResult? result;
+      await openDialog(tester,
+          onResult: (r) => result = r, showAddMultiple: false);
+
+      // Inbox defaults ON; turn it off. Pin defaults OFF; turn it on.
+      await tester.tap(find.text('Inbox'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Pin'));
+      await tester.pumpAndSettle();
+
+      // Icons reflect the new state even in the actions-bar placement.
+      expect(find.byIcon(Icons.inbox_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), 'Today five task');
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+
+      expect(result, isA<SingleTask>());
+      final single = result as SingleTask;
+      expect(single.name, 'Today five task');
+      expect(single.pinInTodays5, isTrue);
+      expect(single.addToInbox, isFalse);
+    });
+
+    testWidgets(
+        'default toggle state (inbox on, pin off) reflected in SingleTask when '
+        'showAddMultiple is false', (tester) async {
+      AddTaskResult? result;
+      await openDialog(tester,
+          onResult: (r) => result = r, showAddMultiple: false);
+
+      // Do not touch the toggles — inbox defaults ON, pin defaults OFF.
+      await tester.enterText(find.byType(TextField), 'Defaults task');
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+
+      final single = result as SingleTask;
+      expect(single.addToInbox, isTrue);
+      expect(single.pinInTodays5, isFalse);
+    });
+
+    testWidgets(
+        'toggle state (pin on, inbox off) still honoured when '
+        'showAddMultiple is true (content-row placement)', (tester) async {
+      AddTaskResult? result;
+      await openDialog(tester,
+          onResult: (r) => result = r, showAddMultiple: true);
+
+      await tester.tap(find.text('Inbox'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Pin'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'Content row task');
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+
+      final single = result as SingleTask;
+      expect(single.pinInTodays5, isTrue);
+      expect(single.addToInbox, isFalse);
+    });
+
+    // -- Pin label still adapts to inbox visibility under either placement -----
+
+    testWidgets(
+        'pin label reads "Pin" when inbox shown (showAddMultiple false)',
+        (tester) async {
+      // Both options → compact "Pin" label beside the Inbox chip.
+      await openDialog(tester,
+          onResult: (_) {}, showAddMultiple: false, showInboxOption: true);
+      expect(find.text('Pin'), findsOneWidget);
+      expect(find.text('Pin for today'), findsNothing);
+    });
+
+    testWidgets(
+        'pin label reads "Pin for today" when inbox hidden '
+        '(showAddMultiple false)', (tester) async {
+      // Pin only (no inbox) → the standalone "Pin for today" label.
+      await openDialog(tester,
+          onResult: (_) {}, showAddMultiple: false, showInboxOption: false);
+      expect(find.text('Pin for today'), findsOneWidget);
+      expect(find.text('Pin'), findsNothing);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // BrainDumpDialog — Inbox toggle
   // ---------------------------------------------------------------------------
   group('BrainDumpDialog inbox toggle', () {

@@ -856,6 +856,10 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
   /// Drives the "this task is pinned" warning before adding a subtask
   /// (mirrors `task_list_screen.dart`'s `_warnIfPinned`).
   bool _starredTaskPinnedInTodays5 = false;
+  // Count of tasks currently pinned in Today's 5, used to decide whether the
+  // "Pin for today" toggle can be offered on the subtask add flow (a free slot
+  // must exist). Mirrors the All Tasks drill-in flow's showPin logic.
+  int _todays5PinnedCount = 0;
   bool _loading = true;
 
   @override
@@ -870,6 +874,7 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     if (!mounted) return;
     setState(() {
       _starredTaskPinnedInTodays5 = result.pinnedIds.contains(widget.task.id);
+      _todays5PinnedCount = result.pinnedIds.length;
     });
   }
 
@@ -998,13 +1003,22 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
 
   /// Adds subtask(s) to the starred task via the shared [AddTaskFlow]. The
   /// new tasks are parented explicitly to the starred task (atRoot ignores the
-  /// All Tasks tab's drilled-in parent). No pin/inbox toggles are shown here.
+  /// All Tasks tab's drilled-in parent). Shows a "Pin for today" toggle (no
+  /// Inbox toggle — subtasks aren't root-level) so a new subtask can go
+  /// straight into Today's 5, mirroring the All Tasks drill-in flow.
   Future<void> _addSubtask() {
     final provider = context.read<TaskProvider>();
+    // Hide "Pin for today" when the starred parent is itself pinned (adding a
+    // subtask makes it a non-leaf, so it drops out of Today's 5 — the pinned
+    // warning covers that) or when Today's 5 is already full. Mirrors
+    // task_list_screen._runAddFlow.
+    final showPin =
+        !_starredTaskPinnedInTodays5 && _todays5PinnedCount < maxPins;
     return AddTaskFlow(
       parentId: widget.task.id,
       parentName: widget.task.name,
       parentIsPinned: _starredTaskPinnedInTodays5,
+      showPinOption: showPin,
       addSingle: ({required name, url, required isInbox, required deferNotify}) =>
           provider.addTask(name,
               url: url,
@@ -1013,9 +1027,14 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
               deferNotify: deferNotify),
       addBatch: (names, {required isInbox}) =>
           provider.addTasksBatch(names, parentId: widget.task.id!),
-      // The starred task's pin moved to a new subtask, so it's no longer pinned.
-      onTodaysFiveChanged: (_) => _starredTaskPinnedInTodays5 = false,
       onProviderRefresh: provider.refreshAfterMutation,
+      // No onTodaysFiveChanged mirror-write here (unlike task_list_screen's
+      // flow, which has no post-add reload): _reloadAfterAdd runs on every add
+      // and calls _loadTodays5PinState, which re-reads the authoritative pin
+      // state (parent-pinned + count) from the DB. A direct write would just be
+      // overwritten by that re-fetch — and would be stale anyway, since the
+      // PinResult reflects only the newly-pinned task, not the parent dropping
+      // out of Today's 5 as it becomes a non-leaf.
       onCompleted: (_) => _reloadAfterAdd(),
       // The expanded dialog covers the page's snackbar, and its tree refreshes
       // in place — so the "Added N tasks" snackbar would just flash behind it.
@@ -1028,6 +1047,10 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     _childrenCache.remove(widget.task.id);
     _expanded.clear();
     await _loadDirectChildren();
+    // Refresh Today's 5 pin state: adding a subtask can drop the (now non-leaf)
+    // parent out of Today's 5 and/or pin a new subtask, both of which change
+    // what the pin toggle should do on the next add within this dialog.
+    await _loadTodays5PinState();
   }
 
   @override
