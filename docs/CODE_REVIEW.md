@@ -3066,3 +3066,398 @@ Remaining minor items: M-34 through M-38.
 **Resolved in Round 10 Verification (previously listed as open):**
 - M-15: Refresh token now in `flutter_secure_storage` (auth_service.dart:6,54,345-349)
 - M-26: `provider.loadRootTasks()` at backup_service.dart:110 refreshes Today's 5
+
+---
+---
+
+## Round 11 (2026-07-06)
+
+Full codebase review after **78 commits** since Round 10 (1.2.15 → 1.3.9). Major
+new/changed surface: the delta-sync overhaul (cursor-skew lookback, throttled
+full-pull-on-open, periodic full pull), Today's-5 pin **LWW** with central
+timestamp + suppression tombstones, soft-delete tombstones for
+relationships/dependencies/schedules, the manual Today's-5 model rewrite
+(`todays_five_screen.dart` largely rewritten, random algo removed), the shared
+`AddTaskFlow` extraction, and the **create-task-from-search** feature that
+unified the two task pickers.
+
+Reviewed via five parallel subagents (sync layer, Today's-5 screen, picker/add
+flow, provider/database, starred/task-list screens); every Important finding
+below was then re-verified by hand against the current code. `flutter analyze`
+is clean (no issues).
+
+---
+
+### Previous Round Verification
+
+- [x] **I-38 / R-9**: `_transferPinToChild` bypasses TaskProvider — **NOW OBSOLETE.** The method no longer exists anywhere in `lib/` (`grep` returns nothing). Pin auto-transfer was removed with the manual Today's-5 model; the parent simply drops out of Today's 5 when it gains a subtask. Item closed.
+- [ ] **M-32**: N+1 in `deleteTaskAndReparentChildren` — still present (`database_helper.dart:2028`). Still open, low impact.
+- [ ] **M-34**: Starred N+1 for tree preview — still present. Still deferred, low impact.
+- [x] Round 10 fixes (I-42…I-47, M-35, M-37, CR-17) spot-checked — all still in place.
+
+---
+
+### Critical
+
+None. No compile errors (`flutter analyze` clean), no single-device data-loss bugs found. The most severe items this round are cross-device sync-correctness bugs (below), which are Important rather than Critical because they require multi-device use and don't corrupt the local DB.
+
+---
+
+### Important
+
+#### I-48. Today's-5 LWW pushes push-time `now()` instead of the persisted-at stamp — cross-device last-write-wins can invert
+**Files:** `lib/services/sync_service.dart:216-217, 360-361, 465-466` (push side) vs `:711-712` + `lib/data/database_helper.dart:2893` (pull side)
+
+`saveTodaysFiveState` stamps `prefsKeyTodaysFivePersistedAt = now()` on **every**
+local save (edit time), and `pull()` reads that value as `localPersistedAt`,
+gating the merge on `remoteUpdatedAt >= localPersistedAt`
+(`upsertTodaysFiveFromRemote`, `remoteIsNewer` at `database_helper.dart:2893`).
+But all three `pushTodaysFive` sites send
+`DateTime.now().millisecondsSinceEpoch` — the **push** time, *after* the 5s
+debounce — as the remote `updated_at`. The two sides therefore compare against
+different clock references (edit-time locally, push-time remotely). The code
+comment at `database_helper.dart:2684-2695` shows the persisted-at stamp was
+deliberately centralised *for exactly this LWW comparison* — but push never uses it.
+
+**Failure scenario:** Device A edits Today's 5 at T=0 but its push is delayed
+(slow network) to T=10s → remote `updated_at=10000`. Device B edits (newer) at
+T=2s (`persistedAt=2000`), pushes at T=7s. B later pulls A's doc:
+`remoteUpdatedAt=10000 >= localPersistedAt=2000` → A's **older** edit wins and
+B's newer curation is silently discarded (and B's deadline suppressions cleared
+via `unsuppressDeadlineAutoPin`). Any time push order ≠ edit order (variable
+latency, debounce coalescing), LWW inverts.
+
+**Recommended fix:** In each push site read
+`prefs.getInt(DatabaseHelper.prefsKeyTodaysFivePersistedAt)` and pass **that** as
+the `updatedAt` argument to `pushTodaysFive`, so remote `updated_at` and local
+`localPersistedAt` share the same clock basis.
+
+---
+
+#### I-49. Task hard-deletions never propagate to other devices — deleted tasks resurrect as orphans
+**Files:** `lib/services/firestore_service.dart:166-173` (`deleteTask`), `lib/services/sync_service.dart:541-552` (pull tasks), `lib/data/database_helper.dart` (`upsertFromRemote`, insert/update only)
+
+Relationships, dependencies and schedules all use soft-delete tombstones
+(`deleted_at`) + full-pull reconciliation that removes local rows absent from
+remote. **Tasks do not.** `deleteTask` issues a hard Firestore `DELETE`
+(`firestore_service.dart:168`); there is no `deleted_at` on task docs;
+`upsertFromRemote` only inserts/updates; and the task section of `pull()`
+(`sync_service.dart:541-552`) — even on a full pull — never deletes local tasks
+that are absent from remote.
+
+**Failure scenario:** User deletes task X on the phone (hard-deleted in Firestore;
+its relationships tombstoned). Laptop pulls: the relationship tombstones detach
+X's edges, but the X **row** is never removed, so X survives forever as an
+orphaned root task. If the user later edits X on the laptop it is re-pushed,
+fully **resurrecting** the "deleted" task on every device. Deletion is not durable.
+
+**Recommended fix:** Give tasks the same tombstone treatment as
+relationships/deps (soft-delete `deleted_at`, delta picks it up, full-pull
+reconciles), **or** add a full-pull step that deletes local tasks whose
+`sync_id` is not in the remote set (guarding pending local adds, exactly as the
+relationship/dependency branches already do at `sync_service.dart:560+`).
+
+---
+
+#### I-50. Bulk sync operations run outside the `_syncing` mutex — race with debounced push / periodic pull
+**File:** `lib/services/sync_service.dart:167` (`initialMigration`), `:231` (`replaceLocalWithCloud`), `:298` (`replaceCloudWithLocal`), `:378` (`mergeBoth`)
+
+Only `push()` (`:386-390`) and `pull()` (`:496-501`) check/set `_syncing`. The
+four bulk operations never acquire it, and they don't pause the 5s debounce
+timer or the 5-minute periodic-pull timer. So a `schedulePush()` or the periodic
+`pull()` can run **concurrently** with them.
+
+**Failure scenario:** User taps "Replace local with cloud".
+`replaceLocalWithCloud` calls `deleteAllLocalData()` (`:245`) then re-inserts from
+remote over several seconds. Mid-way the periodic-pull timer fires; `pull()` sees
+`_syncing == false`, runs against the half-wiped DB, upserts a partial task set
+and advances `_prefsKeyLastSyncAt`. Result: interleaved, inconsistent local
+state plus a corrupted delta cursor. Same hazard for a debounced `push()`
+draining the sync queue concurrently with `initialMigration`'s own drain
+(`drainSyncQueue` + `markTasksSynced` running twice).
+
+**Recommended fix:** Have all four methods participate in the same guard (set
+`_syncing = true` for their duration, honour `_pushPending`/`_pullPending` in a
+`finally`), or serialize every sync entry point through one mutex.
+
+---
+
+#### I-51. Uncompleting an *externally* "Done today" task doesn't revert the DB worked-on flag — task bounces back to "done"
+**File:** `lib/screens/todays_five_screen.dart:667-685` (`_handleUncomplete`), detection at `:200-202` and `:306-309`
+
+`_handleUncomplete` branches on `wasWorkedOn = _workedOnIds.contains(task.id)`
+and `task.isCompleted`. But when a task is marked "Done today" **outside** the
+Today's-5 screen (e.g. All Tasks leaf detail → `markWorkedOn`), the load/refresh
+paths add it to `_completedIds` only (`:200-202`, `:306-309`), **never** to
+`_workedOnIds`. So for such a task `wasWorkedOn == false` and `isCompleted ==
+false` → **both revert branches are skipped**, yet `_unmarkDone` still strips it
+from `_completedIds` locally.
+
+**Failure scenario:**
+1. Task X pinned in Today's 5. From All Tasks leaf detail, mark X "Done today"
+   (`lastWorkedAt = today` in DB).
+2. Switch to Today tab → `refreshSnapshots` sees `isWorkedOnToday`, adds X to
+   `_completedIds` only. X renders done.
+3. Tap X in Today's 5 to undo. Neither branch fires; X leaves the done section
+   and `_explicitlyUncompletedIds` suppresses re-detection **for the session**.
+4. **Wrong outcome:** DB still has `lastWorkedAt = today`. On app restart, a
+   cross-device sync, or a real `_reloadFromDb`, X reappears as done. Snackbar
+   said "restored," but UI and DB diverged. (Same *class* as the Round 4 I-14
+   fix, but for the externally-worked-on case, which the session sets don't track.)
+
+**Recommended fix:** Detect worked-on from the DB snapshot, not just the session
+set — e.g. `final wasWorkedOn = _workedOnIds.contains(task.id) ||
+task.isWorkedOnToday;` and run `unmarkWorkedOn` whenever `task.isWorkedOnToday &&
+!task.isCompleted`, even when `_workedOnIds` didn't have it. When the pre-worked
+timestamp is unknown (external mark), `restoreTo` may be null — acceptable, and
+the task correctly leaves the done state permanently.
+
+---
+
+#### I-52. `getEffectiveDeadlines` fires one recursive-CTE query per task on the refresh hot path (N+1)
+**File:** `lib/data/database_helper.dart:1188-1213`
+
+`_loadAuxiliaryData()` (`task_provider.dart:868`) calls `getEffectiveDeadlines`
+on **every** `_refreshCurrentList()` — i.e. after every mutation. Tasks lacking
+their own deadline fall into a per-task loop (`:1191`), each iteration running a
+full recursive ancestor CTE (`:1192-1205`).
+
+**Failure scenario:** Open a root category with 50 children and no deadlines
+anywhere. The initial batch query fills nothing, so `remaining` = all 50 IDs,
+firing 50 separate recursive walks. Every star/rename/priority/worked-on toggle
+triggers a refresh → ~50 recursive CTE walks per tap. On mobile SQLite this is
+visibly janky and scales with tree size.
+
+**Recommended fix:** Collapse the loop into one batched recursive CTE keyed by
+target id — the same pattern the file already uses in `getRootAncestorsForLeaves`
+(`:722`) and `getEffectiveScheduledTodayIds` (`:3258`): walk all remaining ids in
+a single `WITH RECURSIVE target_ancestors(target_id, ancestor_id)` and pick the
+nearest deadline per `target_id`.
+
+---
+
+#### I-53. Starred DRY-rule violation — grandchildren in the tree-preview card get none of the priority/blocked styling the expanded dialog applies
+**File:** `lib/screens/starred_screen.dart:664-669` (grandchild render), `:130` / `:149` (blocked-info fetch scope)
+
+The project's "Starred view DRY rule" (see CLAUDE.md) requires any visual
+treatment to apply to **both** the tree-preview card and the expanded dialog via
+a shared helper (`childTextStyle`). It holds for children (card `:644-650`,
+dialog `:1302-1308`) but **not** grandchildren: the card renders grandchildren
+with a hardcoded `TextStyle(fontSize: 13, color: grandchildColor)` (`:666`),
+never calling `childTextStyle`, while the dialog's `_ExpandedTreeRow` applies
+`childTextStyle` at every depth (`:1302`). Worse, `_loadStarredTasks` only adds
+**direct** child IDs to `allChildIds` (`:130`), so the `_blockedInfo` map fed to
+the card (`:149`) can't even cover grandchildren.
+
+**Failure scenario:** A high-priority grandchild shows accent-tinted in the
+expanded dialog but plain grey in the card; a blocked grandchild is dimmed in the
+dialog but full-emphasis in the card — contradictory cues for the same task
+depending on the surface.
+
+**Recommended fix:** Route the grandchild `Text` at `:666` through
+`childTextStyle(task: gc, baseColor: grandchildColor, accent: accent, fontSize:
+13, isBlocked: …)`, and include grandchild IDs in the `allChildIds` /
+`getBlockedTaskInfo` fetch (`:130`, `:149`) so `_blockedInfo` covers them.
+
+---
+
+### Minor
+
+#### M-39. Empty Today's-5 state is never pushed (defensive gap only)
+**File:** `lib/services/sync_service.dart:462` (also `:213`, `:357`), pull guard `:709-710`
+
+Push writes the Today's-5 doc only `if (todaysFiveEntries.isNotEmpty ||
+suppressedSyncIds.isNotEmpty)`, and pull ignores an empty remote doc. In
+isolation this could strand a "cleared" state. **Largely mitigated:** every
+removal path records a suppression tombstone (`todays_five_screen.dart:544`,
+`task_list_screen.dart:207`), so a cleared state always carries non-empty
+`suppressedSyncIds` and *is* pushed/pulled. Reaching empty-with-no-suppressions
+requires never having removed anything (nothing to propagate). Worth a defensive
+"always push the doc" for robustness, but not an active bug.
+
+#### M-40. Pull cycle counter advances (and persists) before the pull succeeds
+**File:** `lib/services/sync_service.dart:523-524`
+
+`_prefsKeyPullCycleCount` is incremented and written *before* the pull work; a
+throwing pull still advances it. Repeated failures can "use up" the every-10th
+full-reconciliation backstop, delaying it. Increment/persist only on the success
+path (near the `_prefsKeyLastSyncAt` write at `:726`).
+
+#### M-41. `_skipNextPeriodicPull` can hide concurrent remote changes
+**File:** `lib/services/sync_service.dart:470-472`, consumed at `:98-101`
+
+After a push the next periodic pull is skipped ("remote matches local"), but
+that's only true for what *this* device pushed — changes made on another device
+between our last pull and this push aren't fetched until the following cycle (up
+to ~10 min latency). Low impact given the 5-min interval; the comment overstates
+the invariant.
+
+#### M-42. `cleanupTombstones` batch deletes ignore HTTP status
+**File:** `lib/services/firestore_service.dart:934-941`
+
+The chunked delete `_post` results are never checked, so a failed tombstone
+purge is invisible. It's explicitly best-effort (documented `:918`), so not a
+data bug — but a `debugLog` on non-200 would aid diagnosis.
+
+#### M-43. Today's-5 remove/uncomplete flows orphan session-state sets
+**File:** `lib/screens/todays_five_screen.dart:544-552` (and `_handleUncomplete`)
+
+`_confirmRemoveFromTodaysFive` updates `_todaysTasks`/`_completedIds`/
+`_workedOnIds` but not the parallel `_autoStartedIds`, `_preWorkedOnLastWorkedAt`,
+`_explicitlyUncompletedIds`. Self-heals on the next `_reloadFromDb` (which clears
+them), so it's a slow leak / latent risk, not an active bug. Drop the removed
+task's id from those sets in the same `setState`.
+
+#### M-44. No reentrancy guard on `refreshSnapshots`; listeners fire it unawaited
+**File:** `lib/screens/todays_five_screen.dart:88-102, 236-338`
+
+`_onProviderChanged` / `_onSyncStatusChanged` invoke `refreshSnapshots()`
+fire-and-forget, and multi-step flows like `_workedOnTask` issue several
+un-deferred provider mutations (`:592-596`), each re-entering `refreshSnapshots`
+mid-flow. Two overlapping runs can interleave reads/writes of `_todaysTasks` /
+`_completedIds`. Benign today (the id set doesn't change), but fragile. Add a
+`bool _refreshing` coalescing guard, and/or batch `_workedOnTask` with
+`deferNotify` as `_handleCreateNewForToday` already does.
+
+#### M-45. `addRelationship` lacks a conflict algorithm — latent UNIQUE-constraint throw
+**File:** `lib/data/database_helper.dart:571-595`
+
+`txn.insert('task_relationships', …)` uses the default `abort`, so re-inserting
+an existing `(parent_id, child_id)` edge throws. The two provider callers
+(`linkChildToCurrent`, `addParentToTask`) only run the `hasPath` cycle check
+(false for an already-existing edge). **Not currently reachable:** both pickers
+exclude existing edges at the UI layer (`task_list_screen.dart:465-471`,
+`:503-511`). But the guard is missing inside the method (inconsistent with
+`moveTask`/`fileTask`, which pre-check), a latent crash for any future caller.
+Add `ConflictAlgorithm.ignore` (and skip the sync-queue enqueue when nothing was
+inserted).
+
+#### M-46. `completeTask`/`skipTask`/`markWorkedOnAndNavigateBack` skip refresh when the nav stack is empty
+**File:** `lib/providers/task_provider.dart:306-308, 319-321, 797-798`
+
+These deliberately do `onMutation?.call(); await navigateBack();` instead of
+`_refreshAfterMutation()`, relying on `navigateBack()` to refresh. But
+`navigateBack()` returns `false` **without refreshing** when `_parentStack`
+is empty (`:78-83`). In that case the DB mutation + sync push already fired but
+no `notifyListeners()` runs → stale UI. Latent (these are called from leaf detail
+where the stack is non-empty), but the "every mutator must refresh" invariant is
+violated on the empty-stack branch. Fall back to `_refreshAfterMutation()` when
+`navigateBack()` returns `false`.
+
+#### M-47. Triage search recomputes over all tasks in `build()` with no debounce
+**File:** `lib/widgets/triage_dialog.dart:182-185` (`_filteredSearch` getter), used at `:331`; `onChanged` at `:226-229`
+
+Unlike the sibling picker (which caches into `_searchResults` and debounces
+200ms — `task_picker_dialog.dart:217, 467-481`), triage's `_filteredSearch` is a
+getter that re-runs `filterTasksBySearch` over **all** tasks inside `build()` on
+every keystroke *and* every unrelated rebuild. With a few thousand tasks this
+causes visible input lag. Cache into a field and add the same debounce.
+
+#### M-48. Flat-mode "Create" can create a stale name during the debounce window
+**File:** `lib/widgets/task_picker_dialog.dart:402-408` (`query: _filter`), debounce `:467-481`
+
+The debounce special-cases only the *emptied* field. On append, `_filter` lags
+the visible text up to 200ms, and the Create empty-state uses `_filter` (`:406`).
+Type "Buy milk", correct to "Buy milkshake", tap Create within 200ms → a task
+named "Buy milk" is created. Source the created name from the live controller
+text (or flush the debounce before invoking `onCreateTask`).
+
+#### M-49. `brain_dump_dialog` adds a controller listener without a matching `removeListener`
+**File:** `lib/widgets/brain_dump_dialog.dart:33` vs `dispose()` `:60-63`
+
+Not a leak in practice (the controller is disposed, tearing down its listeners),
+but the add-without-remove asymmetry is a foot-gun if the controller is ever
+injected/externalised. Low priority.
+
+#### M-50. Dead `highlight` field on `_TreeRow` — set for children, never read
+**File:** `lib/screens/starred_screen.dart:720, 728, 641`
+
+`_TreeRow.highlight` is declared and passed (`highlight: item.child.isHighPriority`
+at `:641`) but `build()` (`:736-761`) never reads it — the real highlight lives in
+`childTextStyle`'s colour. It's also not passed for grandchildren, reinforcing
+I-53's asymmetry. Delete the field + the `:641` argument (or wire it).
+
+#### M-51. Starred `onUnstar` + undo are fire-and-forget — DB errors silently swallowed
+**File:** `lib/screens/starred_screen.dart:182, 185-186`
+
+`provider.updateTaskStarred(task.id!, false)` (and the undo closure) are called
+without `await` — same class as the already-fixed reorder (CR-fix M-35, now
+awaited at `:202-210`). If the write throws, the exception escapes to
+`FlutterError.onError` while the snackbar still claims "Unstarred". Low severity
+(the list self-corrects on the next provider reload), but the message can lie.
+Make them `async` and await / try-catch.
+
+#### M-52. CLAUDE.md DB-version doc drift
+**File:** `CLAUDE.md:34`
+
+CLAUDE.md says "currently at v22" but `_dbVersion = 23`
+(`database_helper.dart:381`). Doc-only drift (a `todays_five_deadline_suppressed`
+table was correctly added in a new v23 migration). Bump the doc note. (UI docs —
+`docs/UI_VIEWS.md` — were checked and are up to date: create-from-search,
+"Pin for today", and the actions-bar toggle folding are all documented.)
+
+---
+
+### Refactoring
+
+#### R-10. `addTask` task insert + relationship inserts are not atomic
+**File:** `lib/providers/task_provider.dart:182-199`
+
+`insertTask()` runs in its own txn, then each parent edge is added via a
+**separate** `addRelationship()` txn. Relationship+sync_queue is atomic per edge,
+but the task row and its edges are not one unit — a crash between them leaves an
+orphan root or partially-parented task. `insertTasksBatch`
+(`database_helper.dart:533`) already does task + edges + sync_queue in a single
+transaction; route the multi-parent path through the same pattern.
+
+#### R-11. Triplicated structured-query + full-pull reconciliation across sync entity types
+**Files:** `lib/services/firestore_service.dart` — `_queryTasksUpdatedSince` (`:697`), `pullRelationshipsSince` (`:280`), `pullDependenciesSince` (`:359`), `pullSchedulesSince` (`:500`); `lib/services/sync_service.dart` reconcile blocks for relationships (`:555-607`), dependencies (`:609-656`), schedules (`:658-704`)
+
+The three per-entity delta/full-pull-with-deletion-reconciliation blocks are
+structurally identical (delta+tombstone vs full+set-diff, both guarded by
+`getPendingSyncAddKeys`), as are the four `updated_at > lastSyncAt` runQuery
+helpers. Extract a generic `queryUpdatedSince(collectionId, parser)` and a
+generic reconcile helper parameterized by key/upsert/remove callbacks (~150 lines
+removed, eliminates drift risk between the copies).
+
+#### R-12. Browse-tree state machine fully duplicated between the two "unified" pickers
+**Files:** `lib/widgets/task_picker_dialog.dart:91-95, 152-192, 268-335` and `lib/widgets/triage_dialog.dart:44-48, 112-160, 360-439`
+
+The picker unification only extracted the *leaf* widgets into
+`task_picker_parts.dart`. The entire browse-tree engine (`_browseStack`,
+`_browseChildren`, `_loadBrowseChildren`, `_browseInto`/`_browseBack`, the
+`clamp(0,6)` truncation, "Show all N items", `_buildBrowseTree`) is copy-pasted
+(~140 near-identical lines) into both dialog states, and has already drifted
+(M-47 vs the debounce/cache in the pin picker). Extract a shared
+`PickerBrowseTree` widget parameterized by the per-picker tap behavior.
+
+---
+
+## Round 11 — Suggested Implementation Order
+
+1. **I-49** — Task-delete tombstone/reconciliation (highest-impact: silent resurrection of deleted tasks).
+2. **I-48** — Push the persisted-at stamp as Today's-5 `updated_at` (fixes LWW inversion; small, same file cluster as I-49).
+3. **I-51** — Detect external worked-on in `_handleUncomplete` (fixes "bounces back to done").
+4. **I-50** — Bring the four bulk sync ops under `_syncing` (concurrency).
+5. **I-52** — Batch the `getEffectiveDeadlines` ancestor CTE (hot-path jank).
+6. **I-53** — Route grandchild styling through `childTextStyle` + include grandchildren in blocked fetch (DRY rule).
+7. **Minor items** M-40…M-52 as time permits; M-46 and M-45 are cheap invariant hardening.
+8. **Refactors** R-10 (atomicity — do with a fix), R-11/R-12 (dedup) when touching those files.
+
+---
+
+### Items Still Open From All Rounds
+
+| Item | Title | Round | Status |
+|------|-------|-------|--------|
+| ~~I-38 / R-9~~ | ~~`_transferPinToChild` bypasses TaskProvider~~ | 9 | **Obsolete** — method removed with manual Today's-5 model |
+| M-32 | N+1 in `deleteTaskAndReparentChildren` | 9 | Open — low impact |
+| M-34 | Starred N+1 for tree preview | 10 | Deferred — low impact |
+| I-48 | Today's-5 LWW clock-basis mismatch | 11 | Open |
+| I-49 | Task hard-deletes don't propagate | 11 | Open |
+| I-50 | Bulk sync ops outside `_syncing` mutex | 11 | Open |
+| I-51 | External "Done today" undo doesn't revert DB | 11 | Open |
+| I-52 | `getEffectiveDeadlines` N+1 on hot path | 11 | Open |
+| I-53 | Starred grandchild DRY-rule violation | 11 | Open |
+| M-39…M-52 | (see Round 11 Minor) | 11 | Open |
+| R-10…R-12 | (see Round 11 Refactoring) | 11 | Open |
