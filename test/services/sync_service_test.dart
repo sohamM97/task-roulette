@@ -9,6 +9,7 @@ import 'package:task_roulette/models/task_schedule.dart';
 import 'package:task_roulette/providers/auth_provider.dart';
 import 'package:task_roulette/services/firestore_service.dart';
 import 'package:task_roulette/services/sync_service.dart';
+import 'package:task_roulette/utils/display_utils.dart' show todayDateKey;
 
 /// Always-signed-in auth so [SyncService] proceeds past its `_canSync` gate.
 class _FakeAuthProvider extends AuthProvider {
@@ -48,6 +49,21 @@ class _FakeFirestoreService extends FirestoreService {
   /// hold `_syncing` true and issue a second pull that gets queued.
   Completer<void>? gateFirstTaskPull;
   bool _firstTaskPullGated = false;
+
+  /// Records the `updatedAt` the last Today's-5 push was called with (I-48).
+  int? capturedTodaysFiveUpdatedAt;
+
+  @override
+  Future<void> pushTodaysFive(
+    String uid,
+    String idToken,
+    String date,
+    List<Map<String, dynamic>> entries,
+    List<String> suppressedSyncIds,
+    int updatedAt,
+  ) async {
+    capturedTodaysFiveUpdatedAt = updatedAt;
+  }
 
   @override
   bool get isConfigured => true;
@@ -405,6 +421,76 @@ void main() {
       await sync.pull();
 
       expect(await db.getAllTaskSyncIds(), contains('fresh'));
+    });
+  });
+
+  group("Today's-5 LWW clock basis (bug I-48: push-time stamp inverts LWW)", () {
+    test('push sends the edit-time persisted-at stamp, not push-time now()',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final id = await db.insertTask(Task(name: 'Pinned', syncId: 'p5'));
+      // Not pending → push() won't invoke the real (network) pushTasks.
+      await db.markTasksSynced([id]);
+      await db.saveTodaysFiveState(
+        date: todayDateKey(),
+        taskIds: [id],
+        completedIds: const {},
+        workedOnIds: const {},
+        pinnedIds: {id},
+      );
+      // saveTodaysFiveState stamps persisted-at to now(); overwrite it with a
+      // known, distinct EDIT-time value so we can tell it apart from push-time.
+      const editStamp = 4242;
+      await (await SharedPreferences.getInstance())
+          .setInt(DatabaseHelper.prefsKeyTodaysFivePersistedAt, editStamp);
+
+      final fakeFs = _FakeFirestoreService();
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+      final before = DateTime.now().millisecondsSinceEpoch;
+
+      await sync.push();
+
+      // Before the fix push stamped remote updated_at with push-time now(),
+      // which the pull side compares against the edit-time localPersistedAt —
+      // inverting LWW. It must now push the edit-time stamp (both sides share a
+      // clock basis).
+      expect(fakeFs.capturedTodaysFiveUpdatedAt, editStamp);
+      expect(fakeFs.capturedTodaysFiveUpdatedAt, lessThan(before));
+    });
+  });
+
+  group('bulk-op sync mutex (bug I-50: bulk ops raced push/pull)', () {
+    test('a bulk op holds the mutex so a concurrent pull defers until it ends',
+        () async {
+      SharedPreferences.setMockInitialValues({'sync_last_sync_at': 1000});
+      final fakeFs = _FakeFirestoreService()
+        ..gateFirstTaskPull = Completer<void>();
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      // replaceLocalWithCloud runs under _runExclusive (holds _syncing) and
+      // parks inside pullTasksSince (full pull → null cursor).
+      final bulk = sync.replaceLocalWithCloud();
+      await Future.delayed(const Duration(milliseconds: 20));
+      expect(fakeFs.capturedTaskCursors, [null]); // reached the gate
+
+      // Issue a pull WHILE the bulk op holds the mutex. Before the fix the bulk
+      // op didn't set _syncing, so this pull ran immediately and interleaved
+      // (a second cursor would appear now). It must defer instead.
+      final concurrent = sync.pull();
+      await Future.delayed(const Duration(milliseconds: 20));
+      expect(fakeFs.capturedTaskCursors, [null]); // still deferred, no 2nd pull
+
+      // Release the bulk op; its finally drains the pending pull.
+      fakeFs.gateFirstTaskPull!.complete();
+      await Future.wait([bulk, concurrent]);
+      for (var i = 0; i < 100 && fakeFs.capturedTaskCursors.length < 2; i++) {
+        await Future.delayed(const Duration(milliseconds: 5));
+      }
+
+      // The deferred pull ran AFTER the bulk op finished → a real delta pull
+      // (non-null cursor) now appears, and only then.
+      expect(fakeFs.capturedTaskCursors.length, 2);
+      expect(fakeFs.capturedTaskCursors.last, isNotNull);
     });
   });
 }
