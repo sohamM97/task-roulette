@@ -41,6 +41,9 @@ class _FakeFirestoreService extends FirestoreService {
   /// Schedules the delta pull should return (defaults to none).
   List<Map<String, dynamic>> schedulesSince = const [];
 
+  /// Task deltas the delta pull should return (defaults to none).
+  List<({Task? task, String syncId, bool deleted})> tasksDeltaSince = const [];
+
   /// If set, the FIRST task pull awaits this before returning — lets a test
   /// hold `_syncing` true and issue a second pull that gets queued.
   Completer<void>? gateFirstTaskPull;
@@ -49,15 +52,29 @@ class _FakeFirestoreService extends FirestoreService {
   @override
   bool get isConfigured => true;
 
-  @override
-  Future<List<Task>> pullTasksSince(String uid, String idToken,
-      {int? lastSyncAt}) async {
-    capturedTaskCursors.add(lastSyncAt);
+  Future<void> _maybeGate() async {
     if (gateFirstTaskPull != null && !_firstTaskPullGated) {
       _firstTaskPullGated = true;
       await gateFirstTaskPull!.future;
     }
+  }
+
+  @override
+  Future<List<Task>> pullTasksSince(String uid, String idToken,
+      {int? lastSyncAt}) async {
+    // Full pulls call this with a null cursor (CR-fix I-49 split the delta path
+    // out to pullTaskDeltasSince).
+    capturedTaskCursors.add(lastSyncAt);
+    await _maybeGate();
     return const [];
+  }
+
+  @override
+  Future<List<({Task? task, String syncId, bool deleted})>> pullTaskDeltasSince(
+      String uid, String idToken, int lastSyncAt) async {
+    capturedTaskCursors.add(lastSyncAt);
+    await _maybeGate();
+    return tasksDeltaSince;
   }
 
   @override
@@ -325,6 +342,69 @@ void main() {
 
       // Pending add (keyed by sync_id alone) protects it from the tombstone.
       expect(await db.getAllScheduleSyncIds(), contains(scheduleSyncId));
+    });
+  });
+
+  group('task deletion propagation (bug I-49: deleted tasks resurrect on other '
+      'devices)', () {
+    Future<int> seedSyncedTask(String syncId) async {
+      final id = await db.insertTask(Task(name: 'T-$syncId', syncId: syncId));
+      await db.markTasksSynced([id]); // simulate already pushed to remote
+      return id;
+    }
+
+    test('delta tombstone removes the local task', () async {
+      SharedPreferences.setMockInitialValues({'sync_last_sync_at': 1000});
+      await seedSyncedTask('gone');
+
+      final fakeFs = _FakeFirestoreService()
+        ..tasksDeltaSince = [(task: null, syncId: 'gone', deleted: true)];
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.pull();
+
+      expect(await db.getAllTaskSyncIds(), isNot(contains('gone')));
+    });
+
+    test('delta tombstone respects a pending local re-add', () async {
+      SharedPreferences.setMockInitialValues({'sync_last_sync_at': 1000});
+      // A locally re-created task not yet pushed (sync_status stays 'pending').
+      await db.insertTask(Task(name: 'Re-added', syncId: 'readd'));
+
+      final fakeFs = _FakeFirestoreService()
+        ..tasksDeltaSince = [(task: null, syncId: 'readd', deleted: true)];
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.pull();
+
+      // The pending add protects it from the stale tombstone.
+      expect(await db.getAllTaskSyncIds(), contains('readd'));
+    });
+
+    test('full pull removes a synced local task absent from remote', () async {
+      // No prior cursor → this is a full pull; the fake returns no remote tasks.
+      SharedPreferences.setMockInitialValues({});
+      await seedSyncedTask('orphan');
+
+      final sync = SyncService(_FakeAuthProvider(),
+          firestore: _FakeFirestoreService());
+
+      await sync.pull();
+
+      expect(await db.getAllTaskSyncIds(), isNot(contains('orphan')));
+    });
+
+    test('full pull keeps a pending local task absent from remote', () async {
+      SharedPreferences.setMockInitialValues({});
+      // Pending (never-synced) local task — must survive reconciliation.
+      await db.insertTask(Task(name: 'Fresh', syncId: 'fresh'));
+
+      final sync = SyncService(_FakeAuthProvider(),
+          firestore: _FakeFirestoreService());
+
+      await sync.pull();
+
+      expect(await db.getAllTaskSyncIds(), contains('fresh'));
     });
   });
 }

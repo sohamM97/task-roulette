@@ -142,6 +142,33 @@ void main() {
       expect(find.text('Piano'), findsOneWidget);
     });
 
+    // CR-fix I-53 regression: grandchildren in the tree-preview card must be
+    // styled via the shared childTextStyle (priority tint / blocked dimming),
+    // same as the expanded dialog. Before the fix they used one hardcoded
+    // grandchild colour, so a high-priority grandchild looked identical to a
+    // normal one in the card while being tinted in the dialog (DRY violation).
+    testWidgets('high-priority grandchild is tinted in tree preview (I-53)',
+        (tester) async {
+      await tester.runAsync(() async {
+        final parentId = await createStarredTask('Project');
+        final child = await db.insertTask(Task(name: 'Phase 1'));
+        await db.addRelationship(parentId, child);
+        final gcNormal =
+            await db.insertTask(Task(name: 'GC Normal', priority: 0));
+        await db.addRelationship(child, gcNormal);
+        final gcHigh = await db.insertTask(Task(name: 'GC High', priority: 2));
+        await db.addRelationship(child, gcHigh);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      final normalStyle = tester.widget<Text>(find.text('GC Normal')).style!;
+      final highStyle = tester.widget<Text>(find.text('GC High')).style!;
+      // The high-priority grandchild must render in a different colour than the
+      // normal one — proving childTextStyle's priority tint reaches this depth.
+      expect(highStyle.color, isNot(normalStyle.color));
+    });
+
     testWidgets('shows badge count in app bar', (tester) async {
       await tester.runAsync(() async {
         await createStarredTask('Task 1');

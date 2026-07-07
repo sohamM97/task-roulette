@@ -180,6 +180,39 @@ void main() {
       expect(find.text('In progress'), findsNothing);
     });
 
+    testWidgets('uncompleting an externally "Done today" task clears the DB '
+        'worked-on flag (I-51)', (tester) async {
+      late int id;
+      await tester.runAsync(() async {
+        id = await db.insertTask(Task(name: 'Ext done'));
+        await seedTodaysFive(db, [id]);
+        // Marked "Done today" OUTSIDE Today's 5 (e.g. All Tasks leaf detail):
+        // sets last_worked_at in the DB, but never touches the screen's session
+        // sets — so _workedOnIds does NOT contain it, only isWorkedOnToday is true.
+        await db.markWorkedOn(id);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Renders as done via isWorkedOnToday.
+      expect(find.byIcon(Icons.check_circle), findsWidgets);
+
+      // Tap the done card → _handleUncomplete. Drive it in real async so the
+      // provider's DB writes and the listener-driven refresh serialize on the
+      // shared DB connection instead of interleaving under FakeAsync.
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Ext done'));
+        await Future.delayed(const Duration(milliseconds: 200));
+      });
+      await tester.pump();
+
+      // Before the I-51 fix both revert branches were skipped (wasWorkedOn was
+      // false and isCompleted false), so the DB kept last_worked_at=today and the
+      // task bounced back to "done" on the next reload/sync. It must now be cleared.
+      final refreshed = await tester.runAsync(() => db.getTaskById(id));
+      expect(refreshed!.isWorkedOnToday, isFalse);
+    });
+
     testWidgets('navigate button calls onNavigateToTask', (tester) async {
       await tester.runAsync(() async {
         final id = await db.insertTask(Task(name: 'Navigate me'));

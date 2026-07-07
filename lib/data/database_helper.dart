@@ -568,13 +568,73 @@ class DatabaseHelper {
     return insertedIds;
   }
 
+  /// Inserts a task and links it to every id in [parentIds] — task row, all
+  /// relationship edges, and their sync-queue entries — in ONE transaction, so
+  /// a crash can't leave an orphan or partially-parented task. Returns the id.
+  //
+  // CR-fix R-10: addTask() previously ran insertTask() in its own transaction
+  // and then a SEPARATE addRelationship() transaction per parent, so the task
+  // row and its edges were not one atomic unit. A brand-new task can't form a
+  // cycle, so (unlike addRelationship's callers) no hasPath check is needed.
+  Future<int> insertTaskWithParents(Task task, List<int> parentIds) async {
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return await db.transaction((txn) async {
+      final map = task.toMap();
+      map['sync_id'] ??= _uuid.v4();
+      map['updated_at'] = now;
+      map['sync_status'] = 'pending';
+      final childSyncId = map['sync_id'] as String;
+      final childId = await txn.insert('tasks', map);
+      if (parentIds.isNotEmpty) {
+        // Resolve parent sync_ids in one query for the sync-queue enqueue.
+        final placeholders = parentIds.map((_) => '?').join(',');
+        final rows = await txn.rawQuery(
+            'SELECT id, sync_id FROM tasks WHERE id IN ($placeholders)',
+            parentIds);
+        final parentSyncIds = <int, String>{};
+        for (final r in rows) {
+          final sid = r['sync_id'] as String?;
+          if (sid != null) parentSyncIds[r['id'] as int] = sid;
+        }
+        final seen = <int>{};
+        for (final parentId in parentIds) {
+          if (!seen.add(parentId)) continue; // de-dupe repeated parents
+          await txn.insert('task_relationships', {
+            'parent_id': parentId,
+            'child_id': childId,
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+          final parentSyncId = parentSyncIds[parentId];
+          if (parentSyncId != null) {
+            await txn.insert('sync_queue', {
+              'entity_type': 'relationship',
+              'action': 'add',
+              'key1': parentSyncId,
+              'key2': childSyncId,
+              'created_at': now,
+            });
+          }
+        }
+      }
+      return childId;
+    });
+  }
+
   Future<void> addRelationship(int parentId, int childId) async {
     final db = await database;
     await db.transaction((txn) async {
-      await txn.insert('task_relationships', {
+      // CR-fix M-45: was the default 'abort' conflict algorithm — re-inserting
+      // an existing (parent_id, child_id) edge threw a UNIQUE-constraint error.
+      // Callers only run the hasPath cycle check (which is false for an
+      // already-existing edge), so a future caller re-adding an edge would
+      // crash (inconsistent with moveTask/fileTask, which pre-check). Ignore
+      // makes it a no-op, and we skip the redundant sync 'add' enqueue below
+      // when nothing was actually inserted.
+      final inserted = await txn.insert('task_relationships', {
         'parent_id': parentId,
         'child_id': childId,
-      });
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      if (inserted == 0) return;
       final rows = await txn.rawQuery(
         'SELECT id, sync_id FROM tasks WHERE id IN (?, ?)', [parentId, childId]);
       final syncIds = <int, String>{};
@@ -1184,31 +1244,44 @@ class DatabaseHelper {
       }
     }
 
-    // For tasks without own deadline, check ancestors
+    // For tasks without own deadline, inherit the nearest ancestor's deadline.
+    // CR-fix I-52: this was a per-task loop, each iteration running a full
+    // recursive ancestor CTE — an N+1 on the refresh hot path
+    // (_loadAuxiliaryData runs on every mutation). A root with 50 undeadlined
+    // children fired 50 recursive walks per tap. Now one batched recursive CTE
+    // per 500-id chunk, keyed by target_id (same shape as
+    // getEffectiveScheduledTodayIds). Rows come back nearest-ancestor-first per
+    // target; we keep the first hit for each, matching the old ORDER BY depth
+    // ASC LIMIT 1 semantics.
     final remaining = taskIds.where((id) => !result.containsKey(id)).toList();
     for (var i = 0; i < remaining.length; i += 500) {
       final batch = remaining.sublist(i, i + 500 > remaining.length ? remaining.length : i + 500);
-      for (final taskId in batch) {
-        final rows = await db.rawQuery('''
-          WITH RECURSIVE ancestors(id, depth) AS (
-            SELECT parent_id, 1 FROM task_relationships WHERE child_id = ?
-            UNION ALL
-            SELECT tr.parent_id, a.depth + 1
-            FROM task_relationships tr
-            INNER JOIN ancestors a ON tr.child_id = a.id
-          )
-          SELECT t.deadline, t.deadline_type FROM tasks t
-          INNER JOIN ancestors a ON t.id = a.id
-          WHERE t.deadline IS NOT NULL
-          ORDER BY a.depth ASC
-          LIMIT 1
-        ''', [taskId]);
-        if (rows.isNotEmpty) {
-          result[taskId] = (
-            deadline: rows.first['deadline'] as String,
-            type: rows.first['deadline_type'] as String? ?? 'due_by',
-          );
-        }
+      final placeholders = batch.map((_) => '?').join(',');
+      final rows = await db.rawQuery('''
+        WITH RECURSIVE target_ancestors(target_id, ancestor_id, depth) AS (
+          SELECT tr.child_id, tr.parent_id, 1
+          FROM task_relationships tr
+          WHERE tr.child_id IN ($placeholders)
+          UNION ALL
+          SELECT ta.target_id, tr.parent_id, ta.depth + 1
+          FROM target_ancestors ta
+          INNER JOIN task_relationships tr ON tr.child_id = ta.ancestor_id
+        )
+        SELECT ta.target_id AS target_id, t.deadline AS deadline,
+               t.deadline_type AS deadline_type
+        FROM target_ancestors ta
+        INNER JOIN tasks t ON t.id = ta.ancestor_id
+        WHERE t.deadline IS NOT NULL
+        ORDER BY ta.target_id ASC, ta.depth ASC
+      ''', batch);
+      for (final row in rows) {
+        final targetId = row['target_id'] as int;
+        // Nearest-first ordering → the first row per target is the shallowest.
+        if (result.containsKey(targetId)) continue;
+        result[targetId] = (
+          deadline: row['deadline'] as String,
+          type: row['deadline_type'] as String? ?? 'due_by',
+        );
       }
     }
     return result;
@@ -2485,6 +2558,49 @@ class DatabaseHelper {
       }
       return false; // local is newer or same
     }
+  }
+
+  /// Returns the sync_ids of every local task that has one.
+  // CR-fix I-49: used by the full-pull task reconciliation to find local tasks
+  // that no longer exist remotely (deleted on another device).
+  Future<List<String>> getAllTaskSyncIds() async {
+    final db = await database;
+    final rows = await db.query('tasks',
+        columns: ['sync_id'], where: 'sync_id IS NOT NULL');
+    return rows.map((r) => r['sync_id'] as String).toList();
+  }
+
+  /// Returns the sync_ids of tasks pending push (locally created/edited).
+  // CR-fix I-49: guards the delta/full-pull deletion path so a task that was
+  // just re-created locally (not yet pushed) isn't dropped by a stale tombstone
+  // or by absence from a remote set — mirrors getPendingSyncAddKeys for edges.
+  Future<Set<String>> getPendingTaskSyncIds() async {
+    final db = await database;
+    final rows = await db.query('tasks',
+        columns: ['sync_id'],
+        where: "sync_status = 'pending' AND sync_id IS NOT NULL");
+    return rows.map((r) => r['sync_id'] as String).toSet();
+  }
+
+  /// Removes a task in response to a remote deletion (tombstone / absence on
+  /// full pull). Does NOT enqueue a sync deletion — we are applying remote
+  /// state, mirroring [removeRelationshipFromRemote]. Returns true if a row was
+  /// removed. Edges/deps/schedules cascade via ON DELETE CASCADE; the today's-5
+  /// tables have no FK, so they are cleaned explicitly to avoid orphans.
+  Future<bool> deleteTaskBySyncId(String syncId) async {
+    final db = await database;
+    return await db.transaction((txn) async {
+      final rows = await txn.query('tasks',
+          columns: ['id'], where: 'sync_id = ?', whereArgs: [syncId]);
+      if (rows.isEmpty) return false;
+      final id = rows.first['id'] as int;
+      await txn.delete('todays_five_state',
+          where: 'task_id = ?', whereArgs: [id]);
+      await txn.delete('todays_five_deadline_suppressed',
+          where: 'task_id = ?', whereArgs: [id]);
+      await txn.delete('tasks', where: 'id = ?', whereArgs: [id]);
+      return true;
+    });
   }
 
   /// Returns all relationships as (parentSyncId, childSyncId) pairs.

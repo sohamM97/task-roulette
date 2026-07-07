@@ -3433,6 +3433,58 @@ The picker unification only extracted the *leaf* widgets into
 
 ---
 
+## Round 11 Fix (2026-07-07)
+
+All 6 Important and all 14 Minor findings fixed. R-10 done; R-11 and R-12
+deferred (see below). `flutter analyze` clean; full `flutter test` green.
+
+### Fixed in This Round
+
+| ID | Title | Notes |
+|----|-------|-------|
+| I-48 | Today's-5 LWW clock-basis mismatch | Extracted shared `_pushTodaysFiveState`; pushes `prefsKeyTodaysFivePersistedAt` (edit-time) as remote `updated_at`. |
+| I-49 | Task hard-deletes don't propagate | **Deviation from framing:** implemented **Firestore-only tombstones** (mirroring relationships/deps/schedules) — `deleteTask` now `_softDelete`s; new `pullTaskDeltasSince` surfaces tombstones; delta + full-pull reconciliation in `pull()`; `_listAllTasks` skips tombstones; `tasks` added to `cleanupTombstones`. **No local `deleted_at` column / v24 migration was needed** — local deletes stay hard-deletes exactly like the other entity types, so a local column would be dead schema. Achieves the delta-immediate propagation the "tombstones" option was chosen for. 4 regression tests. |
+| I-50 | Bulk sync ops outside `_syncing` | `initialMigration`/`replaceLocalWithCloud`/`replaceCloudWithLocal` now run under `_runExclusive` (acquires `_syncing`, drains pending push/pull in `finally`). `mergeBoth` composes two guarded ops. |
+| I-51 | External "Done today" undo doesn't revert DB | `_handleUncomplete` now detects worked-on from `task.isWorkedOnToday`, not just the session set. Regression test added. |
+| I-52 | `getEffectiveDeadlines` N+1 | Per-task ancestor CTE collapsed into one batched `WITH RECURSIVE target_ancestors` per 500-id chunk. Nearest-ancestor regression test added. |
+| I-53 | Starred grandchild DRY-rule violation | Grandchild card text routed through `childTextStyle`; grandchild ids included in `_blockedInfo` fetch. Regression test added. |
+| M-40 | Pull-cycle counter advances before success | Counter persisted only on the success path. |
+| M-42 | `cleanupTombstones` ignores HTTP status | Non-200 batch deletes now `debugLog`ged. |
+| M-43 | Remove flow orphans session sets | `_confirmRemoveFromTodaysFive` now also clears `_autoStartedIds`/`_preWorkedOnLastWorkedAt`/`_explicitlyUncompletedIds`. |
+| M-44 | No reentrancy guard on `refreshSnapshots` | Added `_refreshing`/`_refreshPending` coalescing guard. **Partial:** the optional `deferNotify` batching of `_workedOnTask` was **not** done — `deferNotify` only exists on `addTask`; threading it through `markWorkedOn`/`startTask`/`updateTaskDeadline` is out of scope for a Minor. |
+| M-45 | `addRelationship` UNIQUE-throw | `ConflictAlgorithm.ignore` + skip the sync enqueue when nothing inserted. |
+| M-46 | Mutators skip refresh on empty nav stack | `completeTask`/`skipTask`/`markWorkedOnAndNavigateBack` fall back to `_refreshCurrentList()` when `navigateBack()` returns false. |
+| M-47 | Triage search recomputes in `build()` | Cached into `_searchResults`, recomputed per keystroke. **Deviation:** no `Timer` debounce — the true sibling (pin picker browse-mode) also caches without one, and a FakeAsync debounce timer would break existing triage tests under `pumpAsync`. |
+| M-48 | Flat-mode Create stale name | Create now reads the live controller text (added `_flatController`). Regression test added. |
+| M-49 | `brain_dump_dialog` add-without-remove listener | Matching `removeListener` in `dispose()`. |
+| M-50 | Dead `highlight` field on `_TreeRow` | Field + `:641` argument deleted. |
+| M-51 | Starred `onUnstar`/undo fire-and-forget | Now `async` + awaited with try-catch; success snackbar suppressed on failure. |
+| M-52 | CLAUDE.md DB-version drift | Doc note bumped v22 → v23. |
+| R-10 | `addTask` insert not atomic | New `insertTaskWithParents` inserts task + all edges + sync-queue in one transaction; `addTask` routed through it. |
+
+### Not a Code Change (analyzed)
+
+| ID | Title | Decision |
+|----|-------|----------|
+| M-39 | Empty Today's-5 state never pushed | **No-op by design.** Pull ignores an empty remote doc (`sync_service.dart` pull guard), so "always push the doc" would be inert write-spam. The only stranded case (empty-with-no-suppressions) requires never having removed anything → nothing to propagate. Every real removal records a suppression tombstone and IS pushed/pulled. Left as-is. |
+| M-41 | `_skipNextPeriodicPull` overstates invariant | Comment corrected (skip is valid only for what *this* device pushed; cross-device changes wait for the next cycle). |
+
+### Deferred (recommend as focused follow-up PRs)
+
+| ID | Title | Reason |
+|----|-------|--------|
+| R-11 | Dedup structured-query + full-pull reconciliation across entity types | Pure refactor of prod-critical sync code that just went through multiple prod-bug rounds. The query/reconcile methods are mocked in tests (not directly unit-tested), so a subtle regression wouldn't be caught by the suite. Per-entity divergence (composite vs single-key, cycle-check vs not, heterogeneous return types) makes a generic reconcile helper a thin scaffold with a large callback surface — high risk, zero functional benefit. Adding tasks (I-49) raised both the value and the surface; best done as its own PR with dedicated coverage. |
+| R-12 | Browse-tree state machine duplicated between the two pickers | Only the nav state machine + clamp/"Show all" scaffold are identical; tap semantics, header, root prefix, sort, child filter, row icons, and empty text all diverge. A faithful `PickerBrowseTree` would need injected builders for nearly every part — thin scaffold, large config surface, high drift risk for little real dedup. |
+
+### Previously Open (rechecked)
+
+| ID | Title | Status |
+|----|-------|--------|
+| M-32 | N+1 in `deleteTaskAndReparentChildren` | Still open — low impact, not in this round's scope. |
+| M-34 | Starred N+1 for tree preview | Still open — low impact. |
+
+---
+
 ## Round 11 — Suggested Implementation Order
 
 1. **I-49** — Task-delete tombstone/reconciliation (highest-impact: silent resurrection of deleted tasks).
@@ -3452,12 +3504,14 @@ The picker unification only extracted the *leaf* widgets into
 |------|-------|-------|--------|
 | ~~I-38 / R-9~~ | ~~`_transferPinToChild` bypasses TaskProvider~~ | 9 | **Obsolete** — method removed with manual Today's-5 model |
 | M-32 | N+1 in `deleteTaskAndReparentChildren` | 9 | Open — low impact |
-| M-34 | Starred N+1 for tree preview | 10 | Deferred — low impact |
-| I-48 | Today's-5 LWW clock-basis mismatch | 11 | Open |
-| I-49 | Task hard-deletes don't propagate | 11 | Open |
-| I-50 | Bulk sync ops outside `_syncing` mutex | 11 | Open |
-| I-51 | External "Done today" undo doesn't revert DB | 11 | Open |
-| I-52 | `getEffectiveDeadlines` N+1 on hot path | 11 | Open |
-| I-53 | Starred grandchild DRY-rule violation | 11 | Open |
-| M-39…M-52 | (see Round 11 Minor) | 11 | Open |
-| R-10…R-12 | (see Round 11 Refactoring) | 11 | Open |
+| M-34 | Starred N+1 for tree preview | 10 | Open — low impact |
+| ~~I-48~~ | ~~Today's-5 LWW clock-basis mismatch~~ | 11 | **[FIXED in Round 11 fix]** |
+| ~~I-49~~ | ~~Task hard-deletes don't propagate~~ | 11 | **[FIXED in Round 11 fix]** (Firestore-only tombstones) |
+| ~~I-50~~ | ~~Bulk sync ops outside `_syncing` mutex~~ | 11 | **[FIXED in Round 11 fix]** |
+| ~~I-51~~ | ~~External "Done today" undo doesn't revert DB~~ | 11 | **[FIXED in Round 11 fix]** |
+| ~~I-52~~ | ~~`getEffectiveDeadlines` N+1 on hot path~~ | 11 | **[FIXED in Round 11 fix]** |
+| ~~I-53~~ | ~~Starred grandchild DRY-rule violation~~ | 11 | **[FIXED in Round 11 fix]** |
+| ~~M-39…M-52~~ | (see Round 11 Fix section) | 11 | **All fixed** (M-39 no-op by design; M-44 partial — see notes) |
+| ~~R-10~~ | ~~`addTask` insert not atomic~~ | 11 | **[FIXED in Round 11 fix]** |
+| R-11 | Dedup sync query/reconcile | 11 | **Deferred** — high-risk refactor, recommend focused PR |
+| R-12 | Dedup picker browse-tree | 11 | **Deferred** — divergent per-picker behavior, low value |

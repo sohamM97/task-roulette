@@ -5865,6 +5865,22 @@ void main() {
         expect(result[childId]?.deadline, '2026-03-20');
       });
 
+      test('nearest ancestor deadline wins over a farther one (I-52)', () async {
+        // grandparent(A) -> parent(B) -> child(none): child inherits the
+        // NEAREST (parent's) deadline, not the grandparent's. Guards the batched
+        // recursive CTE's depth ordering.
+        final grandparent =
+            await db.insertTask(Task(name: 'GP', deadline: '2026-05-01'));
+        final parent =
+            await db.insertTask(Task(name: 'P', deadline: '2026-03-15'));
+        final child = await db.insertTask(Task(name: 'C'));
+        await db.addRelationship(grandparent, parent);
+        await db.addRelationship(parent, child);
+
+        final result = await db.getEffectiveDeadlines([child]);
+        expect(result[child]?.deadline, '2026-03-15');
+      });
+
       test('handles batch of mixed tasks', () async {
         final withOwn = await db.insertTask(Task(name: 'Own', deadline: '2026-03-25'));
         final parentId = await db.insertTask(Task(name: 'Parent', deadline: '2026-03-30'));

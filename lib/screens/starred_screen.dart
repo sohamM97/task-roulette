@@ -134,9 +134,14 @@ class StarredScreenState extends State<StarredScreen>
         final allActiveGc = grandchildren
             .where((g) => g.completedAt == null && g.skippedAt == null)
             .toList();
+        final shownGc = allActiveGc.take(2).toList();
+        // CR-fix I-53: include shown grandchild ids so _blockedInfo covers them.
+        // Was: only direct-child ids fetched, so the card couldn't dim blocked
+        // grandchildren while the expanded dialog did — a DRY-rule violation.
+        allChildIds.addAll(shownGc.map((g) => g.id!));
         return (
           child: child,
-          grandchildren: allActiveGc.take(2).toList(),
+          grandchildren: shownGc,
           totalGrandchildren: allActiveGc.length,
         );
       }));
@@ -173,19 +178,30 @@ class StarredScreenState extends State<StarredScreen>
               child: _ExpandedStarredView(
                 task: task,
                 accent: accent,
-                onUnstar: () {
+                onUnstar: () async {
                   Navigator.pop(dialogContext);
                   final provider = context.read<TaskProvider>();
                   final originalOrder = task.starOrder;
-                  provider.updateTaskStarred(task.id!, false);
-                  if (context.mounted) {
-                    showInfoSnackBar(
-                      context,
-                      'Unstarred "${task.name}"',
-                      onUndo: () => provider.updateTaskStarred(
-                          task.id!, true, starOrder: originalOrder),
-                    );
+                  // CR-fix M-51: await + try-catch. Was fire-and-forget, so a DB
+                  // write failure escaped to FlutterError.onError while the
+                  // snackbar still claimed "Unstarred" (message could lie).
+                  try {
+                    await provider.updateTaskStarred(task.id!, false);
+                  } catch (_) {
+                    return; // don't show a success snackbar if the unstar failed
                   }
+                  if (!mounted) return;
+                  showInfoSnackBar(
+                    context,
+                    'Unstarred "${task.name}"',
+                    onUndo: () async {
+                      // list self-corrects on next provider reload if this throws
+                      try {
+                        await provider.updateTaskStarred(
+                            task.id!, true, starOrder: originalOrder);
+                      } catch (_) {}
+                    },
+                  );
                 },
                 onNavigateToTask: (t) {
                   Navigator.pop(dialogContext);
@@ -638,7 +654,6 @@ class _StarredTaskCard extends StatelessWidget {
         indent: 0,
         lineColor: lineColor,
         isLast: isLastChild,
-        highlight: item.child.isHighPriority,
         child: Text(
           item.child.name,
           style: childTextStyle(
@@ -656,6 +671,7 @@ class _StarredTaskCard extends StatelessWidget {
       for (var gi = 0; gi < item.grandchildren.length; gi++) {
         final gc = item.grandchildren[gi];
         final isLastGc = gi == item.grandchildren.length - 1 && moreGc == 0;
+        final gcBlocked = blockedInfo.containsKey(gc.id);
         rows.add(_TreeRow(
           indent: 1,
           lineColor: lineColor,
@@ -663,7 +679,16 @@ class _StarredTaskCard extends StatelessWidget {
           parentIsLast: isLastChild,
           child: Text(
             gc.name,
-            style: TextStyle(fontSize: 13, color: grandchildColor, height: 1.3),
+            // CR-fix I-53: route grandchildren through the shared childTextStyle
+            // (priority tint + blocked dimming) instead of a hardcoded TextStyle,
+            // so card and expanded dialog treat every depth identically (DRY rule).
+            style: childTextStyle(
+              task: gc,
+              baseColor: grandchildColor,
+              accent: accent,
+              fontSize: 13,
+              isBlocked: gcBlocked,
+            ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -717,7 +742,8 @@ class _TreeRow extends StatelessWidget {
   final Color lineColor;
   final bool isLast;
   final bool parentIsLast;
-  final bool highlight;
+  // CR-fix M-50: removed dead `highlight` field — it was set for children but
+  // never read by build(); the real highlight lives in childTextStyle's colour.
   final Widget child;
 
   static const double _indentWidth = 14.0;
@@ -728,7 +754,6 @@ class _TreeRow extends StatelessWidget {
     required this.lineColor,
     required this.isLast,
     this.parentIsLast = false,
-    this.highlight = false,
     required this.child,
   });
 
