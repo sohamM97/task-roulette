@@ -1336,20 +1336,26 @@ For sync_id fields, add a 50-char cap or UUID format validation.
 
 - [x] **LOW-21** (ungated `debugPrint` in `main.dart`) — **verified fixed.** A shared `debugLog()` helper (`display_utils.dart:9-11`) gates on `kDebugMode`; the whole call — including string interpolation — is tree-shaken in release. A codebase-wide sweep found **zero** raw `debugPrint`/`print` calls outside the helper definition. All new sync/tombstone code (e.g. `firestore_service.dart:1009`, `sync_service.dart:796-802`) correctly uses `debugLog`.
 - [x] **LOW-22** (ungated `debugPrint` in Today's 5) — **verified fixed.** Now routed through `debugLog()`.
-- [ ] **LOW-15** (Firestore Security Rules not version-controlled) — **still open.** No `firestore.rules`, `firebase.json`, or `.firebaserc` anywhere in the repo. Rules remain console-only. See MED-8 below — this is now emphasized because the sync surface grew substantially this cycle (5 collections, delta queries, tombstone cleanup) and server-side rules are the *only* control enforcing per-user data isolation.
-- [ ] **INFO-11** (remote string fields `deadline_type` / `schedule_type` / `sync_id` not length-validated) — **still open.** See INFO-12 (carried forward and expanded for the new `is_starred`/`star_order` and Today's-5 entry fields).
+- [~] **LOW-15** (Firestore Security Rules not version-controlled) — **partially addressed in Round 7 fix.** `firestore.rules` + `firebase.json` + `.firebaserc` are now version-controlled at the repo root (see MED-8 fix note). **Deployment** of the rules via Firebase CLI and the rules-unit-test remain deferred under LOW-15 / `project_firebase_cli_setup.md`.
+- [x] **INFO-11** (remote string fields `deadline_type` / `schedule_type` / `sync_id` not length-validated) — **fixed in Round 7 fix** via INFO-12 (length caps applied to `deadline_type`, `schedule_type`, and all `*_sync_id` reads).
 - **LOW-6 / LOW-7** (unencrypted DB and backup export at rest) — status unchanged, still accepted for the current single-user-device threat model.
 
 ### Findings
 
-#### MED-8: Firestore Security Rules remain unversioned as the sync surface expands
+#### MED-8: Firestore Security Rules remain unversioned as the sync surface expands [FIXED in Round 7 fix]
+
+> **Fix note:** Version-controlled `firestore.rules`, `firebase.json`, and `.firebaserc` (project `task-roulette-d04d6`) were added at the repo root. The rules lock every `users/{uid}/{document=**}` doc to `request.auth != null && request.auth.uid == uid` and deny all other paths — the reviewable/diffable source of truth the finding asked for. **Deviation from recommended fix:** the `@firebase/rules-unit-testing` unit test was *not* added — it requires a Node/emulator harness that is out of scope for this Flutter repo and tied to the still-deferred Firebase CLI setup (LOW-15). **Still required (deferred to LOW-15):** deploy these rules via `firebase deploy --only firestore:rules` and confirm they match the console-deployed rules.
+
 
 - **Severity:** Medium *(elevated from LOW-15's Low — the finding is unchanged, but its blast radius grew this cycle)*
 - **File:** repository root (absent `firestore.rules` / `firebase.json`); data-path construction in `firestore_service.dart:48-52`
 - **Description:** Every Firestore document path is scoped to the caller's own uid (`users/$uid/tasks`, `.../relationships`, `.../dependencies`, `.../schedules`, `.../todays_five`). Client-side, there is no way for one user to name another user's uid — the uid comes from the verified Firebase token. **But the actual authorization boundary is entirely server-side Firestore Security Rules**, which are not in the repository and cannot be reviewed, tested, or diffed here. This cycle added four collections' worth of new read/write/query/tombstone-delete traffic (delta `runQuery` on `updated_at`, `cleanupTombstones` batch deletes). If the deployed rules are missing, overly broad (e.g. `allow read, write: if request.auth != null` without a `request.auth.uid == uid` path match), or drift from what the code assumes, any authenticated user could read or clobber another user's tasks — and there is no artifact in-repo to catch that regression. This is not evidence of a live vulnerability; it is an unverifiable, high-impact control.
 - **Recommended Fix:** Land LOW-15: add `firestore.rules` + `firebase.json` to the repo (Firebase CLI setup is already tracked as LOW-15 / `project_firebase_cli_setup.md`). Rules should restrict every `users/{uid}/**` document to `request.auth != null && request.auth.uid == uid`. Add at least one rules-unit-test (`@firebase/rules-unit-testing`) asserting cross-uid reads/writes are denied. Until then, manually confirm in the Firebase console that the deployed rules enforce the uid match.
 
-#### LOW-23: Notification-only Android permissions and boot receiver remain after the feature was disabled
+#### LOW-23: Notification-only Android permissions and boot receiver remain after the feature was disabled [FIXED in Round 7 fix]
+
+> **Fix note:** Removed the three `uses-permission` lines (`POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`, `USE_EXACT_ALARM`) and the `ScheduledNotificationBootReceiver` `<receiver>` block from `AndroidManifest.xml`, leaving a comment directing them to be restored in the same commit that re-enables `NotificationService`. `INTERNET` retained (used by sync).
+
 
 - **Severity:** Low
 - **File:** `android/app/src/main/AndroidManifest.xml:3-5, 35-41`
@@ -1374,7 +1380,10 @@ For sync_id fields, add a 50-char cap or UUID format validation.
   This is unnecessary attack surface and privilege over-request (violates least-privilege / OWASP-Mobile M8 Security Misconfiguration), and a latent Play-policy liability.
 - **Recommended Fix:** Remove the three `uses-permission` lines and the `ScheduledNotificationBootReceiver` `<receiver>` block from the manifest while notifications are disabled. Re-add them in the same commit that re-enables `NotificationService` (the service header's re-enable checklist should be updated to include restoring the manifest entries). Note `INTERNET` is still required (used by sync) and must stay.
 
-#### INFO-12: Some remote string fields still not length-validated on deserialization (carried from INFO-11)
+#### INFO-12: Some remote string fields still not length-validated on deserialization (carried from INFO-11) [FIXED in Round 7 fix]
+
+> **Fix note:** Added an optional `maxLength` param to `_stringField` (truncates oversized values) plus `_maxSyncIdLen` (50) / `_maxTypeFieldLen` (20) constants. Applied to `deadline_type`, `schedule_type`, and every `*_sync_id` read site (`parent_sync_id`, `child_sync_id`, `task_sync_id`, `depends_on_sync_id`). Existing `name`/`url`/`repeat_interval`/`deadline` caps unchanged. This also closes the carried-forward INFO-11.
+
 
 - **Severity:** Informational
 - **File:** `firestore_service.dart:489, 540 (schedule_type)`, `firestore_service.dart:873 (deadline_type)`, `firestore_service.dart:664 (Today's-5 task_sync_id)`, sync_id parsing throughout
@@ -1420,6 +1429,6 @@ For sync_id fields, add a 50-char cap or UUID format validation.
 
 | Priority | Finding | Effort | Status |
 |----------|---------|--------|--------|
-| **MEDIUM** | MED-8 / LOW-15: Version-control + test Firestore Security Rules (per-uid isolation) | Low–Medium | **Open** — Firebase CLI setup tracked separately |
-| **LOW** | LOW-23: Remove notification-only permissions (`USE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`, `POST_NOTIFICATIONS`) + boot receiver while notifications are disabled | Trivial | **Open** |
-| **INFO** | INFO-12: Length-cap remaining remote strings (`deadline_type`, `schedule_type`, `*_sync_id`) | Trivial | **Open** |
+| **MEDIUM** | MED-8 / LOW-15: Version-control + test Firestore Security Rules (per-uid isolation) | Low–Medium | **Fixed in Round 7 fix** (rules version-controlled) — deploy + rules-unit-test still deferred to LOW-15 |
+| **LOW** | LOW-23: Remove notification-only permissions (`USE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`, `POST_NOTIFICATIONS`) + boot receiver while notifications are disabled | Trivial | **Fixed in Round 7 fix** |
+| **INFO** | INFO-12: Length-cap remaining remote strings (`deadline_type`, `schedule_type`, `*_sync_id`) | Trivial | **Fixed in Round 7 fix** |

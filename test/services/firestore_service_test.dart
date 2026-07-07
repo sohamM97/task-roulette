@@ -415,6 +415,52 @@ void main() {
     });
   });
 
+  group('taskFromFirestoreDoc remote string caps (INFO-12)', () {
+    test('truncates oversized deadline_type to 20 characters', () {
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'Task'},
+          'created_at': {'integerValue': '0'},
+          'priority': {'integerValue': '0'},
+          'deadline_type': {'stringValue': 'x' * 100},
+        },
+      };
+
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.deadlineType.length, 20);
+    });
+
+    test('preserves normal-length deadline_type', () {
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'Task'},
+          'created_at': {'integerValue': '0'},
+          'priority': {'integerValue': '0'},
+          'deadline_type': {'stringValue': 'hard_deadline'},
+        },
+      };
+
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.deadlineType, 'hard_deadline');
+    });
+
+    test('defaults deadline_type to due_by when absent', () {
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'Task'},
+          'created_at': {'integerValue': '0'},
+          'priority': {'integerValue': '0'},
+        },
+      };
+
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.deadlineType, 'due_by');
+    });
+  });
+
   group('taskFromFirestoreDoc integer edge cases', () {
     test('handles integerValue as actual int (not string)', () {
       final doc = {

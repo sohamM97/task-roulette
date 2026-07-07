@@ -1,0 +1,28 @@
+rules_version = '2';
+
+// SEC-fix MED-8 / LOW-15: version-controlled Firestore Security Rules.
+//
+// These rules ARE the per-user authorization boundary. The client scopes every
+// document path to the caller's own uid (users/$uid/tasks, .../relationships,
+// .../dependencies, .../schedules, .../todays_five), but the client cannot be
+// trusted — the server must enforce that a caller only ever touches their own
+// subtree. The recursive {document=**} match below locks every document under
+// users/{uid} to the authenticated owner: request.auth.uid must equal the {uid}
+// path segment, so no authenticated user can read or clobber another user's data.
+//
+// Deploy with: firebase deploy --only firestore:rules
+// (project: see .firebaserc). Keep this file in sync with the console-deployed
+// rules — this repo copy is the reviewable/diffable source of truth.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Deny everything else by default (no top-level or cross-user access).
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

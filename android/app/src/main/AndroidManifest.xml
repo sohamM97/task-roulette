@@ -1,8 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
+    <!-- SEC-fix LOW-23: notification-only permissions (POST_NOTIFICATIONS,
+         RECEIVE_BOOT_COMPLETED, USE_EXACT_ALARM) and the ScheduledNotificationBootReceiver
+         were removed while the daily-notification feature is disabled (NotificationService
+         block-commented since commit f9bfcd7). They requested privilege — including the
+         Play-sensitive USE_EXACT_ALARM — backing no live functionality. Re-add them in the
+         same commit that re-enables NotificationService. INTERNET stays (used by sync). -->
     <application
         android:label="Task Roulette"
         android:name="${applicationName}"
@@ -30,12 +33,7 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <receiver android:exported="false"
-            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED"/>
-            </intent-filter>
-        </receiver>
+        <!-- SEC-fix LOW-23: ScheduledNotificationBootReceiver removed (see permission note above). -->
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

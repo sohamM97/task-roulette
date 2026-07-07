@@ -17,6 +17,12 @@ class FirestoreService {
 
   static const _httpTimeout = Duration(seconds: 30);
 
+  // SEC-fix INFO-12: length caps for untrusted remote string fields (sync_ids are
+  // ~36-char UUIDs; type fields are short enums). Oversized values from a corrupted
+  // or hostile Firestore document are truncated rather than persisted as-is.
+  static const _maxSyncIdLen = 50;
+  static const _maxTypeFieldLen = 20;
+
   /// Optional HTTP client for dependency injection (testing).
   /// When null, uses the top-level http functions.
   final http.Client? _client;
@@ -265,8 +271,8 @@ class FirestoreService {
         if (fields == null) continue;
         // Skip tombstoned docs — full pull only includes live data
         if (_intFieldNullable(fields, 'deleted_at') != null) continue;
-        final parentSyncId = _stringField(fields, 'parent_sync_id');
-        final childSyncId = _stringField(fields, 'child_sync_id');
+        final parentSyncId = _stringField(fields, 'parent_sync_id', maxLength: _maxSyncIdLen);
+        final childSyncId = _stringField(fields, 'child_sync_id', maxLength: _maxSyncIdLen);
         if (parentSyncId != null && childSyncId != null) {
           results.add((parentSyncId: parentSyncId, childSyncId: childSyncId));
         }
@@ -312,8 +318,8 @@ class FirestoreService {
       if (doc == null) continue;
       final fields = doc['fields'] as Map<String, dynamic>?;
       if (fields == null) continue;
-      final parentSyncId = _stringField(fields, 'parent_sync_id');
-      final childSyncId = _stringField(fields, 'child_sync_id');
+      final parentSyncId = _stringField(fields, 'parent_sync_id', maxLength: _maxSyncIdLen);
+      final childSyncId = _stringField(fields, 'child_sync_id', maxLength: _maxSyncIdLen);
       final deletedAt = _intFieldNullable(fields, 'deleted_at');
       if (parentSyncId != null && childSyncId != null) {
         results.add((parentSyncId: parentSyncId, childSyncId: childSyncId, deleted: deletedAt != null));
@@ -343,8 +349,8 @@ class FirestoreService {
         if (fields == null) continue;
         // Skip tombstoned docs — full pull only includes live data
         if (_intFieldNullable(fields, 'deleted_at') != null) continue;
-        final taskSyncId = _stringField(fields, 'task_sync_id');
-        final dependsOnSyncId = _stringField(fields, 'depends_on_sync_id');
+        final taskSyncId = _stringField(fields, 'task_sync_id', maxLength: _maxSyncIdLen);
+        final dependsOnSyncId = _stringField(fields, 'depends_on_sync_id', maxLength: _maxSyncIdLen);
         if (taskSyncId != null && dependsOnSyncId != null) {
           results.add((taskSyncId: taskSyncId, dependsOnSyncId: dependsOnSyncId));
         }
@@ -391,8 +397,8 @@ class FirestoreService {
       if (doc == null) continue;
       final fields = doc['fields'] as Map<String, dynamic>?;
       if (fields == null) continue;
-      final taskSyncId = _stringField(fields, 'task_sync_id');
-      final dependsOnSyncId = _stringField(fields, 'depends_on_sync_id');
+      final taskSyncId = _stringField(fields, 'task_sync_id', maxLength: _maxSyncIdLen);
+      final dependsOnSyncId = _stringField(fields, 'depends_on_sync_id', maxLength: _maxSyncIdLen);
       final deletedAt = _intFieldNullable(fields, 'deleted_at');
       if (taskSyncId != null && dependsOnSyncId != null) {
         results.add((taskSyncId: taskSyncId, dependsOnSyncId: dependsOnSyncId, deleted: deletedAt != null));
@@ -485,8 +491,8 @@ class FirestoreService {
         final syncId = docName.split('/').last;
         results.add({
           'sync_id': syncId,
-          'task_sync_id': _stringField(fields, 'task_sync_id') ?? '',
-          'schedule_type': _stringField(fields, 'schedule_type') ?? 'weekly',
+          'task_sync_id': _stringField(fields, 'task_sync_id', maxLength: _maxSyncIdLen) ?? '',
+          'schedule_type': _stringField(fields, 'schedule_type', maxLength: _maxTypeFieldLen) ?? 'weekly',
           'day_of_week': _intFieldNullable(fields, 'day_of_week'),
           'updated_at': _intFieldNullable(fields, 'updated_at'),
         });
@@ -536,8 +542,8 @@ class FirestoreService {
       final syncId = docName.split('/').last;
       results.add({
         'sync_id': syncId,
-        'task_sync_id': _stringField(fields, 'task_sync_id') ?? '',
-        'schedule_type': _stringField(fields, 'schedule_type') ?? 'weekly',
+        'task_sync_id': _stringField(fields, 'task_sync_id', maxLength: _maxSyncIdLen) ?? '',
+        'schedule_type': _stringField(fields, 'schedule_type', maxLength: _maxTypeFieldLen) ?? 'weekly',
         'day_of_week': _intFieldNullable(fields, 'day_of_week'),
         'updated_at': _intFieldNullable(fields, 'updated_at'),
         'deleted': _intFieldNullable(fields, 'deleted_at') != null,
@@ -661,7 +667,7 @@ class FirestoreService {
               as Map<String, dynamic>?;
       if (mapFields == null) continue;
       entries.add({
-        'task_sync_id': _stringField(mapFields, 'task_sync_id') ?? '',
+        'task_sync_id': _stringField(mapFields, 'task_sync_id', maxLength: _maxSyncIdLen) ?? '',
         'is_completed': _boolField(mapFields, 'is_completed'),
         'is_worked_on': _boolField(mapFields, 'is_worked_on'),
         'is_pinned': _boolField(mapFields, 'is_pinned'),
@@ -870,15 +876,21 @@ class FirestoreService {
         final raw = _stringField(fields, 'deadline');
         return raw != null && raw.length <= 10 ? raw : null;
       }(),
-      deadlineType: _stringField(fields, 'deadline_type') ?? 'due_by',
+      deadlineType: _stringField(fields, 'deadline_type', maxLength: _maxTypeFieldLen) ?? 'due_by',
       isStarred: _boolField(fields, 'is_starred'),
       starOrder: _intFieldNullable(fields, 'star_order'),
     );
   }
 
-  String? _stringField(Map<String, dynamic> fields, String key) {
+  String? _stringField(Map<String, dynamic> fields, String key, {int? maxLength}) {
     final field = fields[key] as Map<String, dynamic>?;
-    return field?['stringValue'] as String?;
+    final val = field?['stringValue'] as String?;
+    // SEC-fix INFO-12: cap oversized remote strings (defense-in-depth against a
+    // corrupted/hostile Firestore document persisting oversized junk locally).
+    if (val != null && maxLength != null && val.length > maxLength) {
+      return val.substring(0, maxLength);
+    }
+    return val;
   }
 
   int _intField(Map<String, dynamic> fields, String key) {
