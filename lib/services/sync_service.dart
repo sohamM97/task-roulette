@@ -122,6 +122,16 @@ class SyncService {
     for (var i = 0; _syncing && i < 100; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 50));
     }
+    // Review hardening (I-50 follow-up): the wait is a bounded anti-deadlock
+    // backstop. If a push/pull is STILL holding the guard after 5s (slow network
+    // or a large dataset), we proceed anyway and run concurrently with it —
+    // re-introducing, briefly, the very race _runExclusive exists to prevent.
+    // That's an accepted trade-off for rare, user-initiated bulk ops, but log it
+    // so the (otherwise silent) TOCTOU is diagnosable if it ever bites.
+    if (_syncing) {
+      debugLog('SyncService: _runExclusive proceeding after a 5s wait while a '
+          'push/pull still holds _syncing — bulk op may run concurrently.');
+    }
     _syncing = true;
     try {
       await body();
@@ -608,6 +618,16 @@ class SyncService {
         // removing local tasks absent from the remote set (guarding pending
         // local adds), exactly like the relationship/dependency/schedule
         // full-pull branches below.
+        //
+        // LOAD-BEARING INVARIANT (review hardening for I-49): the delete loop
+        // below treats "absent from remoteTaskSyncIds" as "deleted remotely".
+        // That is only safe because `pullTasksSince` -> `_listAllTasks`
+        // paginates and THROWS on any non-200 page, so a partial/failed remote
+        // fetch aborts this whole block before the delete loop — it never yields
+        // a truncated set that would be mistaken for "everything was deleted".
+        // If pagination is ever changed to swallow a page error, this becomes a
+        // mass-local-deletion bug. Guarded by the
+        // "partial/failed remote task fetch deletes nothing" test.
         final remoteTasks = await _firestore.pullTasksSince(uid, idToken);
         final remoteTaskSyncIds = <String>{};
         for (final remoteTask in remoteTasks) {

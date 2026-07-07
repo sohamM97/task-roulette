@@ -50,6 +50,12 @@ class _FakeFirestoreService extends FirestoreService {
   Completer<void>? gateFirstTaskPull;
   bool _firstTaskPullGated = false;
 
+  /// If set, `pullTasksSince` (the full-pull path) throws this — simulates
+  /// `_listAllTasks` aborting on a non-200 page so a full pull never yields a
+  /// partial remote set. Pins the I-49 "partial/failed fetch deletes nothing"
+  /// invariant.
+  Object? throwOnFullTaskPull;
+
   /// Records the `updatedAt` the last Today's-5 push was called with (I-48).
   int? capturedTodaysFiveUpdatedAt;
 
@@ -82,6 +88,7 @@ class _FakeFirestoreService extends FirestoreService {
     // out to pullTaskDeltasSince).
     capturedTaskCursors.add(lastSyncAt);
     await _maybeGate();
+    if (throwOnFullTaskPull != null) throw throwOnFullTaskPull!;
     return const [];
   }
 
@@ -491,6 +498,49 @@ void main() {
       // (non-null cursor) now appears, and only then.
       expect(fakeFs.capturedTaskCursors.length, 2);
       expect(fakeFs.capturedTaskCursors.last, isNotNull);
+    });
+  });
+
+  group('full-pull task reconciliation (I-49 delete authority)', () {
+    // Seed one synced (non-pending) task with a sync_id, so it is eligible for
+    // the "absent from remote → delete" reconciliation (pending tasks are
+    // guarded and would survive regardless, which wouldn't test the invariant).
+    Future<String> seedSyncedTask() async {
+      final id = await db.insertTask(Task(name: 'Keeper'));
+      await db.markTasksSynced([id]);
+      final syncIds = await db.getAllTaskSyncIds();
+      expect(syncIds, hasLength(1));
+      return syncIds.first;
+    }
+
+    test('control: a complete (empty) remote set DOES delete a synced local '
+        'task absent from it — proves the reconcile is live', () async {
+      SharedPreferences.setMockInitialValues({}); // no cursor → full pull
+      await seedSyncedTask();
+      final fakeFs = _FakeFirestoreService(); // pullTasksSince returns []
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.pull();
+
+      // Absent from the (successfully fetched, empty) remote set → deleted.
+      expect(await db.getAllTasks(), isEmpty);
+    });
+
+    test('invariant: a FAILED remote task fetch deletes nothing (guards against '
+        'mistaking a partial/errored list for "all deleted")', () async {
+      SharedPreferences.setMockInitialValues({}); // no cursor → full pull
+      await seedSyncedTask();
+      final fakeFs = _FakeFirestoreService()
+        ..throwOnFullTaskPull = FirestoreException('List tasks failed: 500');
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      // pull() swallows the error internally (sets error status); it must abort
+      // before the delete loop, leaving the local task intact.
+      await sync.pull();
+
+      final remaining = await db.getAllTasks();
+      expect(remaining, hasLength(1));
+      expect(remaining.first.name, 'Keeper');
     });
   });
 }

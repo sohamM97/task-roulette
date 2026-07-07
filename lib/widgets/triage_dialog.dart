@@ -191,17 +191,26 @@ class _TriageDialogState extends State<TriageDialog> {
   // unrelated rebuild. Matches the pin picker's browse-mode search
   // (task_picker_dialog.dart:217), which likewise caches without a debounce.
   void _onSearchChanged(String value) {
-    _searchFilter = value;
+    // Review nit: keep `_searchFilter` mutations inside setState on every path
+    // rather than assigning once up front, so the filter can never drift ahead
+    // of a rebuild.
     if (value.isEmpty) {
-      setState(() => _searchResults = const []);
+      setState(() {
+        _searchFilter = value;
+        _searchResults = const [];
+      });
       return;
     }
     if (_allTasks == null) {
       // Data still loading — _loadSearchData recomputes once it arrives.
+      setState(() => _searchFilter = value); // reflect search view + clear icon
       _loadSearchData();
-      setState(() {}); // reflect the search view + clear icon immediately
     } else {
-      _recomputeSearchResults();
+      setState(() {
+        _searchFilter = value;
+        _searchResults =
+            filterTasksBySearch(_allTasks!, value, _parentNamesMap);
+      });
     }
   }
 
