@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:http/http.dart' as http;
 import '../models/task.dart';
+import '../utils/display_utils.dart' show debugLog;
 
 /// Firestore REST API service for cloud sync.
 /// All operations use the Firestore v1 REST API with Firebase ID token auth.
@@ -41,13 +42,6 @@ class FirestoreService {
     final future = _client != null
         ? _client.post(url, headers: headers, body: body)
         : http.post(url, headers: headers, body: body);
-    return future.timeout(_httpTimeout);
-  }
-
-  Future<http.Response> _delete(Uri url, {required Map<String, String> headers}) {
-    final future = _client != null
-        ? _client.delete(url, headers: headers)
-        : http.delete(url, headers: headers);
     return future.timeout(_httpTimeout);
   }
 
@@ -162,14 +156,20 @@ class FirestoreService {
     }
   }
 
-  /// Deletes a task document from Firestore.
+  /// Soft-deletes a task by setting deleted_at + updated_at (tombstone).
+  /// Delta pulls pick this up and remove the task locally on other devices.
+  //
+  // CR-fix I-49: was a hard Firestore DELETE with no tombstone. Tasks (unlike
+  // relationships/deps/schedules) therefore never propagated deletions — the
+  // task row survived every pull on other devices and resurrected on re-edit.
+  // Now writes a tombstone like the other entity types so deletion is durable.
   Future<void> deleteTask(String uid, String idToken, String syncId) async {
-    final url = Uri.parse('${_tasksPath(uid)}/$syncId');
-    final response = await _delete(url, headers: _headers(idToken));
-    // 404 is OK — document may already be deleted
-    if (response.statusCode != 200 && response.statusCode != 404) {
-      throw FirestoreException('Delete task failed: ${response.statusCode} ${response.body}');
-    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _softDelete('users/$uid/tasks/$syncId', idToken, {
+      'sync_id': {'stringValue': syncId},
+      'updated_at': {'integerValue': now.toString()},
+      'deleted_at': {'integerValue': now.toString()},
+    });
   }
 
   /// Soft-deletes a relationship by setting deleted_at + updated_at (tombstone).
@@ -686,12 +686,76 @@ class FirestoreService {
       final body = json.decode(response.body) as Map<String, dynamic>;
       final docs = body['documents'] as List<dynamic>? ?? [];
       for (final doc in docs) {
-        final task = taskFromFirestoreDoc(doc as Map<String, dynamic>);
+        // CR-fix I-49: skip task tombstones (deleted_at set) — full pull is
+        // live data only, exactly like pullAllRelationships.
+        final fields = (doc as Map<String, dynamic>)['fields'] as Map<String, dynamic>?;
+        if (fields != null && _intFieldNullable(fields, 'deleted_at') != null) {
+          continue;
+        }
+        final task = taskFromFirestoreDoc(doc);
         if (task != null) tasks.add(task);
       }
       pageToken = body['nextPageToken'] as String?;
     } while (pageToken != null);
     return tasks;
+  }
+
+  /// Pulls task deltas since [lastSyncAt] (epoch millis), surfacing tombstones.
+  //
+  // CR-fix I-49: the plain [_queryTasksUpdatedSince] runs [taskFromFirestoreDoc]
+  // which turns a tombstone (no `name` field) into an empty-named Task instead
+  // of a deletion. This variant reports `deleted: true` for tombstoned docs so
+  // the pull can remove the task locally.
+  Future<List<({Task? task, String syncId, bool deleted})>> pullTaskDeltasSince(
+    String uid,
+    String idToken,
+    int lastSyncAt,
+  ) async {
+    final queryUrl = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
+    );
+    final response = await _post(
+      queryUrl,
+      headers: _headers(idToken),
+      body: json.encode({
+        'structuredQuery': {
+          'from': [
+            {'collectionId': 'tasks'},
+          ],
+          'where': {
+            'fieldFilter': {
+              'field': {'fieldPath': 'updated_at'},
+              'op': 'GREATER_THAN',
+              'value': {'integerValue': lastSyncAt.toString()},
+            },
+          },
+        },
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw FirestoreException('Query tasks failed: ${response.statusCode}');
+    }
+    final decoded = json.decode(response.body);
+    if (decoded is! List) return [];
+    final results = <({Task? task, String syncId, bool deleted})>[];
+    for (final result in decoded) {
+      final doc = (result as Map<String, dynamic>)['document'] as Map<String, dynamic>?;
+      if (doc == null) continue;
+      final fields = doc['fields'] as Map<String, dynamic>?;
+      if (fields == null) continue;
+      final name = doc['name'] as String? ?? '';
+      final syncId = name.split('/').last;
+      if (syncId.isEmpty) continue;
+      if (_intFieldNullable(fields, 'deleted_at') != null) {
+        results.add((task: null, syncId: syncId, deleted: true));
+      } else {
+        final task = taskFromFirestoreDoc(doc);
+        if (task != null) {
+          results.add((task: task, syncId: syncId, deleted: false));
+        }
+      }
+    }
+    return results;
   }
 
   Future<List<Task>> _queryTasksUpdatedSince(
@@ -933,11 +997,18 @@ class FirestoreService {
     );
     for (var i = 0; i < writes.length; i += 500) {
       final batch = writes.skip(i).take(500).toList();
-      await _post(
+      final resp = await _post(
         commitUrl,
         headers: _headers(idToken),
         body: json.encode({'writes': batch}),
       );
+      // CR-fix M-42: the batch delete result was never inspected, so a failed
+      // tombstone purge was silent. Best-effort cleanup (we don't throw), but
+      // log non-200 to aid diagnosis.
+      if (resp.statusCode != 200) {
+        debugLog('cleanupTombstones($collectionId): batch delete failed '
+            '(${resp.statusCode})');
+      }
     }
   }
 }

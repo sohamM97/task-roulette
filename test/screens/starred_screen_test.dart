@@ -142,6 +142,62 @@ void main() {
       expect(find.text('Piano'), findsOneWidget);
     });
 
+    // CR-fix I-53 regression: grandchildren in the tree-preview card must be
+    // styled via the shared childTextStyle (priority tint / blocked dimming),
+    // same as the expanded dialog. Before the fix they used one hardcoded
+    // grandchild colour, so a high-priority grandchild looked identical to a
+    // normal one in the card while being tinted in the dialog (DRY violation).
+    testWidgets('high-priority grandchild is tinted in tree preview (I-53)',
+        (tester) async {
+      await tester.runAsync(() async {
+        final parentId = await createStarredTask('Project');
+        final child = await db.insertTask(Task(name: 'Phase 1'));
+        await db.addRelationship(parentId, child);
+        final gcNormal =
+            await db.insertTask(Task(name: 'GC Normal', priority: 0));
+        await db.addRelationship(child, gcNormal);
+        final gcHigh = await db.insertTask(Task(name: 'GC High', priority: 2));
+        await db.addRelationship(child, gcHigh);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      final normalStyle = tester.widget<Text>(find.text('GC Normal')).style!;
+      final highStyle = tester.widget<Text>(find.text('GC High')).style!;
+      // The high-priority grandchild must render in a different colour than the
+      // normal one — proving childTextStyle's priority tint reaches this depth.
+      expect(highStyle.color, isNot(normalStyle.color));
+    });
+
+    // CR-fix I-53 (second half): the card must also DIM a blocked grandchild,
+    // which requires including grandchild ids in the _blockedInfo fetch (only
+    // direct-child ids were fetched before). Before the fix a blocked
+    // grandchild rendered full-emphasis in the card but dimmed in the dialog.
+    testWidgets('blocked grandchild is dimmed in tree preview (I-53)',
+        (tester) async {
+      await tester.runAsync(() async {
+        final parentId = await createStarredTask('Project');
+        final child = await db.insertTask(Task(name: 'Phase 1'));
+        await db.addRelationship(parentId, child);
+        final gcFree = await db.insertTask(Task(name: 'GC Free'));
+        await db.addRelationship(child, gcFree);
+        final gcBlocked = await db.insertTask(Task(name: 'GC Blocked'));
+        await db.addRelationship(child, gcBlocked);
+        // Block gcBlocked on an incomplete blocker.
+        final blocker = await db.insertTask(Task(name: 'Blocker'));
+        await db.addDependency(gcBlocked, blocker);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      final freeStyle = tester.widget<Text>(find.text('GC Free')).style!;
+      final blockedStyle = tester.widget<Text>(find.text('GC Blocked')).style!;
+      // Blocked style dims to alpha 100; the free grandchild keeps the fuller
+      // grandchild colour. The blocked one must be visibly more transparent.
+      expect(blockedStyle.color!.a, lessThan(freeStyle.color!.a));
+      expect(blockedStyle.color!.a, closeTo(100 / 255, 0.01));
+    });
+
     testWidgets('shows badge count in app bar', (tester) async {
       await tester.runAsync(() async {
         await createStarredTask('Task 1');

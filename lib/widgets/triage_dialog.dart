@@ -50,6 +50,11 @@ class _TriageDialogState extends State<TriageDialog> {
   String _searchFilter = '';
   List<Task>? _allTasks;
   Map<int, List<String>>? _parentNamesMap;
+  // CR-fix M-47: cache filtered results into a field, mirroring the pin
+  // picker's browse-mode search. Was a `_filteredSearch` getter that re-ran
+  // filterTasksBySearch over ALL tasks inside build() on every keystroke AND
+  // every unrelated rebuild.
+  List<Task> _searchResults = const [];
 
   @override
   void initState() {
@@ -177,11 +182,43 @@ class _TriageDialogState extends State<TriageDialog> {
         _parentNamesMap ??= {};
       });
     }
+    // If the user typed before tasks finished loading, fill results now.
+    if (_isSearching) _recomputeSearchResults();
   }
 
-  List<Task> get _filteredSearch {
-    if (_allTasks == null) return [];
-    return filterTasksBySearch(_allTasks!, _searchFilter, _parentNamesMap);
+  // CR-fix M-47: recompute once per keystroke into _searchResults instead of
+  // re-running filterTasksBySearch inside build() on every keystroke AND every
+  // unrelated rebuild. Matches the pin picker's browse-mode search
+  // (task_picker_dialog.dart:217), which likewise caches without a debounce.
+  void _onSearchChanged(String value) {
+    // Review nit: keep `_searchFilter` mutations inside setState on every path
+    // rather than assigning once up front, so the filter can never drift ahead
+    // of a rebuild.
+    if (value.isEmpty) {
+      setState(() {
+        _searchFilter = value;
+        _searchResults = const [];
+      });
+      return;
+    }
+    if (_allTasks == null) {
+      // Data still loading — _loadSearchData recomputes once it arrives.
+      setState(() => _searchFilter = value); // reflect search view + clear icon
+      _loadSearchData();
+    } else {
+      setState(() {
+        _searchFilter = value;
+        _searchResults =
+            filterTasksBySearch(_allTasks!, value, _parentNamesMap);
+      });
+    }
+  }
+
+  void _recomputeSearchResults() {
+    setState(() {
+      _searchResults =
+          filterTasksBySearch(_allTasks ?? const [], _searchFilter, _parentNamesMap);
+    });
   }
 
   bool get _isSearching => _searchFilter.isNotEmpty;
@@ -223,13 +260,13 @@ class _TriageDialogState extends State<TriageDialog> {
               PickerSearchField(
                 controller: _searchController,
                 isSearching: _isSearching,
-                onChanged: (value) {
-                  if (value.isNotEmpty && _allTasks == null) _loadSearchData();
-                  setState(() => _searchFilter = value);
-                },
+                onChanged: _onSearchChanged,
                 onClear: () {
                   _searchController.clear();
-                  setState(() => _searchFilter = '');
+                  setState(() {
+                    _searchFilter = '';
+                    _searchResults = const [];
+                  });
                 },
               ),
               const SizedBox(height: 8),
@@ -328,7 +365,7 @@ class _TriageDialogState extends State<TriageDialog> {
     if (_allTasks == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    final filtered = _filteredSearch;
+    final filtered = _searchResults;
     if (filtered.isEmpty) {
       return const Center(
         child: Padding(
@@ -459,6 +496,7 @@ class _TriageDialogState extends State<TriageDialog> {
               setState(() {
                 _phase = _TriagePhase.browse;
                 _searchFilter = '';
+                _searchResults = const [];
                 _searchController.clear();
                 _browseStack.clear();
                 _browseParent = null;

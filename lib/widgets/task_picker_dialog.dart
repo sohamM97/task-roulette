@@ -86,6 +86,10 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
   // ---- Flat-mode state ----
   String _filter = '';
   Timer? _debounce;
+  // CR-fix M-48: controller on the flat field so "Create" reads the LIVE text,
+  // not the debounced _filter. Without it, a correction typed within the 200ms
+  // debounce window was created under the previous (stale) query.
+  final _flatController = TextEditingController();
 
   // ---- Browse-mode state ----
   final List<Task?> _browseStack = [];
@@ -128,6 +132,7 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
   void dispose() {
     _debounce?.cancel();
     _searchController.dispose();
+    _flatController.dispose();
     super.dispose();
   }
 
@@ -404,7 +409,16 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
     if (filtered.isEmpty) {
       return PickerSearchEmptyState(
         query: _filter,
-        onCreateTask: widget.onCreateTask,
+        // CR-fix M-48: source the created name from the live field text (and
+        // flush the pending debounce) so a name typed within the 200ms window
+        // isn't created under the stale _filter query.
+        onCreateTask: widget.onCreateTask == null
+            ? null
+            : (_) {
+                _debounce?.cancel();
+                final live = _flatController.text.trim();
+                if (live.isNotEmpty) widget.onCreateTask!(live);
+              },
       );
     }
     return ListView.builder(
@@ -455,6 +469,7 @@ class _TaskPickerDialogState extends State<TaskPickerDialog> {
                 )
               else
                 TextField(
+                  controller: _flatController,
                   autofocus: true,
                   maxLength: 500,
                   decoration: const InputDecoration(

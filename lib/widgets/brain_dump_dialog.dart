@@ -58,6 +58,8 @@ class _BrainDumpDialogState extends State<BrainDumpDialog> {
 
   @override
   void dispose() {
+    // CR-fix M-49: matched removeListener for the listener added at construction.
+    _controller.removeListener(_updateLineCount);
     _controller.dispose();
     super.dispose();
   }

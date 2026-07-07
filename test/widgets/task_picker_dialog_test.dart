@@ -595,6 +595,36 @@ void main() {
       expect(captured, 'buy milk');
     });
 
+    testWidgets(
+        'Create uses the live field text, not the stale debounced query',
+        (tester) async {
+      // CR-fix M-48 regression: type a name and let the 200ms debounce settle
+      // so the "Create" button renders, then correct the text and tap Create
+      // BEFORE the debounce refreshes _filter. The created task must be named
+      // from the live field, not the earlier (stale) query the label still shows.
+      String? captured;
+      await tester.pumpWidget(
+        buildWithCreate(
+          candidates: makeTasks(['Apple']),
+          onCreateTask: (q) => captured = q,
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'Buy milk');
+      await tester.pump(const Duration(milliseconds: 250)); // debounce fires
+      expect(find.text('Create "Buy milk"'), findsOneWidget);
+
+      // Correct the text; tap within the 200ms window (no rebuild → label stale).
+      await tester.enterText(find.byType(TextField), 'Buy milkshake');
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.text('Create "Buy milk"'));
+      await tester.pumpAndSettle();
+
+      expect(captured, 'Buy milkshake');
+    });
+
     testWidgets('no Create button when onCreateTask is null (other pickers)',
         (tester) async {
       await tester.pumpWidget(

@@ -179,24 +179,29 @@ class TaskProvider extends ChangeNotifier {
         isInbox: isInbox,
         isStarred: isStarred,
         starOrder: starOrder);
-    final taskId = await _db.insertTask(task);
 
+    // CR-fix R-10: collect all parent ids and insert the task + every edge in a
+    // single transaction (insertTaskWithParents) instead of insertTask() plus
+    // one addRelationship() txn per parent — the old split wasn't atomic, so a
+    // crash mid-way left an orphan or partially-parented task.
+    //
     // [atRoot] forces a root-level insert regardless of current navigation
     // state. Used by callers in other tabs (Today's 5, Starred) so the new
     // task isn't silently nested under whatever parent the All Tasks tab last
     // drilled into. (isInbox also implies root, enforced by the invariant
     // above — so plain atRoot suffices here.)
+    final parentIds = <int>[];
     if (!atRoot && _currentParent != null) {
-      await _db.addRelationship(_currentParent!.id!, taskId);
+      parentIds.add(_currentParent!.id!);
     }
-
     if (additionalParentIds != null) {
       for (final parentId in additionalParentIds) {
         if (atRoot || parentId != _currentParent?.id) {
-          await _db.addRelationship(parentId, taskId);
+          parentIds.add(parentId);
         }
       }
     }
+    final taskId = await _db.insertTaskWithParents(task, parentIds);
 
     // Bug fix: without deferNotify, _refreshAfterMutation() fired immediately
     // after task insert, triggering notifyListeners -> refreshSnapshots() ->
@@ -304,7 +309,12 @@ class TaskProvider extends ChangeNotifier {
             orElse: () => throw StateError('Task $taskId not found in current list'));
     final removedDeps = await _db.completeTask(taskId);
     onMutation?.call();
-    await navigateBack();
+    // CR-fix M-46: navigateBack() refreshes only when _parentStack is non-empty
+    // (returns false otherwise). On the empty-stack branch the DB mutation +
+    // sync push already fired but nothing refreshed the list / notifyListeners,
+    // leaving stale UI. Fall back to a refresh. (onMutation already fired above,
+    // so refresh the list directly rather than re-firing it.)
+    if (!await navigateBack()) await _refreshCurrentList();
     return (task: task, removedDeps: removedDeps);
   }
 
@@ -317,7 +327,8 @@ class TaskProvider extends ChangeNotifier {
             orElse: () => throw StateError('Task $taskId not found in current list'));
     final removedDeps = await _db.skipTask(taskId);
     onMutation?.call();
-    await navigateBack();
+    // CR-fix M-46: refresh on the empty-stack branch too (see completeTask).
+    if (!await navigateBack()) await _refreshCurrentList();
     return (task: task, removedDeps: removedDeps);
   }
 
@@ -795,7 +806,8 @@ class TaskProvider extends ChangeNotifier {
     await _db.markWorkedOn(taskId);
     if (alsoStart) await _db.startTask(taskId);
     onMutation?.call();
-    await navigateBack(); // single _refreshCurrentList()
+    // CR-fix M-46: refresh on the empty-stack branch too (see completeTask).
+    if (!await navigateBack()) await _refreshCurrentList();
   }
 
   Future<void> unmarkWorkedOn(int taskId, {int? restoreTo}) async {

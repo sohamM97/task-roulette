@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show kDebugMode, setEquals;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -45,6 +47,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   /// Bug fix: provider.unmarkWorkedOn triggers an unawaited refreshSnapshots()
   /// that races with _unmarkDone, re-reading isWorkedOnToday before DB settles.
   final Set<int> _explicitlyUncompletedIds = {};
+  /// CR-fix M-44: coalescing guard for refreshSnapshots. Listeners fire it
+  /// unawaited and multi-step flows re-enter it mid-run; two overlapping runs
+  /// could interleave reads/writes of _todaysTasks/_completedIds. If a run is in
+  /// flight when another is requested, we remember it and re-run once at the end.
+  bool _refreshing = false;
+  bool _refreshPending = false;
   /// Cached ancestor-path strings keyed by task ID (e.g. "Work > Project X").
   Map<int, String> _taskPaths = {};
   /// Task ID → effective deadline info for icon display.
@@ -233,7 +241,26 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   /// Called when switching back to the Today tab to pick up changes made
   /// in All Tasks (e.g. unstarting a task, toggling pins). Manual-only model:
   /// tasks that become non-leaf or deleted are dropped — no auto-replacement.
+  /// Public entry point — coalesces overlapping refreshes (see [_refreshing]).
   Future<void> refreshSnapshots() async {
+    if (_refreshing) {
+      _refreshPending = true;
+      return;
+    }
+    _refreshing = true;
+    try {
+      await _refreshSnapshotsInner();
+    } finally {
+      _refreshing = false;
+      if (_refreshPending) {
+        _refreshPending = false;
+        // Re-run once so changes that arrived mid-flight are reflected.
+        unawaited(refreshSnapshots());
+      }
+    }
+  }
+
+  Future<void> _refreshSnapshotsInner() async {
     // Midnight rollover: date changed since last load → reload from DB
     if (_todayKey() != _loadedDateKey) {
       await _reloadFromDb();
@@ -548,6 +575,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       _todaysTasks.removeWhere((t) => t.id == task.id);
       _completedIds.remove(task.id);
       _workedOnIds.remove(task.id);
+      // CR-fix M-43: also drop the removed task from the parallel session sets.
+      // They previously self-healed only on the next _reloadFromDb, leaking
+      // stale entries (auto-start/pre-worked/uncompleted flags) in the meantime.
+      _autoStartedIds.remove(task.id);
+      _preWorkedOnLastWorkedAt.remove(task.id);
+      _explicitlyUncompletedIds.remove(task.id);
     });
     await _persist();
   }
@@ -664,10 +697,20 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     // Check actual DB state — task may have been completed externally
     // (e.g. via "Go to task" → All Tasks) even if _workedOnIds has it.
-    final wasWorkedOn = _workedOnIds.contains(task.id);
+    // CR-fix I-51: also detect worked-on from the DB snapshot (task.isWorkedOnToday),
+    // not just the session set. A task marked "Done today" OUTSIDE Today's 5
+    // (All Tasks leaf detail) is added to _completedIds only, never _workedOnIds.
+    // Before the fix: wasWorkedOn=false and isCompleted=false → both revert
+    // branches skipped, yet _unmarkDone stripped it from _completedIds locally
+    // while the DB kept lastWorkedAt=today → the task bounced back to "done" on
+    // reload/sync. After: the worked-on revert now fires for the external case too.
+    final wasWorkedOn = _workedOnIds.contains(task.id) || task.isWorkedOnToday;
     final wasAutoStarted = _autoStartedIds.contains(task.id);
     if (wasWorkedOn && !task.isCompleted) {
-      // "Done today" only — revert worked-on state, restore original lastWorkedAt
+      // "Done today" only — revert worked-on state, restore original lastWorkedAt.
+      // restoreTo may be null for an externally-marked task (its pre-worked
+      // timestamp was never captured) — acceptable; the task correctly and
+      // permanently leaves the done state.
       final restoreTo = _preWorkedOnLastWorkedAt.remove(task.id);
       await provider.unmarkWorkedOn(task.id!, restoreTo: restoreTo);
       if (wasAutoStarted) await provider.unstartTask(task.id!);

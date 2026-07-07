@@ -1814,6 +1814,104 @@ void main() {
     });
   });
 
+  // CR-fix R-10: addTask previously inserted the task in one txn and each parent
+  // edge in a SEPARATE addRelationship txn (task row + edges not atomic).
+  // insertTaskWithParents does task + all edges + sync-queue in ONE transaction.
+  group('insertTaskWithParents (R-10)', () {
+    // [Mechanism] Task row + every parent edge created in a single call.
+    test('inserts the task and links it to every parent', () async {
+      final p1 = await db.insertTask(Task(name: 'P1'));
+      final p2 = await db.insertTask(Task(name: 'P2'));
+
+      final childId =
+          await db.insertTaskWithParents(Task(name: 'Multi'), [p1, p2]);
+
+      expect((await db.getTaskById(childId))!.name, 'Multi');
+      expect((await db.getChildren(p1)).map((t) => t.id), contains(childId));
+      expect((await db.getChildren(p2)).map((t) => t.id), contains(childId));
+    });
+
+    // [Mechanism] Each synced parent edge is enqueued for sync push.
+    test('enqueues a relationship sync add for each parent', () async {
+      final p1 = await db.insertTask(Task(name: 'P1'));
+      final p2 = await db.insertTask(Task(name: 'P2'));
+
+      final childId =
+          await db.insertTaskWithParents(Task(name: 'Multi'), [p1, p2]);
+      final childSyncId = (await db.getTaskById(childId))!.syncId!;
+      final p1SyncId = (await db.getTaskById(p1))!.syncId!;
+      final p2SyncId = (await db.getTaskById(p2))!.syncId!;
+
+      final keys = await db.getPendingSyncAddKeys('relationship');
+      expect(keys, contains('$p1SyncId:$childSyncId'));
+      expect(keys, contains('$p2SyncId:$childSyncId'));
+    });
+
+    // [Edge case] Repeated parent ids collapse to one edge + one sync entry.
+    test('de-dupes a repeated parent id', () async {
+      final p = await db.insertTask(Task(name: 'P'));
+
+      final childId =
+          await db.insertTaskWithParents(Task(name: 'Dup'), [p, p, p]);
+
+      // Exactly one edge under the parent (not three).
+      final childCount = (await db.getChildren(p))
+          .where((t) => t.id == childId)
+          .length;
+      expect(childCount, 1);
+      // And exactly one relationship 'add' enqueued.
+      final relAdds = (await db.peekSyncQueue())
+          .where((r) => r['entity_type'] == 'relationship')
+          .length;
+      expect(relAdds, 1);
+    });
+
+    // [Edge case] Empty parent list inserts a root task with no edges.
+    test('empty parent list creates a root task with no edges', () async {
+      final childId =
+          await db.insertTaskWithParents(Task(name: 'Root'), <int>[]);
+
+      final roots = (await db.getRootTasks()).map((t) => t.id);
+      expect(roots, contains(childId));
+      final relAdds = (await db.peekSyncQueue())
+          .where((r) => r['entity_type'] == 'relationship')
+          .length;
+      expect(relAdds, 0);
+    });
+  });
+
+  // CR-fix M-45: addRelationship used the default 'abort' conflict algorithm, so
+  // re-inserting an existing (parent_id, child_id) edge threw a UNIQUE-constraint
+  // error. It now uses ConflictAlgorithm.ignore and skips the redundant enqueue.
+  group('addRelationship conflict handling (M-45)', () {
+    // [Regression] Re-adding an existing edge must NOT throw (was a UNIQUE crash).
+    test('re-adding an existing edge is a no-op, not a crash', () async {
+      final p = await db.insertTask(Task(name: 'P'));
+      final c = await db.insertTask(Task(name: 'C'));
+      await db.addRelationship(p, c);
+
+      // Before the fix this threw DatabaseException (UNIQUE constraint failed).
+      await db.addRelationship(p, c);
+
+      final childCount =
+          (await db.getChildren(p)).where((t) => t.id == c).length;
+      expect(childCount, 1); // still a single edge
+    });
+
+    // [Mechanism] The duplicate call skips the redundant sync 'add' enqueue.
+    test('duplicate add does not enqueue a second sync event', () async {
+      final p = await db.insertTask(Task(name: 'P'));
+      final c = await db.insertTask(Task(name: 'C'));
+      await db.addRelationship(p, c);
+      await db.addRelationship(p, c);
+
+      final relAdds = (await db.peekSyncQueue())
+          .where((r) => r['entity_type'] == 'relationship')
+          .length;
+      expect(relAdds, 1);
+    });
+  });
+
   group('Dirty tracking', () {
     test('updateTaskName sets pending and updated_at', () async {
       final id = await db.insertTask(Task(name: 'Original'));
@@ -5863,6 +5961,22 @@ void main() {
 
         final result = await db.getEffectiveDeadlines([childId]);
         expect(result[childId]?.deadline, '2026-03-20');
+      });
+
+      test('nearest ancestor deadline wins over a farther one (I-52)', () async {
+        // grandparent(A) -> parent(B) -> child(none): child inherits the
+        // NEAREST (parent's) deadline, not the grandparent's. Guards the batched
+        // recursive CTE's depth ordering.
+        final grandparent =
+            await db.insertTask(Task(name: 'GP', deadline: '2026-05-01'));
+        final parent =
+            await db.insertTask(Task(name: 'P', deadline: '2026-03-15'));
+        final child = await db.insertTask(Task(name: 'C'));
+        await db.addRelationship(grandparent, parent);
+        await db.addRelationship(parent, child);
+
+        final result = await db.getEffectiveDeadlines([child]);
+        expect(result[child]?.deadline, '2026-03-15');
       });
 
       test('handles batch of mixed tasks', () async {

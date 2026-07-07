@@ -131,6 +131,66 @@ void main() {
     });
   });
 
+  // CR-fix M-46: completeTask/skipTask/markWorkedOnAndNavigateBack relied on
+  // navigateBack() to refresh, but navigateBack() returns false WITHOUT
+  // refreshing when _parentStack is empty (viewing a ROOT task, not drilled in).
+  // On that branch the DB mutation + sync push fired but nothing reloaded the
+  // list / notified listeners → stale UI. The fix falls back to
+  // _refreshCurrentList() when navigateBack() returns false.
+  group('empty nav-stack refresh fallback (M-46)', () {
+    // [Regression] Completing a root task (empty stack) must drop it from the
+    // in-memory list (completed tasks are excluded from the root list) and
+    // notify listeners. Before the fix the list kept the stale, now-completed
+    // task and no notification fired.
+    test('completeTask refreshes the list when nav stack is empty', () async {
+      final rootId = await db.insertTask(Task(name: 'Root task'));
+      await provider.loadRootTasks();
+      expect(provider.tasks.any((t) => t.id == rootId), isTrue);
+      expect(provider.currentParent, isNull); // at root → empty stack
+
+      var notified = false;
+      provider.addListener(() => notified = true);
+
+      await provider.completeTask(rootId);
+
+      // Root list reloaded → completed task gone; listeners were notified.
+      expect(provider.tasks.any((t) => t.id == rootId), isFalse);
+      expect(notified, isTrue);
+    });
+
+    // [Regression] Same fallback for skipTask on the empty-stack branch.
+    test('skipTask refreshes the list when nav stack is empty', () async {
+      final rootId = await db.insertTask(Task(name: 'Root task'));
+      await provider.loadRootTasks();
+      var notified = false;
+      provider.addListener(() => notified = true);
+
+      await provider.skipTask(rootId);
+
+      expect(provider.tasks.any((t) => t.id == rootId), isFalse);
+      expect(notified, isTrue);
+    });
+
+    // [Regression] markWorkedOnAndNavigateBack also falls back to a refresh so
+    // the worked-on task re-sorts even at root (worked-on sinks to the bottom).
+    test('markWorkedOnAndNavigateBack refreshes when nav stack is empty',
+        () async {
+      final a = await db.insertTask(Task(name: 'A root'));
+      await provider.loadRootTasks();
+      var notified = false;
+      provider.addListener(() => notified = true);
+
+      await provider.markWorkedOnAndNavigateBack(a);
+
+      // The task is still present (worked-on tasks aren't removed) but the list
+      // was refreshed from the DB, so its snapshot reflects the new state and
+      // listeners fired.
+      expect(notified, isTrue);
+      final refreshed = provider.tasks.firstWhere((t) => t.id == a);
+      expect(refreshed.isWorkedOnToday, isTrue);
+    });
+  });
+
   group('startTask / unstartTask', () {
     test('startTask updates currentParent when on leaf', () async {
       final leafId = await db.insertTask(Task(name: 'Leaf'));
