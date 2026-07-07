@@ -1354,7 +1354,9 @@ For sync_id fields, add a 50-char cap or UUID format validation.
 
 #### LOW-23: Notification-only Android permissions and boot receiver remain after the feature was disabled [FIXED in Round 7 fix]
 
-> **Fix note:** Removed the three `uses-permission` lines (`POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`, `USE_EXACT_ALARM`) and the `ScheduledNotificationBootReceiver` `<receiver>` block from `AndroidManifest.xml`, leaving a comment directing them to be restored in the same commit that re-enables `NotificationService`. `INTERNET` retained (used by sync).
+> **Fix note (superseded — see follow-up below):** Removed the three `uses-permission` lines (`POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`, `USE_EXACT_ALARM`) and the `ScheduledNotificationBootReceiver` `<receiver>` block from `AndroidManifest.xml`. `INTERNET` retained (used by sync).
+>
+> **Follow-up (2026-07-07, verified on-device):** The manifest edit alone was **insufficient**. On-device verification of the built debug APK (`adb shell dumpsys package`) showed `POST_NOTIFICATIONS` (and `VIBRATE`) were *still requested* — the `flutter_local_notifications` plugin declares them in its own manifest and Gradle's manifest merger re-injected them regardless of our edit. `RECEIVE_BOOT_COMPLETED`, `USE_EXACT_ALARM`, and the boot receiver *were* correctly gone (they were app-declared, not plugin-declared). Root-cause fix: since the notification feature is fully disabled (`notification_service.dart` block-commented) and the three notification packages (`flutter_local_notifications`, `timezone`, `flutter_timezone`) had **zero live imports**, they were removed from `pubspec.yaml` entirely. Rebuilt + reinstalled APK now requests **only `android.permission.INTERNET`** — confirmed via `dumpsys`. The `pubspec.yaml` note and `notification_service.dart` re-enable checklist were updated to require re-adding the packages *and* the manifest entries when notifications are restored. **LOW-23 now fully resolved.**
 
 
 - **Severity:** Low
@@ -1421,7 +1423,7 @@ For sync_id fields, add a 50-char cap or UUID format validation.
 | M5: Insecure Communication | **Pass** | HTTPS only, 30 s timeouts on every call |
 | M6: Inadequate Privacy Controls | **Pass** | No PII beyond task names; tokens in secure storage |
 | M7: Insufficient Binary Protections | **Pass** | R8/ProGuard enabled |
-| M8: Security Misconfiguration | **Minor** | Unused notification permissions incl. sensitive `USE_EXACT_ALARM` + boot receiver still declared (LOW-23) |
+| M8: Security Misconfiguration | **Pass** | LOW-23 resolved — notification permissions + boot receiver removed; unused notification packages dropped from pubspec so the built APK requests only `INTERNET` (verified on-device) |
 | M9: Insecure Data Storage | **Pass** | Tokens in secure storage; DB sandboxed; backup import validated |
 | M10: Insufficient Cryptography | N/A | App does not use custom cryptography |
 
@@ -1430,5 +1432,5 @@ For sync_id fields, add a 50-char cap or UUID format validation.
 | Priority | Finding | Effort | Status |
 |----------|---------|--------|--------|
 | **MEDIUM** | MED-8 / LOW-15: Version-control + test Firestore Security Rules (per-uid isolation) | Low–Medium | **Fixed in Round 7 fix** (rules version-controlled) — deploy + rules-unit-test still deferred to LOW-15 |
-| **LOW** | LOW-23: Remove notification-only permissions (`USE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`, `POST_NOTIFICATIONS`) + boot receiver while notifications are disabled | Trivial | **Fixed in Round 7 fix** |
+| **LOW** | LOW-23: Remove notification-only permissions (`USE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`, `POST_NOTIFICATIONS`) + boot receiver while notifications are disabled | Trivial | **Fully resolved** — manifest edit + dropped unused notification packages from pubspec; built APK requests only `INTERNET` (verified on-device via `dumpsys`) |
 | **INFO** | INFO-12: Length-cap remaining remote strings (`deadline_type`, `schedule_type`, `*_sync_id`) | Trivial | **Fixed in Round 7 fix** |

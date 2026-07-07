@@ -1518,4 +1518,375 @@ void main() {
       expect(fields['depends_on_sync_id'], {'stringValue': 'd1'});
     });
   });
+
+  // --- INFO-12: length caps on untrusted remote string fields at every
+  // pull deserialization site. sync_id fields cap at 50; type fields at 20.
+  // A corrupted/hostile Firestore doc must not persist oversized junk locally.
+  group('pull methods remote string caps (INFO-12)', () {
+    // sync_ids are ~36-char UUIDs; anything > 50 is truncated to 50.
+    final over50 = 'x' * 60; // one clearly over the cap
+    final at50 = 'x' * 50; // exactly at the cap — must be preserved as-is
+    final oneOver50 = 'x' * 51; // one over the cap — must truncate to 50
+    // type fields (schedule_type, deadline_type) cap at 20.
+    final over20 = 'y' * 30;
+    final at20 = 'y' * 20;
+    final oneOver20 = 'y' * 21;
+
+    group('pullAllRelationships', () {
+      test('truncates oversized parent_sync_id and child_sync_id to 50', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode({
+            'documents': [
+              {
+                'name': 'projects/test/documents/users/u/relationships/r1',
+                'fields': {
+                  'parent_sync_id': {'stringValue': over50},
+                  'child_sync_id': {'stringValue': over50},
+                },
+              },
+            ],
+          });
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final results = await svc.pullAllRelationships('u', 'token');
+
+        expect(results.length, 1);
+        expect(results[0].parentSyncId.length, 50);
+        expect(results[0].childSyncId.length, 50);
+      });
+
+      test('preserves sync_id at exactly 50 chars', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode({
+            'documents': [
+              {
+                'name': 'projects/test/documents/users/u/relationships/r1',
+                'fields': {
+                  'parent_sync_id': {'stringValue': at50},
+                  'child_sync_id': {'stringValue': 'c1'},
+                },
+              },
+            ],
+          });
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final results = await svc.pullAllRelationships('u', 'token');
+
+        expect(results[0].parentSyncId, at50);
+        expect(results[0].parentSyncId.length, 50);
+      });
+
+      test('truncates sync_id one char over the cap (51 → 50)', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode({
+            'documents': [
+              {
+                'name': 'projects/test/documents/users/u/relationships/r1',
+                'fields': {
+                  'parent_sync_id': {'stringValue': oneOver50},
+                  'child_sync_id': {'stringValue': 'c1'},
+                },
+              },
+            ],
+          });
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final results = await svc.pullAllRelationships('u', 'token');
+
+        expect(results[0].parentSyncId.length, 50);
+      });
+    });
+
+    group('pullRelationshipsSince', () {
+      test('truncates oversized parent/child sync_id to 50', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode([
+            {
+              'document': {
+                'name': 'projects/test/rel/r1',
+                'fields': {
+                  'parent_sync_id': {'stringValue': over50},
+                  'child_sync_id': {'stringValue': over50},
+                  'updated_at': {'integerValue': '2000'},
+                },
+              },
+            },
+          ]);
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final results = await svc.pullRelationshipsSince('u', 'token', 1000);
+
+        expect(results.length, 1);
+        expect(results[0].parentSyncId.length, 50);
+        expect(results[0].childSyncId.length, 50);
+      });
+    });
+
+    group('pullAllDependencies', () {
+      test('truncates oversized task_sync_id and depends_on_sync_id to 50', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode({
+            'documents': [
+              {
+                'name': 'projects/test/documents/users/u/dependencies/d1',
+                'fields': {
+                  'task_sync_id': {'stringValue': over50},
+                  'depends_on_sync_id': {'stringValue': over50},
+                },
+              },
+            ],
+          });
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final results = await svc.pullAllDependencies('u', 'token');
+
+        expect(results.length, 1);
+        expect(results[0].taskSyncId.length, 50);
+        expect(results[0].dependsOnSyncId.length, 50);
+      });
+    });
+
+    group('pullDependenciesSince', () {
+      test('truncates oversized task/depends_on sync_id to 50', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode([
+            {
+              'document': {
+                'name': 'projects/test/dep/d1',
+                'fields': {
+                  'task_sync_id': {'stringValue': over50},
+                  'depends_on_sync_id': {'stringValue': over50},
+                  'updated_at': {'integerValue': '3000'},
+                },
+              },
+            },
+          ]);
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final results = await svc.pullDependenciesSince('u', 'token', 2000);
+
+        expect(results.length, 1);
+        expect(results[0].taskSyncId.length, 50);
+        expect(results[0].dependsOnSyncId.length, 50);
+      });
+    });
+
+    group('pullAllSchedules', () {
+      test('truncates oversized task_sync_id to 50', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode({
+            'documents': [
+              {
+                'name': 'projects/test/documents/users/u/schedules/s1',
+                'fields': {
+                  'task_sync_id': {'stringValue': over50},
+                  'schedule_type': {'stringValue': 'weekly'},
+                },
+              },
+            ],
+          });
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final results = await svc.pullAllSchedules('u', 'token');
+
+        expect(results.length, 1);
+        expect((results[0]['task_sync_id'] as String).length, 50);
+      });
+
+      test('truncates oversized schedule_type to 20', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode({
+            'documents': [
+              {
+                'name': 'projects/test/documents/users/u/schedules/s1',
+                'fields': {
+                  'task_sync_id': {'stringValue': 'ts1'},
+                  'schedule_type': {'stringValue': over20},
+                },
+              },
+            ],
+          });
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final results = await svc.pullAllSchedules('u', 'token');
+
+        expect((results[0]['schedule_type'] as String).length, 20);
+      });
+
+      test('preserves schedule_type at exactly 20 chars', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode({
+            'documents': [
+              {
+                'name': 'projects/test/documents/users/u/schedules/s1',
+                'fields': {
+                  'task_sync_id': {'stringValue': 'ts1'},
+                  'schedule_type': {'stringValue': at20},
+                },
+              },
+            ],
+          });
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final results = await svc.pullAllSchedules('u', 'token');
+
+        expect(results[0]['schedule_type'], at20);
+      });
+
+      test('truncates schedule_type one char over the cap (21 → 20)', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode({
+            'documents': [
+              {
+                'name': 'projects/test/documents/users/u/schedules/s1',
+                'fields': {
+                  'task_sync_id': {'stringValue': 'ts1'},
+                  'schedule_type': {'stringValue': oneOver20},
+                },
+              },
+            ],
+          });
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final results = await svc.pullAllSchedules('u', 'token');
+
+        expect((results[0]['schedule_type'] as String).length, 20);
+      });
+    });
+
+    group('pullSchedulesSince', () {
+      test('truncates oversized task_sync_id to 50', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode([
+            {
+              'document': {
+                'name': 'projects/test/databases/(default)/documents/users/u/schedules/s1',
+                'fields': {
+                  'task_sync_id': {'stringValue': over50},
+                  'schedule_type': {'stringValue': 'weekly'},
+                  'updated_at': {'integerValue': '4000'},
+                },
+              },
+            },
+          ]);
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final results = await svc.pullSchedulesSince('u', 'token', 3000);
+
+        expect(results.length, 1);
+        expect((results[0]['task_sync_id'] as String).length, 50);
+      });
+
+      test('truncates oversized schedule_type to 20', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode([
+            {
+              'document': {
+                'name': 'projects/test/databases/(default)/documents/users/u/schedules/s1',
+                'fields': {
+                  'task_sync_id': {'stringValue': 'ts1'},
+                  'schedule_type': {'stringValue': over20},
+                  'updated_at': {'integerValue': '4000'},
+                },
+              },
+            },
+          ]);
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final results = await svc.pullSchedulesSince('u', 'token', 3000);
+
+        expect((results[0]['schedule_type'] as String).length, 20);
+      });
+    });
+
+    group('pullTodaysFive', () {
+      test('truncates oversized entry task_sync_id to 50', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode({
+            'name': 'projects/test/documents/users/u/todays_five/2026-07-07',
+            'fields': {
+              'updated_at': {'integerValue': '5000'},
+              'entries': {
+                'arrayValue': {
+                  'values': [
+                    {
+                      'mapValue': {
+                        'fields': {
+                          'task_sync_id': {'stringValue': over50},
+                          'sort_order': {'integerValue': '0'},
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          });
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final result = await svc.pullTodaysFive('u', 'token', '2026-07-07');
+
+        expect(result, isNotNull);
+        expect(result!.entries.length, 1);
+        expect((result.entries[0]['task_sync_id'] as String).length, 50);
+      });
+
+      test('preserves entry task_sync_id at exactly 50 chars', () async {
+        final mockClient = MockClient((request) async {
+          final body = json.encode({
+            'name': 'projects/test/documents/users/u/todays_five/2026-07-07',
+            'fields': {
+              'updated_at': {'integerValue': '5000'},
+              'entries': {
+                'arrayValue': {
+                  'values': [
+                    {
+                      'mapValue': {
+                        'fields': {
+                          'task_sync_id': {'stringValue': at50},
+                          'sort_order': {'integerValue': '0'},
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          });
+          return http.Response(body, 200);
+        });
+
+        final svc = FirestoreService(client: mockClient);
+        final result = await svc.pullTodaysFive('u', 'token', '2026-07-07');
+
+        expect(result!.entries[0]['task_sync_id'], at50);
+      });
+    });
+  });
 }
