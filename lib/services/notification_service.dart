@@ -1,9 +1,13 @@
 // Notification code is currently disabled (2026-05-28). The daily 8 AM
 // reminder was broken on the user's setup and the feature was commented out
-// rather than debugged. To re-enable: delete this header, restore the imports,
-// remove the block-comment markers around the class body, and uncomment the
-// call sites in `lib/main.dart` (NotificationService.init / onNotificationTap /
-// _navigateToToday). Required packages are still in pubspec.
+// rather than debugged. To re-enable: (1) re-add flutter_local_notifications,
+// timezone, and flutter_timezone to pubspec.yaml (they were removed 2026-07-07,
+// SEC LOW-23 — see the note in pubspec) and run `flutter pub get`; (2) restore
+// the POST_NOTIFICATIONS / RECEIVE_BOOT_COMPLETED / USE_EXACT_ALARM permissions
+// and the ScheduledNotificationBootReceiver in AndroidManifest.xml; (3) delete
+// this header, restore the imports, remove the block-comment markers around the
+// class body; (4) uncomment the call sites in `lib/main.dart`
+// (NotificationService.init / onNotificationTap / _navigateToToday).
 
 /*
 import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;

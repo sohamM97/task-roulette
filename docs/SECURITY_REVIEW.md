@@ -1325,3 +1325,112 @@ For sync_id fields, add a 50-char cap or UUID format validation.
 | **LOW** | LOW-15: Version-control Firestore Security Rules | Low | **Deferred** — will set up Firebase CLI properly later |
 | **LOW** | LOW-21: Gate `debugPrint` in `main.dart` behind `kDebugMode` | Trivial | **Fixed** — extracted shared `debugLog()` helper in `display_utils.dart`, replaced all 12 call sites |
 | **LOW** | LOW-22: Gate 3 `debugPrint` calls in Today's 5 behind `kDebugMode` | Trivial | **Fixed** — now use `debugLog()` helper |
+
+---
+
+## Round 7 (2026-07-07)
+
+**Scope:** Full codebase review after ~129 commits since Round 6 — the sync-behavior overhaul (soft-delete tombstones for tasks/relationships/dependencies/schedules, delta pulls with cursor-skew lookback, periodic full pull, HTTP-client dependency injection), Today's-5 pin LWW propagation + deadline-suppression sync, deadline-today auto-pin, manual Today's-5 model, create-from-search + unified task pickers, and starred view enhancements (`is_starred`/`star_order`). `pubspec.lock` is unchanged since Round 6 (only the version string bumped 1.3.0 → 1.3.9). No new third-party dependencies.
+
+### Previous Round Verification
+
+- [x] **LOW-21** (ungated `debugPrint` in `main.dart`) — **verified fixed.** A shared `debugLog()` helper (`display_utils.dart:9-11`) gates on `kDebugMode`; the whole call — including string interpolation — is tree-shaken in release. A codebase-wide sweep found **zero** raw `debugPrint`/`print` calls outside the helper definition. All new sync/tombstone code (e.g. `firestore_service.dart:1009`, `sync_service.dart:796-802`) correctly uses `debugLog`.
+- [x] **LOW-22** (ungated `debugPrint` in Today's 5) — **verified fixed.** Now routed through `debugLog()`.
+- [~] **LOW-15** (Firestore Security Rules not version-controlled) — **partially addressed in Round 7 fix.** `firestore.rules` + `firebase.json` + `.firebaserc` are now version-controlled at the repo root (see MED-8 fix note). **Deployment** of the rules via Firebase CLI and the rules-unit-test remain deferred under LOW-15 / `project_firebase_cli_setup.md`.
+- [x] **INFO-11** (remote string fields `deadline_type` / `schedule_type` / `sync_id` not length-validated) — **fixed in Round 7 fix** via INFO-12 (length caps applied to `deadline_type`, `schedule_type`, and all `*_sync_id` reads).
+- **LOW-6 / LOW-7** (unencrypted DB and backup export at rest) — status unchanged, still accepted for the current single-user-device threat model.
+
+### Findings
+
+#### MED-8: Firestore Security Rules remain unversioned as the sync surface expands [FIXED in Round 7 fix]
+
+> **Fix note:** Version-controlled `firestore.rules`, `firebase.json`, and `.firebaserc` (project `task-roulette-d04d6`) were added at the repo root. The rules lock every `users/{uid}/{document=**}` doc to `request.auth != null && request.auth.uid == uid` and deny all other paths — the reviewable/diffable source of truth the finding asked for. **Deviation from recommended fix:** the `@firebase/rules-unit-testing` unit test was *not* added — it requires a Node/emulator harness that is out of scope for this Flutter repo and tied to the still-deferred Firebase CLI setup (LOW-15). **Still required (deferred to LOW-15):** deploy these rules via `firebase deploy --only firestore:rules` and confirm they match the console-deployed rules.
+
+
+- **Severity:** Medium *(elevated from LOW-15's Low — the finding is unchanged, but its blast radius grew this cycle)*
+- **File:** repository root (absent `firestore.rules` / `firebase.json`); data-path construction in `firestore_service.dart:48-52`
+- **Description:** Every Firestore document path is scoped to the caller's own uid (`users/$uid/tasks`, `.../relationships`, `.../dependencies`, `.../schedules`, `.../todays_five`). Client-side, there is no way for one user to name another user's uid — the uid comes from the verified Firebase token. **But the actual authorization boundary is entirely server-side Firestore Security Rules**, which are not in the repository and cannot be reviewed, tested, or diffed here. This cycle added four collections' worth of new read/write/query/tombstone-delete traffic (delta `runQuery` on `updated_at`, `cleanupTombstones` batch deletes). If the deployed rules are missing, overly broad (e.g. `allow read, write: if request.auth != null` without a `request.auth.uid == uid` path match), or drift from what the code assumes, any authenticated user could read or clobber another user's tasks — and there is no artifact in-repo to catch that regression. This is not evidence of a live vulnerability; it is an unverifiable, high-impact control.
+- **Recommended Fix:** Land LOW-15: add `firestore.rules` + `firebase.json` to the repo (Firebase CLI setup is already tracked as LOW-15 / `project_firebase_cli_setup.md`). Rules should restrict every `users/{uid}/**` document to `request.auth != null && request.auth.uid == uid`. Add at least one rules-unit-test (`@firebase/rules-unit-testing`) asserting cross-uid reads/writes are denied. Until then, manually confirm in the Firebase console that the deployed rules enforce the uid match.
+
+#### LOW-23: Notification-only Android permissions and boot receiver remain after the feature was disabled [FIXED in Round 7 fix]
+
+> **Fix note (superseded — see follow-up below):** Removed the three `uses-permission` lines (`POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`, `USE_EXACT_ALARM`) and the `ScheduledNotificationBootReceiver` `<receiver>` block from `AndroidManifest.xml`. `INTERNET` retained (used by sync).
+>
+> **Follow-up (2026-07-07, verified on-device):** The manifest edit alone was **insufficient**. On-device verification of the built debug APK (`adb shell dumpsys package`) showed `POST_NOTIFICATIONS` (and `VIBRATE`) were *still requested* — the `flutter_local_notifications` plugin declares them in its own manifest and Gradle's manifest merger re-injected them regardless of our edit. `RECEIVE_BOOT_COMPLETED`, `USE_EXACT_ALARM`, and the boot receiver *were* correctly gone (they were app-declared, not plugin-declared). Root-cause fix: since the notification feature is fully disabled (`notification_service.dart` block-commented) and the three notification packages (`flutter_local_notifications`, `timezone`, `flutter_timezone`) had **zero live imports**, they were removed from `pubspec.yaml` entirely. Rebuilt + reinstalled APK now requests **only `android.permission.INTERNET`** — confirmed via `dumpsys`. The `pubspec.yaml` note and `notification_service.dart` re-enable checklist were updated to require re-adding the packages *and* the manifest entries when notifications are restored. **LOW-23 now fully resolved.**
+
+
+- **Severity:** Low
+- **File:** `android/app/src/main/AndroidManifest.xml:3-5, 35-41`
+- **Code:**
+  ```xml
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+  <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
+  ...
+  <receiver android:exported="false"
+      android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
+      <intent-filter>
+          <action android:name="android.intent.action.BOOT_COMPLETED"/>
+      </intent-filter>
+  </receiver>
+  ```
+- **Description:** The daily-notification feature was fully disabled on 2026-05-28 (commit `f9bfcd7`) — the entire `NotificationService` class body is block-commented, and every call site in `main.dart` is commented out (`main.dart:14, 26, 104-105, 172-173`). However, the three notification-only permissions and the `ScheduledNotificationBootReceiver` (both added by the notification commits `8d56604` / `46ccfb0`) were never removed. The app therefore still requests permissions it never exercises:
+  - **`USE_EXACT_ALARM`** is classified by Google Play as a sensitive/high-risk permission. Apps that declare it must justify it in a Play Console declaration or face rejection/removal — and here it backs no functionality at all.
+  - **`RECEIVE_BOOT_COMPLETED`** + the exported-registered (well, `exported="false"`) boot receiver mean the app is still wired to be woken at device boot for a code path that does nothing.
+  - **`POST_NOTIFICATIONS`** prompts the user for a runtime permission the app will never use.
+
+  This is unnecessary attack surface and privilege over-request (violates least-privilege / OWASP-Mobile M8 Security Misconfiguration), and a latent Play-policy liability.
+- **Recommended Fix:** Remove the three `uses-permission` lines and the `ScheduledNotificationBootReceiver` `<receiver>` block from the manifest while notifications are disabled. Re-add them in the same commit that re-enables `NotificationService` (the service header's re-enable checklist should be updated to include restoring the manifest entries). Note `INTERNET` is still required (used by sync) and must stay.
+
+#### INFO-12: Some remote string fields still not length-validated on deserialization (carried from INFO-11) [FIXED in Round 7 fix]
+
+> **Fix note:** Added an optional `maxLength` param to `_stringField` (truncates oversized values) plus `_maxSyncIdLen` (50) / `_maxTypeFieldLen` (20) constants. Applied to `deadline_type`, `schedule_type`, and every `*_sync_id` read site (`parent_sync_id`, `child_sync_id`, `task_sync_id`, `depends_on_sync_id`). Existing `name`/`url`/`repeat_interval`/`deadline` caps unchanged. This also closes the carried-forward INFO-11.
+
+
+- **Severity:** Informational
+- **File:** `firestore_service.dart:489, 540 (schedule_type)`, `firestore_service.dart:873 (deadline_type)`, `firestore_service.dart:664 (Today's-5 task_sync_id)`, sync_id parsing throughout
+- **Description:** `taskFromFirestoreDoc` correctly truncates the high-risk fields — `name` (500), `url` (2048), `repeat_interval` (50), `deadline` (10). The new starred fields added this cycle are type-safe (`is_starred` via `_boolField`, `star_order` via `_intFieldNullable`). Still unbounded, as in INFO-11:
+  - `deadline_type` (`firestore_service.dart:873`) — `_stringField(...) ?? 'due_by'`, no cap. Only ever `'due_by'`/`'hard_deadline'`; consumed by a safe-defaulting switch, so impact is nil.
+  - `schedule_type` (`firestore_service.dart:489, 540`) — `_stringField(...) ?? 'weekly'`, no cap.
+  - `task_sync_id` in Today's-5 entries (`firestore_service.dart:664`) and the various `*_sync_id` fields — expected to be ~36-char UUIDs but a corrupted/hostile document could carry an oversized value that is then stored locally as-is.
+
+  A malicious value here can't cause SQL injection (all these flow into parameterized queries) or path injection (pull-side sync_ids come from `docName.split('/').last`, so they can't contain `/`). The only realistic effect is oversized junk persisted locally from a corrupted Firestore document. Low priority; noted for pattern-completeness.
+- **Recommended Fix (defense-in-depth):** Cap `deadline_type`/`schedule_type` at ~20 chars (fall back to the default when exceeded) and `*_sync_id` at ~50 chars, mirroring the existing truncation pattern for `name`/`url`.
+
+### Positive Security Findings
+
+1. **SQL injection remains clean across the sync rewrite.** Every one of the ~28 dynamic `IN (...)` clauses in `database_helper.dart` builds its placeholder list from the *count* of elements (`ids.map((_) => '?').join(',')` or `List.filled(n, '?')`) and binds the actual values as parameters. No user/remote value is ever concatenated into SQL. No `ORDER BY`/`LIMIT`/column-name interpolation. Date strings built via `${now.year}-...` are still passed as bound `?` args.
+2. **All error paths to the UI are sanitized.** Every `catch` in `sync_service.dart` (lines 283, 352, 425, 523, 846) routes through `_userFriendlyError()` (line 873), which maps `SocketException`/`FirestoreException`/`TimeoutException`/unknown to four generic strings. Raw exception text and Firestore response bodies never reach `setSyncStatus`/the UI.
+3. **Ungated logging fully eradicated.** All 15 logging call sites across `main.dart`, `auth_service.dart`, `auth_provider.dart`, `sync_service.dart`, `firestore_service.dart`, and `todays_five_screen.dart` use the `kDebugMode`-gated `debugLog()` helper. Zero raw `debugPrint`/`print` remain.
+4. **Remote task deserialization truncates untrusted strings.** `taskFromFirestoreDoc` caps `name`/`url`/`repeat_interval`/`deadline` before constructing a `Task`, preventing oversized remote payloads from bloating local storage.
+5. **Tombstone sync is path-injection-safe.** `_softDelete` takes a *relative* doc path and prepends the resource prefix itself (the earlier full-URL bug is fixed and documented). Doc IDs are built from locally-generated UUID sync_ids; pull-side sync_ids are extracted via `split('/').last` so they cannot smuggle path separators.
+6. **Backup import validation intact and thorough.** `_validateBackup` enforces a 100 MB size cap, requires the core tables, checks `PRAGMA user_version` is within `1.._dbVersion`, and rejects any backup containing triggers or views (tamper defense). A `.bak` safety copy is written before overwrite. Import is gated behind an explicit "cannot be undone" confirmation dialog.
+7. **Secure token storage unchanged and correct.** Refresh token in `FlutterSecureStorage` with one-time migration off the legacy SharedPreferences key; only non-sensitive user info (uid, name, email, photo URL) in SharedPreferences. Concurrent token refreshes are de-duplicated via a shared `Future` (`auth_service.dart:196-201`).
+8. **Every HTTP call has a 30 s timeout** across both `firestore_service.dart` (`_get`/`_post`) and `auth_service.dart`. The new DI'd `http.Client` path preserves the timeout wrapper.
+9. **URL handling centralized and scheme-restricted.** All launches go through `launchSafeUrl()`, which enforces the http/https allowlist (`isAllowedUrl`), wraps in try-catch, and checks `context.mounted`. URL input fields cap at 2048 chars.
+10. **All user text inputs are bounded.** Task name 500, brain-dump field, URL 2048, and the picker/search fields all carry `maxLength` (the fields that appeared to lack it are `UrlTextField`, which sets its own 2048 cap).
+11. **No new deep-link / intent surface.** `main.dart` handles no incoming intents, deep links, or custom URL schemes. The debug manifest adds only `INTERNET`. No cleartext-traffic config anywhere.
+12. **No dependency churn.** `pubspec.lock` is byte-identical to Round 6 — no new packages, no version bumps to audit. Current versions (http 1.6.0, url_launcher 6.3.2, sqflite 2.4.2, flutter_secure_storage 10.0.0, google_sign_in 6.3.0, file_picker 10.3.10) carry no known applicable CVEs.
+
+### OWASP Mobile Top 10 Assessment (Round 7 Update)
+
+| Category | Status | Notes |
+|----------|--------|-------|
+| M1: Improper Credential Usage | **Pass** | Refresh token in secure storage; concurrent-refresh dedup |
+| M2: Inadequate Supply Chain Security | **Pass** | No new deps; lockfile unchanged since Round 6; no known CVEs |
+| M3: Insecure Authentication/Authorization | **Action needed** | Server-side Firestore rules are the sole per-user isolation control and remain unversioned/unverifiable in-repo (MED-8 / LOW-15) |
+| M4: Insufficient Input/Output Validation | **Pass** | All inputs bounded; high-risk remote strings truncated (minor gaps in INFO-12) |
+| M5: Insecure Communication | **Pass** | HTTPS only, 30 s timeouts on every call |
+| M6: Inadequate Privacy Controls | **Pass** | No PII beyond task names; tokens in secure storage |
+| M7: Insufficient Binary Protections | **Pass** | R8/ProGuard enabled |
+| M8: Security Misconfiguration | **Pass** | LOW-23 resolved — notification permissions + boot receiver removed; unused notification packages dropped from pubspec so the built APK requests only `INTERNET` (verified on-device) |
+| M9: Insecure Data Storage | **Pass** | Tokens in secure storage; DB sandboxed; backup import validated |
+| M10: Insufficient Cryptography | N/A | App does not use custom cryptography |
+
+### Remaining Priority Action Items
+
+| Priority | Finding | Effort | Status |
+|----------|---------|--------|--------|
+| **MEDIUM** | MED-8 / LOW-15: Version-control + test Firestore Security Rules (per-uid isolation) | Low–Medium | **Fixed in Round 7 fix** (rules version-controlled) — deploy + rules-unit-test still deferred to LOW-15 |
+| **LOW** | LOW-23: Remove notification-only permissions (`USE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`, `POST_NOTIFICATIONS`) + boot receiver while notifications are disabled | Trivial | **Fully resolved** — manifest edit + dropped unused notification packages from pubspec; built APK requests only `INTERNET` (verified on-device via `dumpsys`) |
+| **INFO** | INFO-12: Length-cap remaining remote strings (`deadline_type`, `schedule_type`, `*_sync_id`) | Trivial | **Fixed in Round 7 fix** |
