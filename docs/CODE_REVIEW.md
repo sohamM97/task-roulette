@@ -3485,6 +3485,48 @@ deferred (see below). `flutter analyze` clean; full `flutter test` green.
 
 ---
 
+## Round 11 Fix Verification (2026-07-07)
+
+Independent verify pass over the Round 11 fix commit (`d499ee5`). Each fix was
+read against the current code and checked for **root-cause** correctness (not just
+symptom), plus regression risk. `flutter analyze` **clean**; `flutter test`
+**green (+1457 passing, 1 skipped, 0 failures)**.
+
+### Important — all CONFIRMED
+
+- **I-48** ✓ — `_pushTodaysFiveState` (`sync_service.dart:97-108`) reads `prefsKeyTodaysFivePersistedAt` (edit-time) and sends it as the remote `updated_at`, matching the pull-side comparison basis (`:792`). Extraction also DRYs the three former push sites. Root cause fixed.
+- **I-49** ✓ — Firestore-only tombstone approach verified end-to-end and **sound**: `deleteTask` now `_softDelete`s (`firestore_service.dart:166-173`); `_listAllTasks` skips tombstones (`:688-697`); `pullTaskDeltasSince` reports `deleted:true` (`:749-750`); `pull()` applies delta tombstones **guarding pending local adds** via `getPendingTaskSyncIds` (`sync_service.dart:594-600`) and reconciles on full pull against the remote live set with the same guard (`:620-628`); `tasks` added to `cleanupTombstones` (`:776`). No local `deleted_at` column needed — local deletes stay hard like the other entity types. The I-50 mutex additionally removes the push/pull TOCTOU. New DB helpers (`deleteTaskBySyncId`, `getPendingTaskSyncIds`, `getAllTaskSyncIds`) present; 4 regression tests.
+- **I-50** ✓ — `_runExclusive` (`sync_service.dart:119-140`) acquires `_syncing` and drains `_pushPending`/`_pullPending` in `finally`; `initialMigration`/`replaceLocalWithCloud`/`replaceCloudWithLocal` route through it (`:230,283,352`); `mergeBoth` composes two guarded ops. Concurrent push/pull now defer. Bounded 5s wait is a pragmatic anti-deadlock backstop (bulk ops rare/user-initiated) — acceptable.
+- **I-51** ✓ — `_handleUncomplete` detects worked-on from `task.isWorkedOnToday` (DB snapshot) not just `_workedOnIds` (`todays_five_screen.dart:707-715`); external "Done today" now clears `lastWorkedAt`. `restoreTo` null-safe. Regression test added.
+- **I-52** ✓ — per-task ancestor CTE collapsed into one batched `WITH RECURSIVE target_ancestors` per 500-id chunk, keyed per target, `ORDER BY target_id, depth ASC` + first-wins keeps the nearest deadline (`database_helper.dart:1260-1285`). Semantically equivalent to the old `LIMIT 1`; no target/deadline cross-contamination.
+- **I-53** ✓ — both parts: grandchild card text routed through `childTextStyle` (`starred_screen.dart:685`) and grandchild ids included in the blocked-info fetch (`:141,154`).
+
+### Minor — CONFIRMED (with two accepted deviations)
+
+- **M-40** ✓ (counter persisted only on success, `:813`), **M-42** ✓ (`debugLog` on non-200 batch delete, `firestore_service.dart:1009`), **M-43** ✓ (session sets cleared on remove), **M-45** ✓ (`ConflictAlgorithm.ignore` + skip enqueue when 0 inserted), **M-46** ✓ (fallback `_refreshCurrentList()` when `navigateBack()` returns false), **M-47** ✓ (triage search cached into `_searchResults`, out of `build()`), **M-48** ✓ (Create reads live `_flatController` text), **M-49** ✓ (matching `removeListener`), **M-50** ✓ (dead `highlight` field removed), **M-51** ✓ (unstar/undo async+awaited, snackbar suppressed on failure), **M-52** ✓ (CLAUDE.md bumped to v23).
+- **M-41** — comment-only correction (skip-invariant reworded). Accepted.
+- **M-39** — **No-op by design**, verified sound: every real removal records a suppression tombstone (so the doc IS pushed/pulled); the only stranded case is empty-with-no-suppressions, which has nothing to propagate.
+- **M-44** — guard CONFIRMED (`_refreshing`/`_refreshPending` coalesces to exactly one trailing re-run). The `deferNotify` batching of `_workedOnTask` was **not** done — accepted as out-of-scope for a Minor.
+
+### Refactoring
+
+- **R-10** ✓ — `insertTaskWithParents` (`database_helper.dart:579-621`) inserts task + all edges + sync-queue in one transaction; `addTask` routes through it (`task_provider.dart:193-204`), multi-parent edges included, duplicate parents de-duped. Cycle check correctly omitted for a brand-new task.
+- **R-11 / R-12** — Deferred. Rationale reviewed and accepted (high-risk refactor of prod-critical sync code with mock-only coverage; picker browse-trees diverge in tap semantics/header/sort/filter — a shared widget would be thin scaffold + large config surface). Recommend as focused follow-up PRs, not merge blockers.
+
+### Still open (acceptable / deferred)
+
+- **M-32**, **M-34** — genuinely still open (rechecked); low impact, not silently fixed. I-53's grandchild-id addition to the blocked-info fetch does **not** touch M-34's separate children/grandchildren load path.
+- **I-38 / R-9** — obsolete (method removed with the manual model).
+
+**No regressions or new bugs introduced by the fixes.**
+
+**Merge verdict: This branch is ready to merge into main.** All 6 Important, all
+14 Minor, and R-10 are verified fixed at the root cause; the two deferred
+refactors (R-11/R-12) and two low-impact open items (M-32/M-34) are acceptable to
+carry forward. Analyze clean, full test suite green.
+
+---
+
 ## Round 11 — Suggested Implementation Order
 
 1. **I-49** — Task-delete tombstone/reconciliation (highest-impact: silent resurrection of deleted tasks).
@@ -3505,13 +3547,13 @@ deferred (see below). `flutter analyze` clean; full `flutter test` green.
 | ~~I-38 / R-9~~ | ~~`_transferPinToChild` bypasses TaskProvider~~ | 9 | **Obsolete** — method removed with manual Today's-5 model |
 | M-32 | N+1 in `deleteTaskAndReparentChildren` | 9 | Open — low impact |
 | M-34 | Starred N+1 for tree preview | 10 | Open — low impact |
-| ~~I-48~~ | ~~Today's-5 LWW clock-basis mismatch~~ | 11 | **[FIXED in Round 11 fix]** |
-| ~~I-49~~ | ~~Task hard-deletes don't propagate~~ | 11 | **[FIXED in Round 11 fix]** (Firestore-only tombstones) |
-| ~~I-50~~ | ~~Bulk sync ops outside `_syncing` mutex~~ | 11 | **[FIXED in Round 11 fix]** |
-| ~~I-51~~ | ~~External "Done today" undo doesn't revert DB~~ | 11 | **[FIXED in Round 11 fix]** |
-| ~~I-52~~ | ~~`getEffectiveDeadlines` N+1 on hot path~~ | 11 | **[FIXED in Round 11 fix]** |
-| ~~I-53~~ | ~~Starred grandchild DRY-rule violation~~ | 11 | **[FIXED in Round 11 fix]** |
-| ~~M-39…M-52~~ | (see Round 11 Fix section) | 11 | **All fixed** (M-39 no-op by design; M-44 partial — see notes) |
-| ~~R-10~~ | ~~`addTask` insert not atomic~~ | 11 | **[FIXED in Round 11 fix]** |
+| ~~I-48~~ | ~~Today's-5 LWW clock-basis mismatch~~ | 11 | **FIXED & VERIFIED** (Round 11 fix) |
+| ~~I-49~~ | ~~Task hard-deletes don't propagate~~ | 11 | **FIXED & VERIFIED** (Firestore-only tombstones — sound) |
+| ~~I-50~~ | ~~Bulk sync ops outside `_syncing` mutex~~ | 11 | **FIXED & VERIFIED** |
+| ~~I-51~~ | ~~External "Done today" undo doesn't revert DB~~ | 11 | **FIXED & VERIFIED** |
+| ~~I-52~~ | ~~`getEffectiveDeadlines` N+1 on hot path~~ | 11 | **FIXED & VERIFIED** |
+| ~~I-53~~ | ~~Starred grandchild DRY-rule violation~~ | 11 | **FIXED & VERIFIED** |
+| ~~M-39…M-52~~ | (see Round 11 Fix Verification) | 11 | **All resolved & verified** (M-39 no-op by design; M-41 comment; M-44 guard done, deferNotify batching deferred) |
+| ~~R-10~~ | ~~`addTask` insert not atomic~~ | 11 | **FIXED & VERIFIED** |
 | R-11 | Dedup sync query/reconcile | 11 | **Deferred** — high-risk refactor, recommend focused PR |
 | R-12 | Dedup picker browse-tree | 11 | **Deferred** — divergent per-picker behavior, low value |
