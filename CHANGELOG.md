@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.4.0 — Manual Today's 5, Starred home & sync reliability (2026-07-08)
+
+### Today's 5 is now yours to curate
+- **Fully manual Today's 5** — Today's 5 no longer auto-picks tasks. You build your five by pinning the tasks you actually want to focus on, via a quick "+" sheet with **Create new task** and **Pick existing task**.
+- **Random roulette lives on in All Tasks** — the spin/reroll pick is still there when you want the app to choose for you, just no longer forced onto Today's 5.
+- **Deadline auto-pin** — tasks due today are automatically pinned into Today's 5 so you don't miss them.
+- **Cleaner done state** — "Also done today" only appears once you have a pinned task, and the daily rollover no longer carries stale pins.
+
+### Starred is home
+- **Starred is the default tab** on open — your curated shortlist greets you first.
+- **Add from Starred** — create a task straight from the Starred page with a root-level "+", or add subtasks from a starred task's expanded view.
+- **Pin for today from Starred** — the starred subtask add flow has a "Pin for today" toggle to drop a new subtask straight into Today's 5.
+
+### Unified task picker
+- **One picker everywhere** — the two separate task pickers are merged into a single dialog used for both filing and pinning.
+- **Create from search** — search for a task that doesn't exist yet and create it on the spot, named after what you typed — filed at root or pinned into Today's 5.
+- **Tidier add dialog** — toggles fold into the actions bar when "Add multiple" isn't shown.
+
+### Sync reliability
+- **Deletions now propagate** — soft-delete tombstones mean a task deleted on one device disappears on your others.
+- **Fewer missed updates** — delta pulls now cover relationships, dependencies and schedules; a periodic full pull and cursor-skew lookback catch anything delta sync misses; short web sessions now full-pull on open.
+- **Consistent Today's 5 across devices** — last-write-wins pin sync with a central timestamp keeps your pinned five in agreement, with deadline-today always winning.
+- Fixes for reported issues: renames not syncing, Today's 5 "done" state not showing on web, and tasks unexpectedly landing at the root.
+
+### Quality
+- **1488 automated tests** — up from 1326, with new coverage for the manual Today's 5 model, the unified picker, create-from-search, and HTTP-mocked sync (tombstones, delta pulls, soft-delete).
+- **Code review Round 11** and **Security review Round 7** — all actionable findings fixed.
+
+---
+
 ## v1.3.0 — Starred tasks, deadlines & inbox triage (2026-03-31)
 
 ### Starred Tasks
