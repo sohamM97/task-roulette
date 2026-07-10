@@ -395,6 +395,12 @@ class TaskListScreenState extends State<TaskListScreen>
     // else only when not drilled in).
     final showInbox = atRoot || provider.isRoot;
     try {
+      // For the "already exists" suggestion: at root there's no parent to file
+      // under, so tapping a match opens the existing task; under a parent it
+      // links the existing task here (multi-parent DAG) instead of duplicating.
+      final allTasks = await provider.getAllTasks();
+      final parentNames = await provider.getParentNamesMap();
+      if (!mounted) return;
       await AddTaskFlow(
         initialName: initialName,
         parentId: parentId,
@@ -402,6 +408,34 @@ class TaskListScreenState extends State<TaskListScreen>
         parentIsPinned: parentIsPinned,
         showPinOption: showPin,
         showInboxOption: showInbox,
+        existingTasks: allTasks,
+        existingActionIcon:
+            parentId == null ? Icons.open_in_new : Icons.add_link,
+        existingActionLabel: parentId == null ? 'Open' : 'Add here',
+        existingParentNames: parentNames,
+        onUseExisting: (existing) async {
+          if (parentId == null) {
+            // At root: no parent to file under — just open the existing task.
+            await provider.navigateToTask(existing);
+            return;
+          }
+          if (existing.id == parentId) {
+            // Typed the parent's own name — can't parent a task to itself.
+            if (mounted) {
+              showInfoSnackBar(context, "That's the task you're already in");
+            }
+            return;
+          }
+          final ok = await provider.addParentToTask(existing.id!, parentId);
+          if (!mounted) return;
+          showInfoSnackBar(
+            context,
+            ok
+                ? 'Added "${existing.name}" here'
+                : "Couldn't add — it would create a loop",
+          );
+          if (showInbox) await _loadInboxCount();
+        },
         addSingle: ({required name, url, required isInbox, required deferNotify}) =>
             provider.addTask(name,
                 url: url,

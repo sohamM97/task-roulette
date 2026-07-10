@@ -77,11 +77,30 @@ class StarredScreenState extends State<StarredScreen>
         await DatabaseHelper().getTodaysFiveTaskAndPinIds(todayDateKey());
     if (!mounted) return;
     final showPin = todaysFive.pinnedIds.length < maxPins;
+    // For the "already exists" suggestion: tapping a match stars the existing
+    // task (so it shows on this page) instead of creating a duplicate.
+    final allTasks = await provider.getAllTasks();
+    final parentNames = await provider.getParentNamesMap();
+    if (!mounted) return;
     await AddTaskFlow(
       // Always root level on the Starred page, so the Inbox toggle is shown
       // (and defaults ON inside AddTaskDialog).
       showInboxOption: true,
       showPinOption: showPin,
+      existingTasks: allTasks,
+      existingActionIcon: Icons.star,
+      existingActionLabel: 'Star instead',
+      existingParentNames: parentNames,
+      onUseExisting: (existing) async {
+        if (existing.isStarred) {
+          if (mounted) {
+            showInfoSnackBar(context, '"${existing.name}" is already starred');
+          }
+          return;
+        }
+        await provider.updateTaskStarred(existing.id!, true);
+        if (mounted) showInfoSnackBar(context, 'Starred "${existing.name}"');
+      },
       // isStarred: true so the new task(s) actually show up on the Starred
       // page (an unstarred root/Inbox task would only appear in All Tasks).
       // atRoot: true because TaskProvider._currentParent is SHARED across tabs
@@ -1031,7 +1050,7 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
   /// All Tasks tab's drilled-in parent). Shows a "Pin for today" toggle (no
   /// Inbox toggle — subtasks aren't root-level) so a new subtask can go
   /// straight into Today's 5, mirroring the All Tasks drill-in flow.
-  Future<void> _addSubtask() {
+  Future<void> _addSubtask() async {
     final provider = context.read<TaskProvider>();
     // Hide "Pin for today" when the starred parent is itself pinned (adding a
     // subtask makes it a non-leaf, so it drops out of Today's 5 — the pinned
@@ -1039,11 +1058,36 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     // task_list_screen._runAddFlow.
     final showPin =
         !_starredTaskPinnedInTodays5 && _todays5PinnedCount < maxPins;
-    return AddTaskFlow(
+    // For the "already exists" suggestion: tapping a match links the existing
+    // task as a subtask of this starred task (multi-parent DAG) instead of
+    // creating a duplicate.
+    final allTasks = await provider.getAllTasks();
+    final parentNames = await provider.getParentNamesMap();
+    if (!mounted) return;
+    await AddTaskFlow(
       parentId: widget.task.id,
       parentName: widget.task.name,
       parentIsPinned: _starredTaskPinnedInTodays5,
       showPinOption: showPin,
+      existingTasks: allTasks,
+      existingActionIcon: Icons.add_link,
+      existingActionLabel: 'Add here',
+      existingParentNames: parentNames,
+      onUseExisting: (existing) async {
+        if (existing.id == widget.task.id) {
+          if (mounted) showInfoSnackBar(context, "That's this task");
+          return;
+        }
+        final ok =
+            await provider.addParentToTask(existing.id!, widget.task.id!);
+        if (!mounted) return;
+        if (ok) {
+          await _reloadAfterAdd();
+          if (mounted) showInfoSnackBar(context, 'Added "${existing.name}" here');
+        } else {
+          showInfoSnackBar(context, "Couldn't add — it would create a loop");
+        }
+      },
       addSingle: ({required name, url, required isInbox, required deferNotify}) =>
           provider.addTask(name,
               url: url,

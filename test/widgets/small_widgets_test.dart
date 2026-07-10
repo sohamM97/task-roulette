@@ -4,6 +4,7 @@ import 'package:task_roulette/widgets/empty_state.dart';
 import 'package:task_roulette/widgets/delete_task_dialog.dart';
 import 'package:task_roulette/widgets/add_task_dialog.dart';
 import 'package:task_roulette/widgets/brain_dump_dialog.dart';
+import 'package:task_roulette/models/task.dart';
 
 void main() {
   // ---------------------------------------------------------------------------
@@ -983,6 +984,220 @@ void main() {
       expect(textField.controller!.text, 'Carried over');
       // Line count should reflect the pre-filled text
       expect(find.text('1 task'), findsOneWidget);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // AddTaskDialog — "already exists" suggestion (duplicate detection)
+  // ---------------------------------------------------------------------------
+  // Typing a name that exactly matches (case- and whitespace-insensitive) an
+  // existing task surfaces an inline suggestion row (the existing task's name +
+  // a trailing action icon); tapping it pops UseExisting(task) so the caller can
+  // act on the existing task instead of creating a duplicate. The per-surface
+  // action is conveyed by existingActionIcon (with existingActionLabel as its
+  // tooltip/semantics, not visible text).
+  group('AddTaskDialog already-exists suggestion', () {
+    Task task(int id, String name, {bool isInbox = false}) =>
+        Task(id: id, name: name, isInbox: isInbox);
+
+    // onResult fires when the dialog pops (it can't be returned by value —
+    // the dialog is still open when this helper returns).
+    Future<void> openWith(
+      WidgetTester tester, {
+      required List<Task> existing,
+      IconData actionIcon = Icons.push_pin,
+      String actionLabel = 'Use this',
+      Map<int, List<String>> parentNames = const {},
+      ValueChanged<AddTaskResult?>? onResult,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  final result = await showDialog<AddTaskResult>(
+                    context: context,
+                    builder: (_) => AddTaskDialog(
+                      existingTasks: existing,
+                      existingActionIcon: actionIcon,
+                      existingActionLabel: actionLabel,
+                      existingParentNames: parentNames,
+                    ),
+                  );
+                  onResult?.call(result);
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('no suggestion until a matching name is typed', (tester) async {
+      await openWith(tester, existing: [task(1, 'Buy milk')]);
+      // Nothing typed yet → no suggestion (no action icon rendered).
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+
+      await tester.enterText(find.byType(TextField), 'Something else');
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+    });
+
+    testWidgets('exact match (case/whitespace-insensitive) shows suggestion',
+        (tester) async {
+      await openWith(tester,
+          existing: [task(1, 'Buy milk')],
+          actionIcon: Icons.push_pin,
+          actionLabel: 'Pin instead');
+
+      await tester.enterText(find.byType(TextField), '  buy MILK ');
+      await tester.pumpAndSettle();
+
+      // "Did you mean: <name>" and the action icon are shown; the verb lives in
+      // the icon's tooltip, not as visible text. (Name is inside a Text.rich, so
+      // assert on the rendered rich text substring.)
+      expect(find.textContaining('Did you mean:'), findsOneWidget);
+      expect(find.textContaining('Buy milk'), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      expect(find.byTooltip('Pin instead'), findsOneWidget);
+      expect(find.text('Pin instead'), findsNothing); // label is not drawn
+    });
+
+    testWidgets('shows "(under <parent>)" context to disambiguate', (tester) async {
+      await openWith(
+        tester,
+        existing: [task(1, 'Buy milk')],
+        parentNames: {
+          1: ['Groceries'],
+        },
+      );
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+
+      // Standalone caption + a match row carrying the parent hint so same-named
+      // tasks are distinguishable.
+      expect(find.text('Did you mean:'), findsOneWidget);
+      expect(find.textContaining('Buy milk (under Groceries)'), findsOneWidget);
+    });
+
+    testWidgets('multiple parents show "+N" in the context hint', (tester) async {
+      await openWith(
+        tester,
+        existing: [task(1, 'Buy milk')],
+        parentNames: {
+          1: ['Groceries', 'Weekend', 'Errands'],
+        },
+      );
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('(under Groceries +2)'), findsOneWidget);
+    });
+
+    testWidgets('inbox task with no parent shows "(under Inbox)"',
+        (tester) async {
+      await openWith(tester, existing: [task(1, 'Buy milk', isInbox: true)]);
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('(under Inbox)'), findsOneWidget);
+    });
+
+    testWidgets('plain root task shows no location hint', (tester) async {
+      await openWith(tester, existing: [task(1, 'Buy milk')]);
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+
+      // A parent-less, non-inbox task gets no "(under …)"/"(at root)" suffix.
+      expect(find.text('Did you mean:'), findsOneWidget);
+      expect(find.textContaining('Buy milk'), findsOneWidget);
+      expect(find.textContaining('(under'), findsNothing);
+      expect(find.textContaining('(at root)'), findsNothing);
+    });
+
+    testWidgets(
+        'multiple matches show a standalone "Did you mean:" caption, one row '
+        'per task with its location', (tester) async {
+      await openWith(
+        tester,
+        existing: [task(1, 'Buy milk'), task(2, 'buy milk', isInbox: true)],
+        parentNames: {
+          1: ['Groceries'],
+        },
+      );
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+
+      // Caption is a standalone row (exact Text), not folded into a match line.
+      expect(find.text('Did you mean:'), findsOneWidget);
+      // Each match shows its own location so the two are distinguishable.
+      expect(find.textContaining('(under Groceries)'), findsOneWidget);
+      expect(find.textContaining('(under Inbox)'), findsOneWidget);
+    });
+
+    testWidgets('substring (non-exact) match does NOT show suggestion',
+        (tester) async {
+      await openWith(tester, existing: [task(1, 'Buy milk for cake')]);
+
+      await tester.enterText(find.byType(TextField), 'Buy milk');
+      await tester.pumpAndSettle();
+      // Only exact-normalized matches count — a longer name that merely
+      // contains the query must not trigger the suggestion.
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+    });
+
+    testWidgets('tapping a suggestion pops UseExisting with that task',
+        (tester) async {
+      AddTaskResult? result;
+      await openWith(tester,
+          existing: [task(7, 'Buy milk')],
+          actionIcon: Icons.push_pin,
+          actionLabel: 'Pin instead',
+          onResult: (r) => result = r);
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+
+      // Tap the action icon (the name is inside a Text.rich); it's within the
+      // row's InkWell so the whole row's onTap fires.
+      await tester.tap(find.byIcon(Icons.push_pin));
+      await tester.pumpAndSettle();
+
+      expect(result, isA<UseExisting>());
+      expect((result as UseExisting).task.id, 7);
+    });
+
+    testWidgets('empty existingTasks never shows a suggestion', (tester) async {
+      await openWith(tester, existing: const []);
+
+      await tester.enterText(find.byType(TextField), 'Buy milk');
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.push_pin), findsNothing);
+    });
+
+    testWidgets('more than 3 matches shows a "+N more" line', (tester) async {
+      await openWith(tester, existing: [
+        task(1, 'Buy milk'),
+        task(2, 'buy milk'),
+        task(3, 'BUY MILK'),
+        task(4, ' Buy Milk '),
+        task(5, 'buy  milk'), // double space → NOT an exact match, excluded
+      ]);
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+
+      // 4 exact matches (the double-spaced one is excluded) → 3 shown + "1 more".
+      expect(find.text('+1 more with this name'), findsOneWidget);
     });
   });
 }

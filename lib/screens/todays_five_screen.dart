@@ -796,6 +796,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       showInfoSnackBar(context, "Today’s 5 is full — remove one first");
       return;
     }
+    final provider = context.read<TaskProvider>();
+    // For the "already exists" suggestion: tapping a match pins the existing
+    // task for today instead of creating a duplicate. Match only against LEAF
+    // tasks — Today's 5 can only hold leaves (non-leaf parents are never
+    // pinned), and the pick-existing flow filters to leaves too, so a non-leaf
+    // must not be offered as a "Pin instead" target.
+    final leafTasks = await provider.getAllLeafTasks();
+    final parentNames = await provider.getParentNamesMap();
+    if (!mounted) return;
     final result = await showDialog<AddTaskResult>(
       context: context,
       builder: (_) => AddTaskDialog(
@@ -807,12 +816,25 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         // the task (SwitchToBrainDump is dropped by the `is! SingleTask`
         // guard below).
         showAddMultiple: false,
+        existingTasks: leafTasks,
+        existingActionIcon: Icons.push_pin,
+        existingActionLabel: 'Pin instead',
+        existingParentNames: parentNames,
       ),
     );
     if (!mounted || result == null) return;
+    if (result is UseExisting) {
+      final existing = result.task;
+      if (_todaysTasks.any((t) => t.id == existing.id)) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        showInfoSnackBar(context, '"${existing.name}" is already in Today’s 5');
+      } else {
+        await _pinTaskInTodaysFive(existing.id!);
+      }
+      return;
+    }
     if (result is! SingleTask) return; // brain dump not offered for this flow
 
-    final provider = context.read<TaskProvider>();
     try {
       // deferNotify so we can pin before refreshSnapshots fires and overwrites
       // (same race fixed in task_list_screen for the All Tasks tab pin flow).

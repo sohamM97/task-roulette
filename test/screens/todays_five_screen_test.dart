@@ -1592,4 +1592,107 @@ void main() {
       expect(find.text('Nothing pinned yet'), findsOneWidget);
     });
   });
+
+  group('"already exists" suggestion → Pin instead (create-new flow)', () {
+    // The FAB → "Create new task" dialog is seeded with existingTasks so that
+    // typing a name matching an existing task surfaces the inline "did you
+    // mean" suggestion. Tapping it ("Pin instead") pops UseExisting, and the
+    // screen pins the existing task instead of creating a duplicate.
+    Future<void> settleRoute(WidgetTester tester) async {
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await pumpAsync(tester, rounds: 15);
+    }
+
+    // Opens FAB sheet → Create new task → types [name] and taps the suggestion.
+    Future<void> tapSuggestion(WidgetTester tester, String name) async {
+      await tester.tap(find.byType(FloatingActionButton));
+      await settleRoute(tester);
+      await tester.tap(find.text('Create new task'));
+      await settleRoute(tester);
+      await tester.enterText(find.byType(TextField).first, name);
+      await settleRoute(tester);
+      // "Pin instead" is the suggestion row's action-icon tooltip.
+      await tester.runAsync(() async {
+        await tester.tap(find.byTooltip('Pin instead'));
+      });
+      await settleRoute(tester);
+    }
+
+    // [Mechanism] Tapping the suggestion pins the EXISTING task into Today's 5
+    // (via _pinTaskInTodaysFive) rather than inserting a second task with the
+    // same name — the core "don't duplicate" guarantee for this surface.
+    testWidgets('pins the existing task instead of creating a duplicate',
+        (tester) async {
+      late int existingId;
+      await tester.runAsync(() async {
+        existingId = await db.insertTask(Task(name: 'Buy milk'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      expect(find.text('Nothing pinned yet'), findsOneWidget);
+
+      await tapSuggestion(tester, 'buy MILK');
+
+      // Existing task is now pinned; no duplicate created.
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.taskIds, contains(existingId));
+      expect(saved.pinnedIds, contains(existingId));
+      final all = await tester.runAsync(() => db.getAllTasks());
+      expect(all!.where((t) => t.name == 'Buy milk'), hasLength(1),
+          reason: 'no duplicate task created');
+    });
+
+    // [Edge case] When the matched task is ALREADY in Today's 5, tapping the
+    // suggestion must NOT re-pin it (which would duplicate the slot) — the
+    // screen shows the "already in Today's 5" snackbar and leaves state intact.
+    testWidgets('already-pinned match shows snackbar and does not re-add',
+        (tester) async {
+      late int existingId;
+      await tester.runAsync(() async {
+        existingId = await db.insertTask(Task(name: 'Buy milk'));
+        await seedTodaysFive(db, [existingId]);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tapSuggestion(tester, 'Buy milk');
+
+      expect(find.textContaining('already in Today'), findsOneWidget);
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      // Still exactly one slot for the task — no duplicate slot appended.
+      expect(saved!.taskIds, [existingId]);
+    });
+
+    // [Mechanism] The Today's 5 match pool is LEAF tasks only (getAllLeafTasks)
+    // — Today's 5 can only hold leaves, so a same-named NON-leaf parent must not
+    // be offered as a "Pin instead" target (pinning it would be invalid). Typing
+    // a non-leaf's name surfaces no suggestion at all.
+    testWidgets('non-leaf match is not offered as a Pin-instead suggestion',
+        (tester) async {
+      await tester.runAsync(() async {
+        // "Chores" is a non-leaf (has a child) → excluded from the leaf pool.
+        final parentId = await db.insertTask(Task(name: 'Chores'));
+        final childId = await db.insertTask(Task(name: 'Sweep floor'));
+        await db.addRelationship(parentId, childId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Open FAB sheet → Create new task → type the non-leaf's exact name.
+      await tester.tap(find.byType(FloatingActionButton));
+      await settleRoute(tester);
+      await tester.tap(find.text('Create new task'));
+      await settleRoute(tester);
+      await tester.enterText(find.byType(TextField).first, 'chores');
+      await settleRoute(tester);
+
+      // No suggestion panel: the non-leaf isn't in the leaf-only pool.
+      expect(find.byTooltip('Pin instead'), findsNothing);
+      expect(find.textContaining('Did you mean'), findsNothing);
+    });
+  });
 }
