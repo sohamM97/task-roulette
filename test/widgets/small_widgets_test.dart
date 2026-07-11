@@ -1199,7 +1199,7 @@ void main() {
       expect(find.byIcon(Icons.info_outline), findsNothing);
     });
 
-    testWidgets('more than 3 matches shows a "+N more" line in the popup',
+    testWidgets('all matches are listed in the popup (scrollable, no truncation)',
         (tester) async {
       await openWith(tester, existing: [
         task(1, 'Buy milk'),
@@ -1213,8 +1213,69 @@ void main() {
       await tester.pumpAndSettle();
       await openPopup(tester);
 
-      // 4 exact matches (the double-spaced one is excluded) → 3 shown + "1 more".
-      expect(find.text('+1 more with this name'), findsOneWidget);
+      // All 4 exact matches (the double-spaced one is excluded) are selectable
+      // rows — no "+N more" truncation label; the popup scrolls if needed.
+      expect(
+          find.byWidgetPredicate((w) => w is PopupMenuItem<Task> && w.enabled),
+          findsNWidgets(4));
+      expect(find.textContaining('more with this name'), findsNothing);
+    });
+
+    // GAP — the old design capped the list at 3 rows + a "+N more" label, so any
+    // match past the third was unreachable. With the cap removed, a large match
+    // set must render every row as a live PopupMenuItem<Task> (nothing silently
+    // truncated), AND a match beyond the old cap must still be selectable and
+    // pop UseExisting with the RIGHT task. The single-match selection test above
+    // never proved that a non-first, post-cap row is wired to its own task.
+    testWidgets(
+        'large match set: every row selectable and a post-cap match pops the '
+        'correct task', (tester) async {
+      AddTaskResult? result;
+      await openWith(
+        tester,
+        existing: [
+          task(1, 'Buy milk'),
+          task(2, 'buy milk'),
+          task(3, 'BUY MILK'),
+          task(4, 'Buy Milk'),
+          task(5, ' buy milk '),
+          task(6, 'BUY milk'), // 6th match — beyond the old 3-row cap
+        ],
+        // Give the post-cap target a unique location so its row is addressable.
+        parentNames: {
+          6: ['Costco'],
+        },
+        actionIcon: Icons.push_pin,
+        actionLabel: 'Pin instead',
+        onResult: (r) => result = r,
+      );
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+
+      // The badge carries the full count — nothing is dropped.
+      expect(find.text('6'), findsOneWidget);
+
+      await openPopup(tester);
+
+      // All 6 matches are built as live selectable rows (would have been 3 + an
+      // overflow label under the old cap).
+      expect(
+          find.byWidgetPredicate((w) => w is PopupMenuItem<Task> && w.enabled),
+          findsNWidgets(6));
+
+      // Select the 6th match (past the old cap) via its unique location hint.
+      // The popup caps at ~4 rows, so this row is below the fold — scroll it
+      // into view before tapping.
+      final target = find.textContaining('(under Costco)');
+      expect(target, findsOneWidget);
+      await tester.ensureVisible(target);
+      await tester.pumpAndSettle();
+      await tester.tap(target);
+      await tester.pumpAndSettle();
+
+      expect(result, isA<UseExisting>());
+      expect((result as UseExisting).task.id, 6);
     });
 
     // GAP — internal double-spaces are NOT normalized. `_matches` only trims and
@@ -1251,21 +1312,16 @@ void main() {
       expect(find.text('1'), findsNothing);
     });
 
-    // GAP — the "+N more" overflow row is a DISABLED PopupMenuItem (no value), so
-    // tapping it must not select anything / pop UseExisting. Guards against the
-    // overflow line accidentally becoming selectable.
-    testWidgets('tapping the "+N more" overflow row selects nothing',
+    // GAP — the "Did you mean:" caption is a DISABLED PopupMenuItem (no value),
+    // so tapping it must not select anything / pop UseExisting. Guards against
+    // the header accidentally becoming selectable.
+    testWidgets('tapping the disabled "Did you mean:" header selects nothing',
         (tester) async {
       AddTaskResult? result;
       var popped = false;
       await openWith(
         tester,
-        existing: [
-          task(1, 'Buy milk'),
-          task(2, 'buy milk'),
-          task(3, 'BUY MILK'),
-          task(4, ' Buy Milk '),
-        ],
+        existing: [task(1, 'Buy milk')],
         onResult: (r) {
           result = r;
           popped = true;
@@ -1276,7 +1332,7 @@ void main() {
       await tester.pumpAndSettle();
       await openPopup(tester);
 
-      await tester.tap(find.text('+1 more with this name'));
+      await tester.tap(find.text('Did you mean:'));
       await tester.pumpAndSettle();
 
       // The dialog did not pop (still open) and no result was produced.

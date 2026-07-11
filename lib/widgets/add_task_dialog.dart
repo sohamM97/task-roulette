@@ -142,7 +142,6 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   /// task), and the action icon; selecting one pops [UseExisting] so the caller
   /// can act on the existing task instead of creating a duplicate.
   Widget _buildMatchIndicator(ColorScheme colorScheme, List<Task> matches) {
-    const maxShown = 3;
     final muted = Theme.of(context).textTheme.bodySmall?.copyWith(
           color: colorScheme.onSurfaceVariant,
         );
@@ -155,9 +154,12 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
           ? '1 task already has this name — tap to use it'
           : '${matches.length} tasks already have this name — tap to use one',
       // Anchor the menu directly under the field so it reads as a "did you
-      // mean" dropdown without pushing any dialog content.
+      // mean" dropdown without pushing any dialog content. maxHeight caps the
+      // popup at roughly the caption + 4 match rows, deliberately landing
+      // mid-row so a 5th row peeks — a clear "scroll for more" cue when the list
+      // is longer (the in-field badge also shows the full match count).
       position: PopupMenuPosition.under,
-      constraints: const BoxConstraints(minWidth: 220, maxWidth: 340),
+      constraints: const BoxConstraints(minWidth: 220, maxWidth: 340, maxHeight: 250),
       padding: EdgeInsets.zero,
       onSelected: (t) => Navigator.pop(context, UseExisting(t)),
       itemBuilder: (context) => [
@@ -166,7 +168,8 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
           height: 30,
           child: Text('Did you mean:', style: muted),
         ),
-        for (final t in matches.take(maxShown))
+        // All matches are listed; the popup scrolls if they exceed maxHeight.
+        for (final t in matches)
           PopupMenuItem<Task>(
             value: t,
             child: Row(
@@ -191,13 +194,6 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
                 ),
               ],
             ),
-          ),
-        if (matches.length > maxShown)
-          PopupMenuItem<Task>(
-            enabled: false,
-            height: 30,
-            child: Text('+${matches.length - maxShown} more with this name',
-                style: muted),
           ),
       ],
       // The in-field badge: a highlight-tinted info icon, plus the count when
