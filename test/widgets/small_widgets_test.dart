@@ -4,6 +4,7 @@ import 'package:task_roulette/widgets/empty_state.dart';
 import 'package:task_roulette/widgets/delete_task_dialog.dart';
 import 'package:task_roulette/widgets/add_task_dialog.dart';
 import 'package:task_roulette/widgets/brain_dump_dialog.dart';
+import 'package:task_roulette/models/task.dart';
 
 void main() {
   // ---------------------------------------------------------------------------
@@ -983,6 +984,388 @@ void main() {
       expect(textField.controller!.text, 'Carried over');
       // Line count should reflect the pre-filled text
       expect(find.text('1 task'), findsOneWidget);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // AddTaskDialog — "already exists" suggestion (duplicate detection)
+  // ---------------------------------------------------------------------------
+  // Typing a name that exactly matches (case- and whitespace-insensitive) an
+  // existing task shows an in-field indicator (info_outline icon, + a count when
+  // several). Tapping it opens a popup: a "Did you mean:" header, then one row
+  // per match — the task name, a location hint, and the action icon (verb in the
+  // icon tooltip, not visible text). Selecting a row pops UseExisting(task).
+  group('AddTaskDialog already-exists suggestion', () {
+    Task task(int id, String name, {bool isInbox = false}) =>
+        Task(id: id, name: name, isInbox: isInbox);
+
+    // onResult fires when the dialog pops (it can't be returned by value —
+    // the dialog is still open when this helper returns).
+    Future<void> openWith(
+      WidgetTester tester, {
+      required List<Task> existing,
+      IconData actionIcon = Icons.push_pin,
+      String actionLabel = 'Use this',
+      Map<int, List<String>> parentNames = const {},
+      ValueChanged<AddTaskResult?>? onResult,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  final result = await showDialog<AddTaskResult>(
+                    context: context,
+                    builder: (_) => AddTaskDialog(
+                      existingTasks: existing,
+                      existingActionIcon: actionIcon,
+                      existingActionLabel: actionLabel,
+                      existingParentNames: parentNames,
+                    ),
+                  );
+                  onResult?.call(result);
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+    }
+
+    // Opens the "did you mean" popup by tapping the in-field indicator.
+    Future<void> openPopup(WidgetTester tester) async {
+      await tester.tap(find.byIcon(Icons.info_outline));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('no indicator until a matching name is typed', (tester) async {
+      await openWith(tester, existing: [task(1, 'Buy milk')]);
+      // Nothing typed yet → no indicator.
+      expect(find.byIcon(Icons.info_outline), findsNothing);
+
+      await tester.enterText(find.byType(TextField), 'Something else');
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.info_outline), findsNothing);
+    });
+
+    testWidgets(
+        'exact match (case/whitespace-insensitive) shows indicator; popup '
+        'lists the match', (tester) async {
+      await openWith(tester,
+          existing: [task(1, 'Buy milk')],
+          actionIcon: Icons.push_pin,
+          actionLabel: 'Pin instead');
+
+      await tester.enterText(find.byType(TextField), '  buy MILK ');
+      await tester.pumpAndSettle();
+
+      // Indicator shows, but the details stay in the popup (dialog not resized).
+      expect(find.byIcon(Icons.info_outline), findsOneWidget);
+      expect(find.text('Did you mean:'), findsNothing);
+
+      await openPopup(tester);
+      expect(find.text('Did you mean:'), findsOneWidget);
+      expect(find.textContaining('Buy milk'), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
+      expect(find.byTooltip('Pin instead'), findsOneWidget);
+      expect(find.text('Pin instead'), findsNothing); // label is not drawn
+    });
+
+    testWidgets('popup shows "(under Parent)" context to disambiguate',
+        (tester) async {
+      await openWith(
+        tester,
+        existing: [task(1, 'Buy milk')],
+        parentNames: {
+          1: ['Groceries'],
+        },
+      );
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+      await openPopup(tester);
+
+      expect(find.text('Did you mean:'), findsOneWidget);
+      expect(find.textContaining('Buy milk (under Groceries)'), findsOneWidget);
+    });
+
+    testWidgets('multiple parents show "+N" in the context hint', (tester) async {
+      await openWith(
+        tester,
+        existing: [task(1, 'Buy milk')],
+        parentNames: {
+          1: ['Groceries', 'Weekend', 'Errands'],
+        },
+      );
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+      await openPopup(tester);
+
+      expect(find.textContaining('(under Groceries +2)'), findsOneWidget);
+    });
+
+    testWidgets('inbox task with no parent shows "(under Inbox)"',
+        (tester) async {
+      await openWith(tester, existing: [task(1, 'Buy milk', isInbox: true)]);
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+      await openPopup(tester);
+
+      expect(find.textContaining('(under Inbox)'), findsOneWidget);
+    });
+
+    testWidgets('plain root task shows no location hint', (tester) async {
+      await openWith(tester, existing: [task(1, 'Buy milk')]);
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+      await openPopup(tester);
+
+      // A parent-less, non-inbox task gets no "(under …)"/"(at root)" suffix.
+      expect(find.text('Did you mean:'), findsOneWidget);
+      expect(find.textContaining('Buy milk'), findsOneWidget);
+      expect(find.textContaining('(under'), findsNothing);
+      expect(find.textContaining('(at root)'), findsNothing);
+    });
+
+    testWidgets(
+        'multiple matches: indicator shows the count; popup lists each with '
+        'its location', (tester) async {
+      await openWith(
+        tester,
+        existing: [task(1, 'Buy milk'), task(2, 'buy milk', isInbox: true)],
+        parentNames: {
+          1: ['Groceries'],
+        },
+      );
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+
+      // The indicator carries the match count.
+      expect(find.byIcon(Icons.info_outline), findsOneWidget);
+      expect(find.text('2'), findsOneWidget);
+
+      await openPopup(tester);
+      expect(find.text('Did you mean:'), findsOneWidget);
+      // Each match shows its own location so the two are distinguishable.
+      expect(find.textContaining('(under Groceries)'), findsOneWidget);
+      expect(find.textContaining('(under Inbox)'), findsOneWidget);
+    });
+
+    testWidgets('substring (non-exact) match shows NO indicator',
+        (tester) async {
+      await openWith(tester, existing: [task(1, 'Buy milk for cake')]);
+
+      await tester.enterText(find.byType(TextField), 'Buy milk');
+      await tester.pumpAndSettle();
+      // Only exact-normalized matches count — a longer name that merely
+      // contains the query must not trigger the indicator.
+      expect(find.byIcon(Icons.info_outline), findsNothing);
+    });
+
+    testWidgets('selecting a popup entry pops UseExisting with that task',
+        (tester) async {
+      AddTaskResult? result;
+      await openWith(tester,
+          existing: [task(7, 'Buy milk')],
+          actionIcon: Icons.push_pin,
+          actionLabel: 'Pin instead',
+          onResult: (r) => result = r);
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+      await openPopup(tester);
+
+      // Tap the match's action icon inside the popup item to select it.
+      await tester.tap(find.byIcon(Icons.push_pin));
+      await tester.pumpAndSettle();
+
+      expect(result, isA<UseExisting>());
+      expect((result as UseExisting).task.id, 7);
+    });
+
+    testWidgets('empty existingTasks never shows an indicator', (tester) async {
+      await openWith(tester, existing: const []);
+
+      await tester.enterText(find.byType(TextField), 'Buy milk');
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.info_outline), findsNothing);
+    });
+
+    testWidgets('all matches are listed in the popup (scrollable, no truncation)',
+        (tester) async {
+      await openWith(tester, existing: [
+        task(1, 'Buy milk'),
+        task(2, 'buy milk'),
+        task(3, 'BUY MILK'),
+        task(4, ' Buy Milk '),
+        task(5, 'buy  milk'), // double space → NOT an exact match, excluded
+      ]);
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+      await openPopup(tester);
+
+      // All 4 exact matches (the double-spaced one is excluded) are selectable
+      // rows — no "+N more" truncation label; the popup scrolls if needed.
+      expect(
+          find.byWidgetPredicate((w) => w is PopupMenuItem<Task> && w.enabled),
+          findsNWidgets(4));
+      expect(find.textContaining('more with this name'), findsNothing);
+    });
+
+    // GAP — the old design capped the list at 3 rows + a "+N more" label, so any
+    // match past the third was unreachable. With the cap removed, a large match
+    // set must render every row as a live PopupMenuItem<Task> (nothing silently
+    // truncated), AND a match beyond the old cap must still be selectable and
+    // pop UseExisting with the RIGHT task. The single-match selection test above
+    // never proved that a non-first, post-cap row is wired to its own task.
+    testWidgets(
+        'large match set: every row selectable and a post-cap match pops the '
+        'correct task', (tester) async {
+      AddTaskResult? result;
+      await openWith(
+        tester,
+        existing: [
+          task(1, 'Buy milk'),
+          task(2, 'buy milk'),
+          task(3, 'BUY MILK'),
+          task(4, 'Buy Milk'),
+          task(5, ' buy milk '),
+          task(6, 'BUY milk'), // 6th match — beyond the old 3-row cap
+        ],
+        // Give the post-cap target a unique location so its row is addressable.
+        parentNames: {
+          6: ['Costco'],
+        },
+        actionIcon: Icons.push_pin,
+        actionLabel: 'Pin instead',
+        onResult: (r) => result = r,
+      );
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+
+      // The badge carries the full count — nothing is dropped.
+      expect(find.text('6'), findsOneWidget);
+
+      await openPopup(tester);
+
+      // All 6 matches are built as live selectable rows (would have been 3 + an
+      // overflow label under the old cap).
+      expect(
+          find.byWidgetPredicate((w) => w is PopupMenuItem<Task> && w.enabled),
+          findsNWidgets(6));
+
+      // Select the 6th match (past the old cap) via its unique location hint.
+      // The popup caps at ~4 rows, so this row is below the fold — scroll it
+      // into view before tapping.
+      final target = find.textContaining('(under Costco)');
+      expect(target, findsOneWidget);
+      await tester.ensureVisible(target);
+      await tester.pumpAndSettle();
+      await tester.tap(target);
+      await tester.pumpAndSettle();
+
+      expect(result, isA<UseExisting>());
+      expect((result as UseExisting).task.id, 6);
+    });
+
+    // GAP — internal double-spaces are NOT normalized. `_matches` only trims and
+    // lowercases; it never collapses interior whitespace, so "Buy  milk" (two
+    // spaces) and "Buy milk" (one) are distinct names. This contract is only
+    // exercised implicitly above (as an excluded row); assert it directly, both
+    // directions.
+    testWidgets('internal double-space is not normalized', (tester) async {
+      await openWith(tester, existing: [task(1, 'Buy  milk')]); // two spaces
+
+      // Single-spaced query does NOT match the double-spaced task.
+      await tester.enterText(find.byType(TextField), 'Buy milk');
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.info_outline), findsNothing);
+
+      // Typing the exact double-spaced value (case/edge-space insensitive) DOES.
+      await tester.enterText(find.byType(TextField), '  buy  MILK ');
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.info_outline), findsOneWidget);
+    });
+
+    // GAP — the numeric count badge is gated on `matches.length > 1`. A single
+    // match must show the bare info icon with NO count digit beside it (the count
+    // only appears when several tasks share the name).
+    testWidgets('single match shows the info icon but no count badge',
+        (tester) async {
+      await openWith(tester, existing: [task(1, 'Buy milk')]);
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.info_outline), findsOneWidget);
+      // No count digit rendered for a lone match.
+      expect(find.text('1'), findsNothing);
+    });
+
+    // GAP — the "Did you mean:" caption is a DISABLED PopupMenuItem (no value),
+    // so tapping it must not select anything / pop UseExisting. Guards against
+    // the header accidentally becoming selectable.
+    testWidgets('tapping the disabled "Did you mean:" header selects nothing',
+        (tester) async {
+      AddTaskResult? result;
+      var popped = false;
+      await openWith(
+        tester,
+        existing: [task(1, 'Buy milk')],
+        onResult: (r) {
+          result = r;
+          popped = true;
+        },
+      );
+
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+      await openPopup(tester);
+
+      await tester.tap(find.text('Did you mean:'));
+      await tester.pumpAndSettle();
+
+      // The dialog did not pop (still open) and no result was produced.
+      expect(popped, isFalse);
+      expect(result, isNull);
+      expect(find.byType(AddTaskDialog), findsOneWidget);
+    });
+
+    // GAP — the in-field indicator's own tooltip (the PopupMenuButton tooltip)
+    // has a singular/plural fork on match count. Untested elsewhere.
+    testWidgets('indicator tooltip reads singular for a lone match',
+        (tester) async {
+      await openWith(tester, existing: [task(1, 'Buy milk')]);
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+      expect(
+        find.byTooltip('1 task already has this name — tap to use it'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('indicator tooltip reads plural for several matches',
+        (tester) async {
+      await openWith(
+        tester,
+        existing: [task(1, 'Buy milk'), task(2, 'buy milk')],
+      );
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.pumpAndSettle();
+      expect(
+        find.byTooltip('2 tasks already have this name — tap to use one'),
+        findsOneWidget,
+      );
     });
   });
 }

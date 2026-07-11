@@ -515,4 +515,211 @@ void main() {
       expect(roots.map((t) => t.name), contains('Root task'));
     });
   });
+
+  group('"already exists" suggestion → per-surface action (_runAddFlow)', () {
+    // The + FAB seeds AddTaskFlow with existingTasks, so typing a name that
+    // matches an existing task surfaces the inline suggestion. The action verb
+    // and onUseExisting behaviour differ by whether we're at root (Open) or
+    // drilled into a parent (Add here / link).
+
+    // Opens the + FAB add dialog, types [name], opens the in-field "did you
+    // mean" popup (info_outline indicator), then selects the match row. The
+    // action label is carried as the icon's tooltip (not visible text), so the
+    // row is located via byTooltip — unique to the suggestion popup.
+    Future<void> tapSuggestion(
+        WidgetTester tester, String name, String label) async {
+      await tester.tap(find.byIcon(Icons.add));
+      await pumpAsync(tester);
+      await tester.enterText(find.byType(TextField).first, name);
+      await pumpAsync(tester);
+      // Open the popup and settle its open animation (pumpAsync advances no fake
+      // time, leaving the menu collapsed at the anchor and unhittable), then
+      // select the (single) enabled match item. Targeting the PopupMenuItem
+      // avoids ambiguity with the drill-in view's own action icons (e.g. the
+      // "Add here" add_link icon also appears as a screen button). [label] is
+      // kept for call-site readability of which surface action is exercised.
+      await tester.tap(find.byIcon(Icons.info_outline));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(find.byWidgetPredicate(
+            (w) => w is PopupMenuItem<Task> && w.enabled));
+      });
+      await pumpAsync(tester);
+    }
+
+    // [Mechanism] At ROOT there's no parent to file under, so the action is
+    // "Open" → provider.navigateToTask(existing). The existing task is opened
+    // (becomes currentParent) and no duplicate is created.
+    testWidgets('root: Open navigates to the existing task, no duplicate',
+        (tester) async {
+      late int existingId;
+      await tester.runAsync(() async {
+        existingId = await db.insertTask(Task(name: 'Write report'));
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tapSuggestion(tester, 'write REPORT', 'Open');
+
+      expect(provider.currentParent?.id, existingId,
+          reason: 'Open navigates into the existing task');
+      final all = await tester.runAsync(() => db.getAllTasks());
+      expect(all!.where((t) => t.name == 'Write report'), hasLength(1),
+          reason: 'no duplicate created');
+    });
+
+    // [Mechanism] Drilled into a parent the action is "Add here" →
+    // addParentToTask(existing, parent): the existing task is linked as a child
+    // of the current parent (multi-parent DAG) instead of being re-created.
+    testWidgets('under a parent: Add here links the existing task as a child',
+        (tester) async {
+      late int parentId;
+      late int existingId;
+      await tester.runAsync(() async {
+        parentId = await db.insertTask(Task(name: 'My Project'));
+        existingId = await db.insertTask(Task(name: 'Shared task'));
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Drill into the parent so parentId != null (Add here branch).
+      await tester.tap(find.text('My Project'));
+      await pumpAsync(tester);
+
+      await tapSuggestion(tester, 'Shared task', 'Add here');
+
+      final children =
+          await tester.runAsync(() => db.getChildren(parentId)) ?? [];
+      expect(children.map((t) => t.id), contains(existingId),
+          reason: 'existing task linked under the drilled-in parent');
+      final all = await tester.runAsync(() => db.getAllTasks());
+      expect(all!.where((t) => t.name == 'Shared task'), hasLength(1),
+          reason: 'no duplicate created');
+    });
+
+    // [Mechanism] The "Added … here" snackbar offers Undo, which removes the
+    // link (removeParentFromTask) — the existing task is no longer a child of
+    // the parent it was just linked under.
+    testWidgets('under a parent: Add here offers Undo that removes the link',
+        (tester) async {
+      late int parentId;
+      late int existingId;
+      await tester.runAsync(() async {
+        parentId = await db.insertTask(Task(name: 'My Project'));
+        existingId = await db.insertTask(Task(name: 'Shared task'));
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('My Project'));
+      await pumpAsync(tester);
+      await tapSuggestion(tester, 'Shared task', 'Add here');
+
+      // Linked, and the Undo affordance is present.
+      var children = await tester.runAsync(() => db.getChildren(parentId)) ?? [];
+      expect(children.map((t) => t.id), contains(existingId));
+      // Settle the snackbar slide-in so the Undo action is at its final,
+      // hittable position (pumpAsync advances no fake time).
+      await tester.pumpAndSettle();
+      expect(find.text('Undo'), findsOneWidget);
+
+      await tester.tap(find.text('Undo'), warnIfMissed: false);
+      await pumpAsync(tester);
+
+      // The link is gone; the task itself still exists (only the edge removed).
+      children = await tester.runAsync(() => db.getChildren(parentId)) ?? [];
+      expect(children.map((t) => t.id), isNot(contains(existingId)));
+      final all = await tester.runAsync(() => db.getAllTasks());
+      expect(all!.where((t) => t.name == 'Shared task'), hasLength(1));
+    });
+
+    // [Edge case — Codex P2] Typing the name of a task that is ALREADY a child
+    // of the drilled-in parent must NOT wire a destructive Undo. Re-linking is a
+    // no-op (INSERT-OR-IGNORE) that would report ok, and its Undo would remove
+    // the PRE-EXISTING edge — deleting the existing child. Guard short-circuits
+    // with an "already listed here" message and leaves the edge intact.
+    testWidgets('under a parent: Add here on an existing child is a safe no-op',
+        (tester) async {
+      late int parentId;
+      late int childId;
+      await tester.runAsync(() async {
+        parentId = await db.insertTask(Task(name: 'My Project'));
+        childId = await db.insertTask(Task(name: 'Existing child'));
+        await db.addRelationship(parentId, childId);
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('My Project'));
+      await pumpAsync(tester);
+      await tapSuggestion(tester, 'Existing child', 'Add here');
+
+      // Guarded: an "already listed" message, and crucially NO Undo (which would
+      // have removed the pre-existing edge).
+      expect(find.textContaining('already listed here'), findsOneWidget);
+      expect(find.text('Undo'), findsNothing);
+      final children = await tester.runAsync(() => db.getChildren(parentId)) ?? [];
+      expect(children.map((t) => t.id), contains(childId),
+          reason: 'the pre-existing child edge is preserved');
+    });
+
+    // [Edge case] Typing the drilled-in parent's OWN name matches itself; the
+    // guard (existing.id == parentId) must refuse to self-parent and show the
+    // "that's the task you're already in" snackbar rather than link a task to
+    // itself.
+    testWidgets('under a parent: typing its own name refuses to self-parent',
+        (tester) async {
+      late int parentId;
+      await tester.runAsync(() async {
+        parentId = await db.insertTask(Task(name: 'My Project'));
+        final childId = await db.insertTask(Task(name: 'A child'));
+        await db.addRelationship(parentId, childId);
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('My Project'));
+      await pumpAsync(tester);
+
+      await tapSuggestion(tester, 'My Project', 'Add here');
+
+      expect(find.textContaining("task you"), findsOneWidget);
+      // No self-loop edge was created.
+      final parentsOfSelf =
+          await tester.runAsync(() => db.getParentIds(parentId)) ?? [];
+      expect(parentsOfSelf, isEmpty);
+    });
+
+    // [Edge case] "Add here" delegates to addParentToTask which returns false
+    // when the link would create a cycle (the existing task is an ancestor of
+    // the current parent). The screen must surface the "would create a loop"
+    // message and leave the graph unchanged.
+    testWidgets('under a parent: linking an ancestor shows the loop warning',
+        (tester) async {
+      late int grandparentId;
+      late int parentId;
+      await tester.runAsync(() async {
+        grandparentId = await db.insertTask(Task(name: 'Grandparent'));
+        parentId = await db.insertTask(Task(name: 'Parent'));
+        await db.addRelationship(grandparentId, parentId);
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Drill Grandparent → Parent.
+      await tester.tap(find.text('Grandparent'));
+      await pumpAsync(tester);
+      await tester.tap(find.text('Parent'));
+      await pumpAsync(tester);
+
+      // Adding Grandparent under Parent would form a cycle.
+      await tapSuggestion(tester, 'Grandparent', 'Add here');
+
+      expect(find.textContaining('loop'), findsOneWidget);
+      // Grandparent did NOT gain Parent as a new parent.
+      final gpParents =
+          await tester.runAsync(() => db.getParentIds(grandparentId)) ?? [];
+      expect(gpParents, isNot(contains(parentId)));
+    });
+  });
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../data/database_helper.dart';
 import '../data/todays_five_pin_helper.dart';
+import '../models/task.dart';
 import '../utils/display_utils.dart';
 import 'add_task_dialog.dart';
 import 'brain_dump_dialog.dart';
@@ -39,6 +40,11 @@ class AddTaskFlow {
     this.onProviderRefresh,
     this.onCompleted,
     this.announceBatchAdd = true,
+    this.existingTasks = const [],
+    this.existingActionIcon = Icons.arrow_forward,
+    this.existingActionLabel = 'Use this',
+    this.existingParentNames = const {},
+    this.onUseExisting,
   });
 
   /// Creates one task and returns its id. [deferNotify] mirrors
@@ -96,6 +102,29 @@ class AddTaskFlow {
   /// the confirmation.
   final bool announceBatchAdd;
 
+  /// Existing tasks the typed name is checked against for the "already exists"
+  /// suggestion (see [AddTaskDialog.existingTasks]). When a match is tapped,
+  /// [onUseExisting] is invoked instead of creating a duplicate.
+  final List<Task> existingTasks;
+
+  /// Action icon shown on each suggestion row (pin/star/link/open), forwarded
+  /// to [AddTaskDialog.existingActionIcon].
+  final IconData existingActionIcon;
+
+  /// Human label for the action, surfaced as the icon's tooltip/semantics (not
+  /// drawn as text), forwarded to [AddTaskDialog.existingActionLabel].
+  final String existingActionLabel;
+
+  /// Parent names per task id, forwarded to [AddTaskDialog.existingParentNames]
+  /// for the "(under parent)" disambiguation hint.
+  final Map<int, List<String>> existingParentNames;
+
+  /// Called when the user taps an "already exists" suggestion, with the
+  /// existing task to act on. The caller performs the surface-appropriate
+  /// action (link under parent, star, open, …). Required for the suggestion to
+  /// do anything, so callers passing [existingTasks] must also pass this.
+  final Future<void> Function(Task existing)? onUseExisting;
+
   /// Runs the full flow. Safe to abandon at any dialog (returns early).
   Future<void> run(BuildContext context) async {
     // Warn once, up front, if adding will displace a pinned parent. (Both
@@ -112,6 +141,10 @@ class AddTaskFlow {
         showPinOption: showPinOption,
         showInboxOption: showInboxOption,
         initialName: initialName,
+        existingTasks: existingTasks,
+        existingActionIcon: existingActionIcon,
+        existingActionLabel: existingActionLabel,
+        existingParentNames: existingParentNames,
       ),
     );
     if (!context.mounted || result == null) return;
@@ -120,6 +153,8 @@ class AddTaskFlow {
       await _addOne(context, result);
     } else if (result is SwitchToBrainDump) {
       await _addMany(context, result.initialText);
+    } else if (result is UseExisting) {
+      await onUseExisting?.call(result.task);
     }
   }
 

@@ -1054,4 +1054,264 @@ void main() {
       expect(names, ['Second', 'First']);
     });
   });
+
+  group('"already exists" suggestion → Star instead (screen-level add)', () {
+    // The Starred screen's + FAB seeds AddTaskFlow with existingTasks. Typing a
+    // name matching an existing task surfaces the inline suggestion; tapping it
+    // ("Star instead") stars the existing task so it shows on this page instead
+    // of creating a duplicate.
+    Future<void> tapScreenSuggestion(WidgetTester tester, String name) async {
+      await tester.tap(find.byType(FloatingActionButton));
+      await pumpAsync(tester);
+      await tester.enterText(find.byType(TextField).first, name);
+      await pumpAsync(tester);
+      // Open the in-field "did you mean" popup, then select the match by its
+      // action icon (star). pumpAndSettle completes the menu-open animation so
+      // the item is at its final hittable position (pumpAsync advances no fake
+      // time, leaving the menu collapsed at the anchor).
+      await tester.tap(find.byIcon(Icons.info_outline));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(find.byIcon(Icons.star));
+      });
+      await pumpAsync(tester);
+    }
+
+    // [Mechanism] Tapping the suggestion stars the EXISTING (unstarred) task via
+    // updateTaskStarred — it appears on the Starred page and no duplicate task
+    // is inserted.
+    testWidgets('stars the existing task instead of creating a duplicate',
+        (tester) async {
+      late int existingId;
+      await tester.runAsync(() async {
+        // A plain, unstarred root task — not on the Starred page yet.
+        existingId = await db.insertTask(Task(name: 'Groceries'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      expect(find.text('No starred tasks yet'), findsOneWidget);
+
+      await tapScreenSuggestion(tester, 'groceries');
+
+      final starred = await tester.runAsync(() => provider.getStarredTasks());
+      expect(starred!.map((t) => t.id), contains(existingId),
+          reason: 'existing task is now starred');
+      final all = await tester.runAsync(() => db.getAllTasks());
+      expect(all!.where((t) => t.name == 'Groceries'), hasLength(1),
+          reason: 'no duplicate created');
+    });
+
+    // [Mechanism] The "Starred …" snackbar offers Undo, which unstars the task
+    // (matching the long-press Unstar undo) so it drops back off the page.
+    testWidgets('Star instead offers Undo that unstars the task',
+        (tester) async {
+      late int existingId;
+      await tester.runAsync(() async {
+        existingId = await db.insertTask(Task(name: 'Groceries'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tapScreenSuggestion(tester, 'groceries');
+
+      var starred = await tester.runAsync(() => provider.getStarredTasks());
+      expect(starred!.map((t) => t.id), contains(existingId));
+      // Settle the snackbar slide-in so the Undo action is hittable.
+      await tester.pumpAndSettle();
+      expect(find.text('Undo'), findsOneWidget);
+
+      await tester.tap(find.text('Undo'), warnIfMissed: false);
+      await pumpAsync(tester);
+
+      starred = await tester.runAsync(() => provider.getStarredTasks());
+      expect(starred!.map((t) => t.id), isNot(contains(existingId)),
+          reason: 'undo unstarred the task');
+    });
+
+    // [Edge case] If the matched task is ALREADY starred, tapping the suggestion
+    // is a no-op with an "already starred" snackbar (re-starring would be
+    // meaningless / could churn star_order).
+    testWidgets('already-starred match shows snackbar and does not duplicate',
+        (tester) async {
+      await tester.runAsync(() => createStarredTask('Groceries'));
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tapScreenSuggestion(tester, 'Groceries');
+
+      expect(find.textContaining('already starred'), findsOneWidget);
+      final all = await tester.runAsync(() => db.getAllTasks());
+      expect(all!.where((t) => t.name == 'Groceries'), hasLength(1));
+      final starred = await tester.runAsync(() => provider.getStarredTasks());
+      expect(starred!.where((t) => t.name == 'Groceries'), hasLength(1));
+    });
+  });
+
+  group('"already exists" suggestion → Add here (expanded subtask add)', () {
+    // The expanded starred dialog's "Add subtask" FAB seeds AddTaskFlow with
+    // existingTasks. Typing a name matching an existing task surfaces the
+    // suggestion; tapping it ("Add here") links that task as a subtask of the
+    // starred parent (multi-parent DAG) instead of creating a duplicate.
+    Future<void> tapSubtaskSuggestion(
+        WidgetTester tester, String name) async {
+      await tester.tap(find.byTooltip('Add subtask'));
+      await pumpAsync(tester);
+      await tester.enterText(find.byType(TextField).first, name);
+      await pumpAsync(tester);
+      // Open the in-field "did you mean" popup, then select the match by its
+      // action icon (add_link). pumpAndSettle completes the menu-open animation
+      // so the item is at its final hittable position.
+      await tester.tap(find.byIcon(Icons.info_outline));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(find.byIcon(Icons.add_link));
+      });
+      await pumpAsync(tester);
+    }
+
+    // [Mechanism] "Add here" links the existing task under the starred parent
+    // via addParentToTask — the existing task gains the parent as a new parent
+    // and no duplicate is created.
+    testWidgets('links the existing task as a subtask, no duplicate',
+        (tester) async {
+      late int starredId;
+      late int existingId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Project');
+        existingId = await db.insertTask(Task(name: 'Shared task'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tapSubtaskSuggestion(tester, 'shared TASK');
+
+      final children = await tester.runAsync(() => db.getChildren(starredId));
+      expect(children!.map((t) => t.id), contains(existingId),
+          reason: 'existing task linked as a subtask');
+      final all = await tester.runAsync(() => db.getAllTasks());
+      expect(all!.where((t) => t.name == 'Shared task'), hasLength(1),
+          reason: 'no duplicate created');
+    });
+
+    // [Mechanism] The "Added … here" snackbar (rendered inside the expanded
+    // dialog via its own ScaffoldMessenger) offers Undo, which removes the
+    // subtask link (removeParentFromTask).
+    testWidgets('Add here offers Undo that removes the subtask link',
+        (tester) async {
+      late int starredId;
+      late int existingId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Project');
+        existingId = await db.insertTask(Task(name: 'Shared task'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tapSubtaskSuggestion(tester, 'shared TASK');
+
+      var children = await tester.runAsync(() => db.getChildren(starredId));
+      expect(children!.map((t) => t.id), contains(existingId));
+      // Settle the in-dialog snackbar slide-in so Undo is hittable.
+      await tester.pumpAndSettle();
+      expect(find.text('Undo'), findsOneWidget);
+
+      await tester.tap(find.text('Undo'), warnIfMissed: false);
+      await pumpAsync(tester);
+
+      children = await tester.runAsync(() => db.getChildren(starredId));
+      expect(children!.map((t) => t.id), isNot(contains(existingId)),
+          reason: 'undo removed the subtask link');
+    });
+
+    // [Edge case — Codex P2] Typing the name of a task that is ALREADY a subtask
+    // of this starred task must NOT wire a destructive Undo (re-linking is a
+    // no-op whose Undo would remove the pre-existing edge). Guard short-circuits
+    // with an "already a subtask" message and leaves the edge intact.
+    testWidgets('Add here on an existing subtask is a safe no-op',
+        (tester) async {
+      late int starredId;
+      late int existingId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Project');
+        existingId = await db.insertTask(Task(name: 'Existing sub'));
+        await db.addRelationship(starredId, existingId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tapSubtaskSuggestion(tester, 'existing SUB');
+
+      expect(find.textContaining('already a subtask'), findsOneWidget);
+      expect(find.text('Undo'), findsNothing);
+      final children = await tester.runAsync(() => db.getChildren(starredId));
+      expect(children!.map((t) => t.id), contains(existingId),
+          reason: 'the pre-existing subtask edge is preserved');
+    });
+
+    // [Edge case] Typing the starred parent's OWN name matches itself; the guard
+    // (existing.id == widget.task.id) refuses to self-parent and shows "that's
+    // this task" instead of linking the task under itself.
+    testWidgets('typing the parent\'s own name refuses to self-parent',
+        (tester) async {
+      late int starredId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Project');
+        // Give it a child so the card is a non-leaf and opens the tree.
+        final childId = await db.insertTask(Task(name: 'Existing sub'));
+        await db.addRelationship(starredId, childId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tapSubtaskSuggestion(tester, 'Project');
+
+      expect(find.textContaining("this task"), findsOneWidget);
+      // No self-loop edge created.
+      final parentsOfSelf =
+          await tester.runAsync(() => db.getParentIds(starredId)) ?? [];
+      expect(parentsOfSelf, isEmpty);
+    });
+
+    // [Edge case] "Add here" delegates to addParentToTask, which returns false
+    // when linking the existing task under the starred parent would create a
+    // cycle (the existing task is an ancestor of the starred parent). The
+    // subtask surface must surface "Couldn't add — it would create a loop" and
+    // leave the graph unchanged — mirrors the All Tasks cycle guard, which the
+    // task_list_screen suite covers, but exercises the distinct starred code
+    // path here.
+    testWidgets('linking an ancestor shows the loop warning, no edge added',
+        (tester) async {
+      late int starredId;
+      late int ancestorId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Project');
+        // Give Project a child so its card is a non-leaf and opens the tree.
+        final childId = await db.insertTask(Task(name: 'Existing sub'));
+        await db.addRelationship(starredId, childId);
+        // Project has an ancestor, so linking that ancestor as a subtask of
+        // Project would form a cycle.
+        ancestorId = await db.insertTask(Task(name: 'Ancestor'));
+        await db.addRelationship(ancestorId, starredId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tapSubtaskSuggestion(tester, 'Ancestor');
+
+      expect(find.textContaining('loop'), findsOneWidget);
+      // Ancestor did NOT gain Project as a new parent.
+      final ancestorParents =
+          await tester.runAsync(() => db.getParentIds(ancestorId)) ?? [];
+      expect(ancestorParents, isNot(contains(starredId)));
+    });
+  });
 }
