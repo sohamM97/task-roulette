@@ -1138,6 +1138,17 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
           if (mounted) showInfoSnackBar(context, "That's this task");
           return;
         }
+        // Codex P2: if the match is ALREADY a subtask of this starred task,
+        // linking is a no-op that addParentToTask still reports as ok — but the
+        // resulting Undo (removeParentFromTask) would delete the pre-existing
+        // edge and make the subtask vanish. Guard it: no link, no destructive
+        // undo.
+        final existingChildIds = await provider.getChildIds(widget.task.id!);
+        if (!mounted) return;
+        if (existingChildIds.contains(existing.id)) {
+          showInfoSnackBar(context, '"${existing.name}" is already a subtask');
+          return;
+        }
         final ok = await provider.addParentToTask(
           existing.id!,
           widget.task.id!,

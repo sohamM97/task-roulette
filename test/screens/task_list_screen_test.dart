@@ -633,6 +633,36 @@ void main() {
       expect(all!.where((t) => t.name == 'Shared task'), hasLength(1));
     });
 
+    // [Edge case — Codex P2] Typing the name of a task that is ALREADY a child
+    // of the drilled-in parent must NOT wire a destructive Undo. Re-linking is a
+    // no-op (INSERT-OR-IGNORE) that would report ok, and its Undo would remove
+    // the PRE-EXISTING edge — deleting the existing child. Guard short-circuits
+    // with an "already listed here" message and leaves the edge intact.
+    testWidgets('under a parent: Add here on an existing child is a safe no-op',
+        (tester) async {
+      late int parentId;
+      late int childId;
+      await tester.runAsync(() async {
+        parentId = await db.insertTask(Task(name: 'My Project'));
+        childId = await db.insertTask(Task(name: 'Existing child'));
+        await db.addRelationship(parentId, childId);
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('My Project'));
+      await pumpAsync(tester);
+      await tapSuggestion(tester, 'Existing child', 'Add here');
+
+      // Guarded: an "already listed" message, and crucially NO Undo (which would
+      // have removed the pre-existing edge).
+      expect(find.textContaining('already listed here'), findsOneWidget);
+      expect(find.text('Undo'), findsNothing);
+      final children = await tester.runAsync(() => db.getChildren(parentId)) ?? [];
+      expect(children.map((t) => t.id), contains(childId),
+          reason: 'the pre-existing child edge is preserved');
+    });
+
     // [Edge case] Typing the drilled-in parent's OWN name matches itself; the
     // guard (existing.id == parentId) must refuse to self-parent and show the
     // "that's the task you're already in" snackbar rather than link a task to

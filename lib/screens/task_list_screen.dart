@@ -426,6 +426,18 @@ class TaskListScreenState extends State<TaskListScreen>
             }
             return;
           }
+          // Codex P2: if the match is ALREADY a child of this parent, linking is
+          // a no-op that addParentToTask still reports as ok (addRelationship is
+          // INSERT-OR-IGNORE) — but the resulting Undo (removeParentFromTask)
+          // would delete the pre-existing edge and make the child vanish. Guard
+          // it: no link, no destructive undo.
+          final existingChildIds = await provider.getChildIds(parentId);
+          if (!mounted) return;
+          if (existingChildIds.contains(existing.id)) {
+            showInfoSnackBar(
+                context, '"${existing.name}" is already listed here');
+            return;
+          }
           final ok = await provider.addParentToTask(existing.id!, parentId);
           if (!mounted) return;
           if (ok) {

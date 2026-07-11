@@ -1226,6 +1226,33 @@ void main() {
           reason: 'undo removed the subtask link');
     });
 
+    // [Edge case — Codex P2] Typing the name of a task that is ALREADY a subtask
+    // of this starred task must NOT wire a destructive Undo (re-linking is a
+    // no-op whose Undo would remove the pre-existing edge). Guard short-circuits
+    // with an "already a subtask" message and leaves the edge intact.
+    testWidgets('Add here on an existing subtask is a safe no-op',
+        (tester) async {
+      late int starredId;
+      late int existingId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Project');
+        existingId = await db.insertTask(Task(name: 'Existing sub'));
+        await db.addRelationship(starredId, existingId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tapSubtaskSuggestion(tester, 'existing SUB');
+
+      expect(find.textContaining('already a subtask'), findsOneWidget);
+      expect(find.text('Undo'), findsNothing);
+      final children = await tester.runAsync(() => db.getChildren(starredId));
+      expect(children!.map((t) => t.id), contains(existingId),
+          reason: 'the pre-existing subtask edge is preserved');
+    });
+
     // [Edge case] Typing the starred parent's OWN name matches itself; the guard
     // (existing.id == widget.task.id) refuses to self-parent and shows "that's
     // this task" instead of linking the task under itself.
