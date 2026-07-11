@@ -1065,8 +1065,14 @@ void main() {
       await pumpAsync(tester);
       await tester.enterText(find.byType(TextField).first, name);
       await pumpAsync(tester);
+      // Open the in-field "did you mean" popup, then select the match by its
+      // action icon (star). pumpAndSettle completes the menu-open animation so
+      // the item is at its final hittable position (pumpAsync advances no fake
+      // time, leaving the menu collapsed at the anchor).
+      await tester.tap(find.byIcon(Icons.info_outline));
+      await tester.pumpAndSettle();
       await tester.runAsync(() async {
-        await tester.tap(find.byTooltip('Star instead'));
+        await tester.tap(find.byIcon(Icons.star));
       });
       await pumpAsync(tester);
     }
@@ -1093,6 +1099,32 @@ void main() {
       final all = await tester.runAsync(() => db.getAllTasks());
       expect(all!.where((t) => t.name == 'Groceries'), hasLength(1),
           reason: 'no duplicate created');
+    });
+
+    // [Mechanism] The "Starred …" snackbar offers Undo, which unstars the task
+    // (matching the long-press Unstar undo) so it drops back off the page.
+    testWidgets('Star instead offers Undo that unstars the task',
+        (tester) async {
+      late int existingId;
+      await tester.runAsync(() async {
+        existingId = await db.insertTask(Task(name: 'Groceries'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tapScreenSuggestion(tester, 'groceries');
+
+      var starred = await tester.runAsync(() => provider.getStarredTasks());
+      expect(starred!.map((t) => t.id), contains(existingId));
+      // Settle the snackbar slide-in so the Undo action is hittable.
+      await tester.pumpAndSettle();
+      expect(find.text('Undo'), findsOneWidget);
+
+      await tester.tap(find.text('Undo'), warnIfMissed: false);
+      await pumpAsync(tester);
+
+      starred = await tester.runAsync(() => provider.getStarredTasks());
+      expect(starred!.map((t) => t.id), isNot(contains(existingId)),
+          reason: 'undo unstarred the task');
     });
 
     // [Edge case] If the matched task is ALREADY starred, tapping the suggestion
@@ -1125,8 +1157,13 @@ void main() {
       await pumpAsync(tester);
       await tester.enterText(find.byType(TextField).first, name);
       await pumpAsync(tester);
+      // Open the in-field "did you mean" popup, then select the match by its
+      // action icon (add_link). pumpAndSettle completes the menu-open animation
+      // so the item is at its final hittable position.
+      await tester.tap(find.byIcon(Icons.info_outline));
+      await tester.pumpAndSettle();
       await tester.runAsync(() async {
-        await tester.tap(find.byTooltip('Add here'));
+        await tester.tap(find.byIcon(Icons.add_link));
       });
       await pumpAsync(tester);
     }
@@ -1155,6 +1192,38 @@ void main() {
       final all = await tester.runAsync(() => db.getAllTasks());
       expect(all!.where((t) => t.name == 'Shared task'), hasLength(1),
           reason: 'no duplicate created');
+    });
+
+    // [Mechanism] The "Added … here" snackbar (rendered inside the expanded
+    // dialog via its own ScaffoldMessenger) offers Undo, which removes the
+    // subtask link (removeParentFromTask).
+    testWidgets('Add here offers Undo that removes the subtask link',
+        (tester) async {
+      late int starredId;
+      late int existingId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Project');
+        existingId = await db.insertTask(Task(name: 'Shared task'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tapSubtaskSuggestion(tester, 'shared TASK');
+
+      var children = await tester.runAsync(() => db.getChildren(starredId));
+      expect(children!.map((t) => t.id), contains(existingId));
+      // Settle the in-dialog snackbar slide-in so Undo is hittable.
+      await tester.pumpAndSettle();
+      expect(find.text('Undo'), findsOneWidget);
+
+      await tester.tap(find.text('Undo'), warnIfMissed: false);
+      await pumpAsync(tester);
+
+      children = await tester.runAsync(() => db.getChildren(starredId));
+      expect(children!.map((t) => t.id), isNot(contains(existingId)),
+          reason: 'undo removed the subtask link');
     });
 
     // [Edge case] Typing the starred parent's OWN name matches itself; the guard

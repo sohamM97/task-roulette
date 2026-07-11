@@ -674,6 +674,14 @@ class TaskProvider extends ChangeNotifier {
     return true;
   }
 
+  /// Removes [parentId] as a parent of [taskId] — the exact inverse of
+  /// [addParentToTask], used to undo it. Unlike [unfileTask] this does NOT touch
+  /// the inbox flag. If it was the task's last parent, the task becomes a root.
+  Future<void> removeParentFromTask(int taskId, int parentId) async {
+    await _db.removeRelationship(parentId, taskId);
+    await _refreshAfterMutation();
+  }
+
   /// Moves a task from the current parent to a new parent.
   /// Returns false if a cycle would be created or the task is already
   /// under the target parent.

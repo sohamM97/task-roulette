@@ -134,42 +134,15 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
         .toList();
   }
 
-  /// The inline "already exists" hint, shown live as the user types a name that
-  /// already matches an existing task. Intentionally minimal (no filled panel):
-  /// a muted "Did you mean:" caption row, then one compact tappable row per
-  /// match — the task name, a muted location hint ("(under Parent)" /
-  /// "(under Inbox)" / none for a plain root task), and a trailing action icon
-  /// (pin/star/link/open). The location hint disambiguates same-named tasks.
-  /// Tapping a row pops [UseExisting] so the caller can act on the existing task
-  /// instead of creating a duplicate.
-  Widget _buildExistingSuggestion(ColorScheme colorScheme, List<Task> matches) {
+  /// The in-field "already exists" indicator: a tappable badge (info icon +
+  /// count when several) that opens a popup of matching tasks. Living in the
+  /// field's suffix keeps the dialog a fixed size — a match never grows the
+  /// dialog or shifts the buttons. Each popup entry shows the task name, a muted
+  /// location hint ("(under Parent)" / "(under Inbox)" / none for a plain root
+  /// task), and the action icon; selecting one pops [UseExisting] so the caller
+  /// can act on the existing task instead of creating a duplicate.
+  Widget _buildMatchIndicator(ColorScheme colorScheme, List<Task> matches) {
     const maxShown = 3;
-    final shown = matches.take(maxShown).toList();
-    final muted = Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: colorScheme.onSurfaceVariant,
-        );
-    // Always a standalone "Did you mean:" caption above the match row(s) — the
-    // same layout whether there's one match or several.
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('Did you mean:', style: muted),
-          for (final t in shown) _buildSuggestionRow(colorScheme, t),
-          if (matches.length > maxShown)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text('+${matches.length - maxShown} more with this name',
-                  style: muted),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSuggestionRow(ColorScheme colorScheme, Task t) {
     final muted = Theme.of(context).textTheme.bodySmall?.copyWith(
           color: colorScheme.onSurfaceVariant,
         );
@@ -177,31 +150,73 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
           color: colorScheme.onSurface,
           fontWeight: FontWeight.w600,
         );
-    return InkWell(
-      borderRadius: BorderRadius.circular(6),
-      onTap: () => Navigator.pop(context, UseExisting(t)),
+    return PopupMenuButton<Task>(
+      tooltip: matches.length == 1
+          ? '1 task already has this name — tap to use it'
+          : '${matches.length} tasks already have this name — tap to use one',
+      // Anchor the menu directly under the field so it reads as a "did you
+      // mean" dropdown without pushing any dialog content.
+      position: PopupMenuPosition.under,
+      constraints: const BoxConstraints(minWidth: 220, maxWidth: 340),
+      padding: EdgeInsets.zero,
+      onSelected: (t) => Navigator.pop(context, UseExisting(t)),
+      itemBuilder: (context) => [
+        PopupMenuItem<Task>(
+          enabled: false,
+          height: 30,
+          child: Text('Did you mean:', style: muted),
+        ),
+        for (final t in matches.take(maxShown))
+          PopupMenuItem<Task>(
+            value: t,
+            child: Row(
+              children: [
+                // Dynamic name+location must be Expanded (project rule) so
+                // ellipsis works and it never overflows the menu.
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(children: [
+                      TextSpan(text: t.name, style: nameStyle),
+                      TextSpan(text: _locationHint(t), style: muted),
+                    ]),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: widget.existingActionLabel,
+                  child: Icon(widget.existingActionIcon,
+                      size: 20, color: colorScheme.primary),
+                ),
+              ],
+            ),
+          ),
+        if (matches.length > maxShown)
+          PopupMenuItem<Task>(
+            enabled: false,
+            height: 30,
+            child: Text('+${matches.length - maxShown} more with this name',
+                style: muted),
+          ),
+      ],
+      // The in-field badge: a highlight-tinted info icon, plus the count when
+      // there are several matches, so it reads as "heads up, this already
+      // exists — tap me".
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // Dynamic name+context in a Row must be Expanded (project rule) so
-            // ellipsis works and it never overflows the dialog.
-            Expanded(
-              child: Text.rich(
-                TextSpan(children: [
-                  TextSpan(text: t.name, style: nameStyle),
-                  TextSpan(text: _locationHint(t), style: muted),
-                ]),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Tooltip(
-              message: widget.existingActionLabel,
-              child: Icon(widget.existingActionIcon,
-                  size: 20, color: colorScheme.primary),
-            ),
+            Icon(Icons.info_outline, size: 20, color: colorScheme.tertiary),
+            if (matches.length > 1) ...[
+              const SizedBox(width: 2),
+              Text('${matches.length}',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: colorScheme.tertiary,
+                        fontWeight: FontWeight.w700,
+                      )),
+            ],
           ],
         ),
       ),
@@ -304,28 +319,37 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
               hintText: 'Task name',
               border: const OutlineInputBorder(),
               counterText: '',
-              suffixIcon: IconButton(
-                icon: Icon(
-                  Icons.link,
-                  size: 20,
-                  color: _showUrl
-                      ? colorScheme.primary
-                      : colorScheme.onSurfaceVariant.withAlpha(120),
-                ),
-                tooltip: 'Add URL',
-                onPressed: () => setState(() => _showUrl = !_showUrl),
+              // A Row so the "already exists" indicator can sit beside the URL
+              // toggle. Keeping the suggestions in a popup off this indicator
+              // (rather than an inline panel) means a match never resizes the
+              // dialog or shifts the buttons.
+              suffixIcon: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_matches.isNotEmpty)
+                    _buildMatchIndicator(colorScheme, _matches),
+                  IconButton(
+                    icon: Icon(
+                      Icons.link,
+                      size: 20,
+                      color: _showUrl
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant.withAlpha(120),
+                    ),
+                    tooltip: 'Add URL',
+                    onPressed: () => setState(() => _showUrl = !_showUrl),
+                  ),
+                ],
               ),
             ),
             textCapitalization: TextCapitalization.sentences,
-            // Rebuild on every keystroke so the "already exists" suggestion
+            // Rebuild on every keystroke so the "already exists" indicator
             // updates live as the name is typed/edited.
             onChanged: widget.existingTasks.isEmpty
                 ? null
                 : (_) => setState(() {}),
             onSubmitted: (_) => _submit(),
           ),
-          if (_matches.isNotEmpty)
-            _buildExistingSuggestion(colorScheme, _matches),
           if (_showUrl) ...[
             const SizedBox(height: 8),
             UrlTextField(

@@ -26,8 +26,18 @@ class StarredScreenState extends State<StarredScreen>
   bool get wantKeepAlive => true;
 
   List<Task> _starredTasks = [];
+
   /// taskId → tree preview data
-  Map<int, ({List<({Task child, List<Task> grandchildren, int totalGrandchildren})> children, int totalChildren})> _treeData = {};
+  Map<
+    int,
+    ({
+      List<({Task child, List<Task> grandchildren, int totalGrandchildren})>
+      children,
+      int totalChildren,
+    })
+  >
+  _treeData = {};
+
   /// childId → (blockerId, blockerName) for blocked children across all starred tasks
   Map<int, ({int blockerId, String blockerName})> _blockedInfo = {};
   bool _loading = true;
@@ -73,8 +83,9 @@ class StarredScreenState extends State<StarredScreen>
     // of the day from here. (Bug: the old `taskIds.isNotEmpty` gate hid the Pin
     // toggle on a fresh day, so pinning from Starred was impossible until a task
     // was pinned some other way first.)
-    final todaysFive =
-        await DatabaseHelper().getTodaysFiveTaskAndPinIds(todayDateKey());
+    final todaysFive = await DatabaseHelper().getTodaysFiveTaskAndPinIds(
+      todayDateKey(),
+    );
     if (!mounted) return;
     final showPin = todaysFive.pinnedIds.length < maxPins;
     // For the "already exists" suggestion: tapping a match stars the existing
@@ -99,7 +110,13 @@ class StarredScreenState extends State<StarredScreen>
           return;
         }
         await provider.updateTaskStarred(existing.id!, true);
-        if (mounted) showInfoSnackBar(context, 'Starred "${existing.name}"');
+        if (mounted) {
+          showInfoSnackBar(
+            context,
+            'Starred "${existing.name}"',
+            onUndo: () => provider.updateTaskStarred(existing.id!, false),
+          );
+        }
       },
       // isStarred: true so the new task(s) actually show up on the Starred
       // page (an unstarred root/Inbox task would only appear in All Tasks).
@@ -107,15 +124,22 @@ class StarredScreenState extends State<StarredScreen>
       // — without it, a task added from Starred while the All Tasks tab is
       // drilled into "some task" gets silently nested under that task instead
       // of being a root-level starred task.
-      addSingle: ({required name, url, required isInbox, required deferNotify}) =>
-          provider.addTask(name,
-              url: url,
-              isInbox: isInbox,
-              isStarred: true,
-              atRoot: true,
-              deferNotify: deferNotify),
-      addBatch: (names, {required isInbox}) => provider.addTasksBatch(names,
-          isInbox: isInbox, isStarred: true, atRoot: true),
+      addSingle:
+          ({required name, url, required isInbox, required deferNotify}) =>
+              provider.addTask(
+                name,
+                url: url,
+                isInbox: isInbox,
+                isStarred: true,
+                atRoot: true,
+                deferNotify: deferNotify,
+              ),
+      addBatch: (names, {required isInbox}) => provider.addTasksBatch(
+        names,
+        isInbox: isInbox,
+        isStarred: true,
+        atRoot: true,
+      ),
       onProviderRefresh: provider.refreshAfterMutation,
     ).run(context);
   }
@@ -136,37 +160,45 @@ class StarredScreenState extends State<StarredScreen>
     // Load tree preview data and blocked info for all starred tasks in parallel
     final allChildIds = <int>[];
     final db = DatabaseHelper();
-    final treeEntries = await Future.wait(starred.map((task) async {
-      final children = await provider.getChildren(task.id!);
-      var allActive = children
-          .where((c) => c.completedAt == null && c.skippedAt == null)
-          .toList();
-      // Reorder by dependency chains so blocked tasks appear after their blocker
-      final siblingDeps = await db.getSiblingDependencyPairs(
-          allActive.map((c) => c.id!).toList());
-      allActive = reorderByDependencyChains(allActive, siblingDeps);
-      final shownChildren = allActive.take(3).toList();
-      allChildIds.addAll(allActive.map((c) => c.id!));
-
-      final childEntries = await Future.wait(shownChildren.map((child) async {
-        final grandchildren = await provider.getChildren(child.id!);
-        final allActiveGc = grandchildren
-            .where((g) => g.completedAt == null && g.skippedAt == null)
+    final treeEntries = await Future.wait(
+      starred.map((task) async {
+        final children = await provider.getChildren(task.id!);
+        var allActive = children
+            .where((c) => c.completedAt == null && c.skippedAt == null)
             .toList();
-        final shownGc = allActiveGc.take(2).toList();
-        // CR-fix I-53: include shown grandchild ids so _blockedInfo covers them.
-        // Was: only direct-child ids fetched, so the card couldn't dim blocked
-        // grandchildren while the expanded dialog did — a DRY-rule violation.
-        allChildIds.addAll(shownGc.map((g) => g.id!));
-        return (
-          child: child,
-          grandchildren: shownGc,
-          totalGrandchildren: allActiveGc.length,
+        // Reorder by dependency chains so blocked tasks appear after their blocker
+        final siblingDeps = await db.getSiblingDependencyPairs(
+          allActive.map((c) => c.id!).toList(),
         );
-      }));
+        allActive = reorderByDependencyChains(allActive, siblingDeps);
+        final shownChildren = allActive.take(3).toList();
+        allChildIds.addAll(allActive.map((c) => c.id!));
 
-      return MapEntry(task.id!, (children: childEntries, totalChildren: allActive.length));
-    }));
+        final childEntries = await Future.wait(
+          shownChildren.map((child) async {
+            final grandchildren = await provider.getChildren(child.id!);
+            final allActiveGc = grandchildren
+                .where((g) => g.completedAt == null && g.skippedAt == null)
+                .toList();
+            final shownGc = allActiveGc.take(2).toList();
+            // CR-fix I-53: include shown grandchild ids so _blockedInfo covers them.
+            // Was: only direct-child ids fetched, so the card couldn't dim blocked
+            // grandchildren while the expanded dialog did — a DRY-rule violation.
+            allChildIds.addAll(shownGc.map((g) => g.id!));
+            return (
+              child: child,
+              grandchildren: shownGc,
+              totalGrandchildren: allActiveGc.length,
+            );
+          }),
+        );
+
+        return MapEntry(task.id!, (
+          children: childEntries,
+          totalChildren: allActive.length,
+        ));
+      }),
+    );
     final treeData = Map.fromEntries(treeEntries);
 
     // Fetch blocked info for all children across all starred tasks
@@ -194,38 +226,51 @@ class StarredScreenState extends State<StarredScreen>
             clipBehavior: Clip.antiAlias,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
-              child: _ExpandedStarredView(
-                task: task,
-                accent: accent,
-                onUnstar: () async {
-                  Navigator.pop(dialogContext);
-                  final provider = context.read<TaskProvider>();
-                  final originalOrder = task.starOrder;
-                  // CR-fix M-51: await + try-catch. Was fire-and-forget, so a DB
-                  // write failure escaped to FlutterError.onError while the
-                  // snackbar still claimed "Unstarred" (message could lie).
-                  try {
-                    await provider.updateTaskStarred(task.id!, false);
-                  } catch (_) {
-                    return; // don't show a success snackbar if the unstar failed
-                  }
-                  if (!mounted) return;
-                  showInfoSnackBar(
-                    context,
-                    'Unstarred "${task.name}"',
-                    onUndo: () async {
-                      // list self-corrects on next provider reload if this throws
+              // In-dialog ScaffoldMessenger so the subtask add/guard snackbars
+              // render inside this dialog (foreground) rather than behind it on
+              // the page. The transparent Scaffold anchors them; the dialog
+              // already fills its 520 height, so this doesn't change its size.
+              child: ScaffoldMessenger(
+                child: Scaffold(
+                  backgroundColor: Colors.transparent,
+                  resizeToAvoidBottomInset: false,
+                  body: _ExpandedStarredView(
+                    task: task,
+                    accent: accent,
+                    onUnstar: () async {
+                      Navigator.pop(dialogContext);
+                      final provider = context.read<TaskProvider>();
+                      final originalOrder = task.starOrder;
+                      // CR-fix M-51: await + try-catch. Was fire-and-forget, so a DB
+                      // write failure escaped to FlutterError.onError while the
+                      // snackbar still claimed "Unstarred" (message could lie).
                       try {
-                        await provider.updateTaskStarred(
-                            task.id!, true, starOrder: originalOrder);
-                      } catch (_) {}
+                        await provider.updateTaskStarred(task.id!, false);
+                      } catch (_) {
+                        return; // don't show a success snackbar if the unstar failed
+                      }
+                      if (!mounted) return;
+                      showInfoSnackBar(
+                        context,
+                        'Unstarred "${task.name}"',
+                        onUndo: () async {
+                          // list self-corrects on next provider reload if this throws
+                          try {
+                            await provider.updateTaskStarred(
+                              task.id!,
+                              true,
+                              starOrder: originalOrder,
+                            );
+                          } catch (_) {}
+                        },
+                      );
                     },
-                  );
-                },
-                onNavigateToTask: (t) {
-                  Navigator.pop(dialogContext);
-                  widget.onNavigateToTask?.call(t);
-                },
+                    onNavigateToTask: (t) {
+                      Navigator.pop(dialogContext);
+                      widget.onNavigateToTask?.call(t);
+                    },
+                  ),
+                ),
               ),
             ),
           ),
@@ -278,7 +323,10 @@ class StarredScreenState extends State<StarredScreen>
               if (_starredTasks.isNotEmpty) ...[
                 const SizedBox(width: 6),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
                   decoration: BoxDecoration(
                     color: colorScheme.primaryContainer,
                     borderRadius: BorderRadius.circular(10),
@@ -313,9 +361,7 @@ class StarredScreenState extends State<StarredScreen>
           onPressed: () {
             Navigator.push(
               context,
-              MaterialPageRoute(
-                builder: (_) => const CompletedTasksScreen(),
-              ),
+              MaterialPageRoute(builder: (_) => const CompletedTasksScreen()),
             );
           },
           tooltip: 'Archive',
@@ -449,7 +495,9 @@ Color _accentColor(BuildContext context, int taskId) {
 /// matching the All Tasks view. [siblingDeps] maps dependentId → blockerId.
 @visibleForTesting
 List<Task> reorderByDependencyChains(
-    List<Task> tasks, Map<int, int> siblingDeps) {
+  List<Task> tasks,
+  Map<int, int> siblingDeps,
+) {
   if (siblingDeps.isEmpty) return tasks;
 
   // Build blocker → [dependents] map
@@ -517,7 +565,8 @@ TextStyle childTextStyle({
 
 class _StarredTaskCard extends StatelessWidget {
   final Task task;
-  final List<({Task child, List<Task> grandchildren, int totalGrandchildren})> tree;
+  final List<({Task child, List<Task> grandchildren, int totalGrandchildren})>
+  tree;
   final int totalChildren;
   final Map<int, ({int blockerId, String blockerName})> blockedInfo;
   final VoidCallback onTap;
@@ -657,7 +706,11 @@ class _StarredTaskCard extends StatelessWidget {
     );
   }
 
-  Widget _buildTreePreview(BuildContext context, Color onSurface, Color accent) {
+  Widget _buildTreePreview(
+    BuildContext context,
+    Color onSurface,
+    Color accent,
+  ) {
     final childColor = onSurface.withAlpha(191); // 75%
     final grandchildColor = onSurface.withAlpha(166); // 65%
     final metaColor = onSurface.withAlpha(128); // 50%
@@ -669,58 +722,82 @@ class _StarredTaskCard extends StatelessWidget {
       final item = tree[i];
       final isLastChild = i == tree.length - 1 && moreChildren == 0;
       final isBlocked = blockedInfo.containsKey(item.child.id);
-      rows.add(_TreeRow(
-        indent: 0,
-        lineColor: lineColor,
-        isLast: isLastChild,
-        child: Text(
-          item.child.name,
-          style: childTextStyle(
-            task: item.child,
-            baseColor: childColor,
-            accent: accent,
-            fontSize: 14,
-            isBlocked: isBlocked,
+      rows.add(
+        _TreeRow(
+          indent: 0,
+          lineColor: lineColor,
+          isLast: isLastChild,
+          child: Text(
+            item.child.name,
+            style: childTextStyle(
+              task: item.child,
+              baseColor: childColor,
+              accent: accent,
+              fontSize: 14,
+              isBlocked: isBlocked,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
         ),
-      ));
+      );
       final moreGc = item.totalGrandchildren - item.grandchildren.length;
       for (var gi = 0; gi < item.grandchildren.length; gi++) {
         final gc = item.grandchildren[gi];
         final isLastGc = gi == item.grandchildren.length - 1 && moreGc == 0;
         final gcBlocked = blockedInfo.containsKey(gc.id);
-        rows.add(_TreeRow(
-          indent: 1,
-          lineColor: lineColor,
-          isLast: isLastGc,
-          parentIsLast: isLastChild,
-          child: Text(
-            gc.name,
-            // CR-fix I-53: route grandchildren through the shared childTextStyle
-            // (priority tint + blocked dimming) instead of a hardcoded TextStyle,
-            // so card and expanded dialog treat every depth identically (DRY rule).
-            style: childTextStyle(
-              task: gc,
-              baseColor: grandchildColor,
-              accent: accent,
-              fontSize: 13,
-              isBlocked: gcBlocked,
+        rows.add(
+          _TreeRow(
+            indent: 1,
+            lineColor: lineColor,
+            isLast: isLastGc,
+            parentIsLast: isLastChild,
+            child: Text(
+              gc.name,
+              // CR-fix I-53: route grandchildren through the shared childTextStyle
+              // (priority tint + blocked dimming) instead of a hardcoded TextStyle,
+              // so card and expanded dialog treat every depth identically (DRY rule).
+              style: childTextStyle(
+                task: gc,
+                baseColor: grandchildColor,
+                accent: accent,
+                fontSize: 13,
+                isBlocked: gcBlocked,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
-        ));
+        );
       }
       if (moreGc > 0) {
-        rows.add(_TreeRow(
-          indent: 1,
+        rows.add(
+          _TreeRow(
+            indent: 1,
+            lineColor: lineColor,
+            isLast: true,
+            parentIsLast: isLastChild,
+            child: Text(
+              '+$moreGc more',
+              style: TextStyle(
+                fontSize: 12,
+                color: metaColor,
+                fontStyle: FontStyle.italic,
+                height: 1.3,
+              ),
+            ),
+          ),
+        );
+      }
+    }
+    if (moreChildren > 0) {
+      rows.add(
+        _TreeRow(
+          indent: 0,
           lineColor: lineColor,
           isLast: true,
-          parentIsLast: isLastChild,
           child: Text(
-            '+$moreGc more',
+            '+$moreChildren more',
             style: TextStyle(
               fontSize: 12,
               color: metaColor,
@@ -728,30 +805,11 @@ class _StarredTaskCard extends StatelessWidget {
               height: 1.3,
             ),
           ),
-        ));
-      }
-    }
-    if (moreChildren > 0) {
-      rows.add(_TreeRow(
-        indent: 0,
-        lineColor: lineColor,
-        isLast: true,
-        child: Text(
-          '+$moreChildren more',
-          style: TextStyle(
-            fontSize: 12,
-            color: metaColor,
-            fontStyle: FontStyle.italic,
-            height: 1.3,
-          ),
         ),
-      ));
+      );
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: rows,
-    );
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: rows);
   }
 }
 
@@ -792,10 +850,7 @@ class _TreeRow extends StatelessWidget {
             ),
           CustomPaint(
             size: const Size(_indentWidth, _rowHeight),
-            painter: _ConnectorPainter(
-              color: lineColor,
-              isLast: isLast,
-            ),
+            painter: _ConnectorPainter(color: lineColor, isLast: isLast),
           ),
           const SizedBox(width: 4),
           Expanded(child: child),
@@ -828,11 +883,7 @@ class _ConnectorPainter extends CustomPainter {
       Offset(midX, isLast ? midY : size.height),
       paint,
     );
-    canvas.drawLine(
-      Offset(midX, midY),
-      Offset(size.width, midY),
-      paint,
-    );
+    canvas.drawLine(Offset(midX, midY), Offset(size.width, midY), paint);
   }
 
   @override
@@ -856,11 +907,7 @@ class _VerticalLinePainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
-    canvas.drawLine(
-      Offset(4.0, 0),
-      Offset(4.0, size.height),
-      paint,
-    );
+    canvas.drawLine(Offset(4.0, 0), Offset(4.0, size.height), paint);
   }
 
   @override
@@ -890,12 +937,16 @@ class _ExpandedStarredView extends StatefulWidget {
 class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
   /// Flat list of visible nodes (expands/collapses lazily).
   List<_TreeNode> _flatTree = [];
+
   /// Track which task IDs are expanded.
   final Set<int> _expanded = {};
+
   /// Cache loaded children per task ID.
   final Map<int, List<_TreeNode>> _childrenCache = {};
+
   /// IDs of tasks that are blocked by a dependency.
   final Set<int> _blockedIds = {};
+
   /// True if the starred task is currently pinned in Today's 5.
   /// Drives the "this task is pinned" warning before adding a subtask
   /// (mirrors `task_list_screen.dart`'s `_warnIfPinned`).
@@ -914,7 +965,9 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
   }
 
   Future<void> _loadTodays5PinState() async {
-    final result = await DatabaseHelper().getTodaysFiveTaskAndPinIds(todayDateKey());
+    final result = await DatabaseHelper().getTodaysFiveTaskAndPinIds(
+      todayDateKey(),
+    );
     if (!mounted) return;
     setState(() {
       _starredTaskPinnedInTodays5 = result.pinnedIds.contains(widget.task.id);
@@ -935,7 +988,10 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
 
   /// Fetches direct children with their own child counts (to know leaf vs not).
   Future<List<_TreeNode>> _fetchChildren(
-      TaskProvider provider, int parentId, int depth) async {
+    TaskProvider provider,
+    int parentId,
+    int depth,
+  ) async {
     final children = await provider.getChildren(parentId);
     var active = children
         .where((c) => c.completedAt == null && c.skippedAt == null)
@@ -948,7 +1004,8 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
       db.getBlockedTaskInfo(childIds),
       db.getSiblingDependencyPairs(childIds),
     ]);
-    final blockedInfo = results[0] as Map<int, ({int blockerId, String blockerName})>;
+    final blockedInfo =
+        results[0] as Map<int, ({int blockerId, String blockerName})>;
     final siblingDeps = results[1] as Map<int, int>;
     _blockedIds.addAll(blockedInfo.keys);
     // Reorder so blocked tasks appear after their blocker, matching All Tasks view
@@ -963,12 +1020,14 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
       final activeGcCount = grandchildren
           .where((g) => g.completedAt == null && g.skippedAt == null)
           .length;
-      nodes.add(_TreeNode(
-        task: child,
-        depth: depth,
-        isLast: isLast,
-        childCount: activeGcCount,
-      ));
+      nodes.add(
+        _TreeNode(
+          task: child,
+          depth: depth,
+          isLast: isLast,
+          childCount: activeGcCount,
+        ),
+      );
     }
     return nodes;
   }
@@ -987,8 +1046,7 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     // Expand: load children if not cached
     if (!_childrenCache.containsKey(taskId)) {
       final provider = context.read<TaskProvider>();
-      final children =
-          await _fetchChildren(provider, taskId, node.depth + 1);
+      final children = await _fetchChildren(provider, taskId, node.depth + 1);
       if (!mounted) return;
       _childrenCache[taskId] = children;
     }
@@ -1012,15 +1070,17 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
       // Recompute isLast based on siblings at this level
       final isLast = i == children.length - 1;
       final node = _TreeNode(
-          task: child.task, depth: depth, isLast: isLast,
-          childCount: child.childCount);
+        task: child.task,
+        depth: depth,
+        isLast: isLast,
+        childCount: child.childCount,
+      );
       nodes.add(node);
       if (_expanded.contains(child.task.id!)) {
         _addVisibleNodes(nodes, child.task.id!, depth + 1);
       }
     }
   }
-
 
   Future<void> _confirmUnstar(BuildContext context) async {
     final confirmed = await showDialog<bool>(
@@ -1078,22 +1138,39 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
           if (mounted) showInfoSnackBar(context, "That's this task");
           return;
         }
-        final ok =
-            await provider.addParentToTask(existing.id!, widget.task.id!);
+        final ok = await provider.addParentToTask(
+          existing.id!,
+          widget.task.id!,
+        );
         if (!mounted) return;
         if (ok) {
           await _reloadAfterAdd();
-          if (mounted) showInfoSnackBar(context, 'Added "${existing.name}" here');
+          if (mounted) {
+            showInfoSnackBar(
+              context,
+              'Added "${existing.name}" here',
+              onUndo: () async {
+                await provider.removeParentFromTask(
+                  existing.id!,
+                  widget.task.id!,
+                );
+                if (mounted) await _reloadAfterAdd();
+              },
+            );
+          }
         } else {
           showInfoSnackBar(context, "Couldn't add — it would create a loop");
         }
       },
-      addSingle: ({required name, url, required isInbox, required deferNotify}) =>
-          provider.addTask(name,
-              url: url,
-              atRoot: true,
-              additionalParentIds: [widget.task.id!],
-              deferNotify: deferNotify),
+      addSingle:
+          ({required name, url, required isInbox, required deferNotify}) =>
+              provider.addTask(
+                name,
+                url: url,
+                atRoot: true,
+                additionalParentIds: [widget.task.id!],
+                deferNotify: deferNotify,
+              ),
       addBatch: (names, {required isInbox}) =>
           provider.addTasksBatch(names, parentId: widget.task.id!),
       onProviderRefresh: provider.refreshAfterMutation,
@@ -1135,66 +1212,80 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
         .toColor();
     // Pick a legible foreground — the lighter accents (yellow, etc.) need
     // dark text, the rest need light.
-    final fabForeground =
-        fabColor.computeLuminance() > 0.5 ? Colors.black87 : Colors.white;
+    final fabForeground = fabColor.computeLuminance() > 0.5
+        ? Colors.black87
+        : Colors.white;
 
     return Stack(
       children: [
         Column(
-      children: [
-        // Header
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Row(
-            children: [
-              Container(
-                width: 4,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: widget.accent,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(width: 12),
-              IconButton(
-                icon: Icon(Icons.star_rounded, size: 22, color: widget.accent),
-                onPressed: () => _confirmUnstar(context),
-                tooltip: 'Remove from starred',
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                padding: EdgeInsets.zero,
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  widget.task.name,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
-                    color: onSurface.withAlpha(230),
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Row(
+                children: [
+                  Container(
+                    width: 4,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: widget.accent,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                  const SizedBox(width: 12),
+                  IconButton(
+                    icon: Icon(
+                      Icons.star_rounded,
+                      size: 22,
+                      color: widget.accent,
+                    ),
+                    onPressed: () => _confirmUnstar(context),
+                    tooltip: 'Remove from starred',
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      widget.task.name,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                        color: onSurface.withAlpha(230),
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      Icons.open_in_new_rounded,
+                      size: 18,
+                      color: onSurface.withAlpha(100),
+                    ),
+                    onPressed: () => widget.onNavigateToTask(widget.task),
+                    tooltip: 'Go to task',
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
+                ],
               ),
-              IconButton(
-                icon: Icon(Icons.open_in_new_rounded, size: 18,
-                    color: onSurface.withAlpha(100)),
-                onPressed: () => widget.onNavigateToTask(widget.task),
-                tooltip: 'Go to task',
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                padding: EdgeInsets.zero,
-              ),
-            ],
-          ),
-        ),
-        const Divider(height: 1),
-        // Tree content
-        Expanded(
-          child: _loading
-              ? const Center(child: CircularProgressIndicator())
-              : _flatTree.isEmpty
+            ),
+            const Divider(height: 1),
+            // Tree content
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _flatTree.isEmpty
                   ? Center(
                       child: Text(
                         'No sub-tasks',
@@ -1214,7 +1305,10 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                         final taskId = node.task.id!;
                         final ancestorIsLast = <bool>[];
                         _collectAncestorFlags(
-                            index, node.depth, ancestorIsLast);
+                          index,
+                          node.depth,
+                          ancestorIsLast,
+                        );
                         final isExpanded = _expanded.contains(taskId);
 
                         final isBlocked = _blockedIds.contains(taskId);
@@ -1224,19 +1318,19 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                           accent: widget.accent,
                           isBlocked: isBlocked,
                           textColor: onSurface.withAlpha(
-                              191 - (node.depth * 15).clamp(0, 60)),
+                            191 - (node.depth * 15).clamp(0, 60),
+                          ),
                           ancestorIsLast: ancestorIsLast,
                           isExpanded: isExpanded,
-                          onNavigate: () =>
-                              widget.onNavigateToTask(node.task),
+                          onNavigate: () => widget.onNavigateToTask(node.task),
                           onToggleExpand: node.isLeaf
                               ? null
                               : () => _toggleExpand(node),
                         );
                       },
                     ),
-        ),
-      ],
+            ),
+          ],
         ),
         // Highlighted call-to-action, pinned to the dialog's bottom-right.
         Positioned(
@@ -1258,7 +1352,10 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
   /// Walk backwards through the flat tree to find whether each ancestor level
   /// is the last child at that depth (to decide whether to draw vertical lines).
   void _collectAncestorFlags(
-      int currentIndex, int currentDepth, List<bool> flags) {
+    int currentIndex,
+    int currentDepth,
+    List<bool> flags,
+  ) {
     for (var d = 0; d < currentDepth; d++) {
       // Find the node at depth d that is an ancestor of currentIndex
       bool isLast = true;
@@ -1336,10 +1433,7 @@ class _ExpandedTreeRow extends StatelessWidget {
           // Connector for this node
           CustomPaint(
             size: const Size(_indentWidth, _rowHeight),
-            painter: _ConnectorPainter(
-              color: lineColor,
-              isLast: node.isLast,
-            ),
+            painter: _ConnectorPainter(color: lineColor, isLast: node.isLast),
           ),
           const SizedBox(width: 4),
           // Tappable row: tap to expand/collapse, long-press to navigate
@@ -1349,8 +1443,7 @@ class _ExpandedTreeRow extends StatelessWidget {
               onLongPress: isLeaf ? null : onNavigate,
               borderRadius: BorderRadius.circular(8),
               child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
                 child: Row(
                   children: [
                     // Chevron for non-leaf nodes; spacer for leaves to align names
@@ -1394,7 +1487,9 @@ class _ExpandedTreeRow extends StatelessWidget {
                       Container(
                         margin: const EdgeInsets.only(left: 6),
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 1),
+                          horizontal: 6,
+                          vertical: 1,
+                        ),
                         decoration: BoxDecoration(
                           color: textColor.withAlpha(20),
                           borderRadius: BorderRadius.circular(8),

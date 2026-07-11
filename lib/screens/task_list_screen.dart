@@ -428,12 +428,18 @@ class TaskListScreenState extends State<TaskListScreen>
           }
           final ok = await provider.addParentToTask(existing.id!, parentId);
           if (!mounted) return;
-          showInfoSnackBar(
-            context,
-            ok
-                ? 'Added "${existing.name}" here'
-                : "Couldn't add — it would create a loop",
-          );
+          if (ok) {
+            showInfoSnackBar(
+              context,
+              'Added "${existing.name}" here',
+              onUndo: () async {
+                await provider.removeParentFromTask(existing.id!, parentId);
+                if (mounted && showInbox) await _loadInboxCount();
+              },
+            );
+          } else {
+            showInfoSnackBar(context, "Couldn't add — it would create a loop");
+          }
           if (showInbox) await _loadInboxCount();
         },
         addSingle: ({required name, url, required isInbox, required deferNotify}) =>

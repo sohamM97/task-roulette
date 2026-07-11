@@ -1613,9 +1613,13 @@ void main() {
       await settleRoute(tester);
       await tester.enterText(find.byType(TextField).first, name);
       await settleRoute(tester);
-      // "Pin instead" is the suggestion row's action-icon tooltip.
+      // Open the popup and settle its open animation (settleRoute advances no
+      // fake time, leaving the menu collapsed at the anchor and unhittable),
+      // then select the match by its action icon (push_pin).
+      await tester.tap(find.byIcon(Icons.info_outline));
+      await tester.pumpAndSettle();
       await tester.runAsync(() async {
-        await tester.tap(find.byTooltip('Pin instead'));
+        await tester.tap(find.byIcon(Icons.push_pin));
       });
       await settleRoute(tester);
     }
@@ -1690,9 +1694,9 @@ void main() {
       await tester.enterText(find.byType(TextField).first, 'chores');
       await settleRoute(tester);
 
-      // No suggestion panel: the non-leaf isn't in the leaf-only pool.
-      expect(find.byTooltip('Pin instead'), findsNothing);
-      expect(find.textContaining('Did you mean'), findsNothing);
+      // No indicator: the non-leaf isn't in the leaf-only pool, so nothing
+      // matches and the in-field "did you mean" badge never appears.
+      expect(find.byIcon(Icons.info_outline), findsNothing);
     });
   });
 }

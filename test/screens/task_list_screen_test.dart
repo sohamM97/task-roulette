@@ -522,17 +522,27 @@ void main() {
     // and onUseExisting behaviour differ by whether we're at root (Open) or
     // drilled into a parent (Add here / link).
 
-    // Opens the + FAB add dialog, types [name], and taps the suggestion row.
-    // The action label is carried as the icon's tooltip (not visible text), so
-    // the row is located via byTooltip — unique to the suggestion panel.
+    // Opens the + FAB add dialog, types [name], opens the in-field "did you
+    // mean" popup (info_outline indicator), then selects the match row. The
+    // action label is carried as the icon's tooltip (not visible text), so the
+    // row is located via byTooltip — unique to the suggestion popup.
     Future<void> tapSuggestion(
         WidgetTester tester, String name, String label) async {
       await tester.tap(find.byIcon(Icons.add));
       await pumpAsync(tester);
       await tester.enterText(find.byType(TextField).first, name);
       await pumpAsync(tester);
+      // Open the popup and settle its open animation (pumpAsync advances no fake
+      // time, leaving the menu collapsed at the anchor and unhittable), then
+      // select the (single) enabled match item. Targeting the PopupMenuItem
+      // avoids ambiguity with the drill-in view's own action icons (e.g. the
+      // "Add here" add_link icon also appears as a screen button). [label] is
+      // kept for call-site readability of which surface action is exercised.
+      await tester.tap(find.byIcon(Icons.info_outline));
+      await tester.pumpAndSettle();
       await tester.runAsync(() async {
-        await tester.tap(find.byTooltip(label));
+        await tester.tap(find.byWidgetPredicate(
+            (w) => w is PopupMenuItem<Task> && w.enabled));
       });
       await pumpAsync(tester);
     }
@@ -585,6 +595,42 @@ void main() {
       final all = await tester.runAsync(() => db.getAllTasks());
       expect(all!.where((t) => t.name == 'Shared task'), hasLength(1),
           reason: 'no duplicate created');
+    });
+
+    // [Mechanism] The "Added … here" snackbar offers Undo, which removes the
+    // link (removeParentFromTask) — the existing task is no longer a child of
+    // the parent it was just linked under.
+    testWidgets('under a parent: Add here offers Undo that removes the link',
+        (tester) async {
+      late int parentId;
+      late int existingId;
+      await tester.runAsync(() async {
+        parentId = await db.insertTask(Task(name: 'My Project'));
+        existingId = await db.insertTask(Task(name: 'Shared task'));
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('My Project'));
+      await pumpAsync(tester);
+      await tapSuggestion(tester, 'Shared task', 'Add here');
+
+      // Linked, and the Undo affordance is present.
+      var children = await tester.runAsync(() => db.getChildren(parentId)) ?? [];
+      expect(children.map((t) => t.id), contains(existingId));
+      // Settle the snackbar slide-in so the Undo action is at its final,
+      // hittable position (pumpAsync advances no fake time).
+      await tester.pumpAndSettle();
+      expect(find.text('Undo'), findsOneWidget);
+
+      await tester.tap(find.text('Undo'), warnIfMissed: false);
+      await pumpAsync(tester);
+
+      // The link is gone; the task itself still exists (only the edge removed).
+      children = await tester.runAsync(() => db.getChildren(parentId)) ?? [];
+      expect(children.map((t) => t.id), isNot(contains(existingId)));
+      final all = await tester.runAsync(() => db.getAllTasks());
+      expect(all!.where((t) => t.name == 'Shared task'), hasLength(1));
     });
 
     // [Edge case] Typing the drilled-in parent's OWN name matches itself; the
