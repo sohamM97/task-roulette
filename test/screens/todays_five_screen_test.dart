@@ -1351,11 +1351,15 @@ void main() {
 
       await pumpAndLoad(tester, buildTestWidget());
 
-      expect(find.text('Done deadline'), findsNothing);
+      // Not auto-pinned into Today's 5 (the point of this test)…
       expect(find.text('Nothing pinned yet'), findsOneWidget);
       final saved =
           await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
       expect(saved?.taskIds ?? const <int>[], isEmpty);
+      // …but since it was completed today it now surfaces in the "Also done
+      // today" section, which shows even when Today's 5 is empty.
+      expect(find.text('Also done today'), findsOneWidget);
+      expect(find.text('Done deadline'), findsOneWidget);
     });
 
     // [Regression] Manually re-pinning a previously-suppressed deadline task
@@ -1697,6 +1701,115 @@ void main() {
       // No indicator: the non-leaf isn't in the leaf-only pool, so nothing
       // matches and the in-field "did you mean" badge never appears.
       expect(find.byIcon(Icons.info_outline), findsNothing);
+    });
+  });
+
+  // Task 1: "Also done today" surfaces even when Today's 5 has no entries
+  // (previously it only appeared once Today's 5 was populated).
+  group('Also done today in empty state', () {
+    testWidgets('shows the section and the done task with nothing pinned',
+        (tester) async {
+      await tester.runAsync(() async {
+        final id = await db.insertTask(Task(name: 'Finished thing'));
+        await db.completeTask(id);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Empty Today's 5 prompt still shows…
+      expect(find.text('Nothing pinned yet'), findsOneWidget);
+      // …alongside the independent "Also done today" section.
+      expect(find.text('Also done today'), findsOneWidget);
+      expect(find.text('Finished thing'), findsOneWidget);
+    });
+  });
+
+  // Task 2: opt-in algorithm-driven "Suggested" section.
+  group('Suggested section', () {
+    testWidgets('is opt-in — hidden behind "Show suggestions" by default',
+        (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Candidate task'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // The affordance is present, but the candidate isn't shown until asked.
+      expect(find.text('Show suggestions'), findsOneWidget);
+      expect(find.text('Candidate task'), findsNothing);
+    });
+
+    testWidgets('expanding surfaces weighted-pick suggestions', (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Candidate task'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+
+      expect(find.text('Suggested'), findsOneWidget);
+      expect(find.text('Candidate task'), findsOneWidget);
+    });
+
+    testWidgets('does not suggest tasks already in Today\'s 5', (tester) async {
+      await tester.runAsync(() async {
+        final pinned = await db.insertTask(Task(name: 'Already pinned'));
+        await db.insertTask(Task(name: 'Free candidate'));
+        await seedTodaysFive(db, [pinned]);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+
+      // The pinned task appears once (as its Today's 5 card), never as a
+      // duplicate suggestion; the free leaf is offered.
+      expect(find.text('Already pinned'), findsOneWidget);
+      expect(find.text('Free candidate'), findsOneWidget);
+    });
+
+    testWidgets('accepting a suggestion pins it into Today\'s 5',
+        (tester) async {
+      late int id;
+      await tester.runAsync(() async {
+        id = await db.insertTask(Task(name: 'Candidate task'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+      await tester.tap(find.byIcon(Icons.add_circle));
+      await pumpAsync(tester);
+
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.taskIds, contains(id));
+      // Now a pinned Today's 5 card, not a suggestion.
+      expect(find.text('Nothing pinned yet'), findsNothing);
+    });
+
+    testWidgets('dismissing a suggestion backfills a fresh one',
+        (tester) async {
+      // 5 leaves > the 4-at-a-time target, so a dismissal has something to
+      // backfill with.
+      await tester.runAsync(() async {
+        for (var i = 0; i < 5; i++) {
+          await db.insertTask(Task(name: 'Leaf $i'));
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+
+      // 4 suggestions shown (each card has an add_circle accept button).
+      expect(find.byIcon(Icons.add_circle), findsNWidgets(4));
+
+      // Dismiss one → the backfill keeps the count at 4.
+      await tester.tap(find.byIcon(Icons.close).first);
+      await pumpAsync(tester);
+      expect(find.byIcon(Icons.add_circle), findsNWidgets(4));
     });
   });
 }
