@@ -1182,9 +1182,15 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    SizedBox(height: constraints.maxHeight * 0.26),
+                    // Hero sits ~2/3 of the way between the top and the
+                    // suggestions affordance: the spacers below/above are sized
+                    // to keep the suggestions anchored where they are while the
+                    // hero rides to that spot. Fixed offsets (not vertical
+                    // centering) so expanding "Show suggestions" never shoves
+                    // the hero around.
+                    SizedBox(height: constraints.maxHeight * 0.22),
                     _buildEmptyHero(context, colorScheme, textTheme),
-                    const SizedBox(height: 24),
+                    SizedBox(height: constraints.maxHeight * 0.10),
                     if (showSuggestions)
                       _buildSuggestionsSection(context, colorScheme, textTheme),
                     if (_otherDoneToday.isNotEmpty)
@@ -1341,17 +1347,24 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Section header: label + divider rule (distinct from the pills).
           Row(
             children: [
-              Icon(Icons.lightbulb_outline,
-                  size: 18, color: colorScheme.primary),
-              const SizedBox(width: 6),
               Text(
                 'Suggested',
-                style: textTheme.labelLarge
-                    ?.copyWith(color: colorScheme.onSurfaceVariant),
+                style: textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: colorScheme.onSurfaceVariant,
+                ),
               ),
-              const Spacer(),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Divider(
+                  color: colorScheme.outlineVariant.withAlpha(140),
+                  thickness: 1,
+                ),
+              ),
+              const SizedBox(width: 4),
               TextButton(
                 onPressed: _toggleSuggestions,
                 child: const Text('Hide'),
