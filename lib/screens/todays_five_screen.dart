@@ -1188,9 +1188,9 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                     // hero rides to that spot. Fixed offsets (not vertical
                     // centering) so expanding "Show suggestions" never shoves
                     // the hero around.
-                    SizedBox(height: constraints.maxHeight * 0.22),
+                    SizedBox(height: constraints.maxHeight * 0.24),
                     _buildEmptyHero(context, colorScheme, textTheme),
-                    SizedBox(height: constraints.maxHeight * 0.10),
+                    SizedBox(height: constraints.maxHeight * 0.20),
                     if (showSuggestions)
                       _buildSuggestionsSection(context, colorScheme, textTheme),
                     if (_otherDoneToday.isNotEmpty)
