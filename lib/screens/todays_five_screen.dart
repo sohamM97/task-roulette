@@ -419,12 +419,17 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     }
   }
 
-  /// Fetches ancestor paths for all tasks in [_todaysTasks] + [_otherDoneToday]
-  /// and caches them.
+  /// Fetches ancestor paths + deadline/schedule metadata for the tasks that
+  /// actually render them — [_todaysTasks] and [_otherDoneToday]. Suggestions
+  /// are deliberately excluded: their pills show only the name, and the one
+  /// place that needs a path (the tap sheet) loads it on demand for the single
+  /// tapped task (see [_showSuggestionOptions]). Preloading paths + deadline +
+  /// schedule for the whole eligible set — which can be large now that
+  /// suggestions show all eligible tasks — would be wasted work.
   Future<void> _loadTaskPaths() async {
     final db = DatabaseHelper();
     final paths = <int, String>{};
-    final allTasks = [..._todaysTasks, ..._otherDoneToday, ..._suggestions];
+    final allTasks = [..._todaysTasks, ..._otherDoneToday];
     for (final task in allTasks) {
       final ancestors = await db.getAncestorPath(task.id!);
       if (ancestors.isNotEmpty) {
@@ -486,22 +491,31 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     }
     final provider = context.read<TaskProvider>();
 
-    // Cheap in-memory prune: drop anything that landed in Today's 5 or was
-    // completed today (accepted here, or finished from another surface).
+    // Current eligibility, fetched once and reused for both the revalidation
+    // prune below and (if the list ends up empty) the recompute.
     final inTodaysFive = _todaysTasks.map((t) => t.id).toSet();
     final doneToday = _otherDoneToday.map((t) => t.id).toSet();
+    final allLeaves = await provider.getAllLeafTasks();
+    final leafIds = allLeaves.map((t) => t.id!).toList();
+    final leafIdSet = leafIds.toSet();
+    final blockedIds = await provider.getBlockedChildIds(leafIds);
+
+    // Prune consumed AND now-INELIGIBLE entries. Besides tasks that landed in
+    // Today's 5 / were completed today, a cached suggestion can silently become
+    // blocked or stop being a leaf (edited from All Tasks or via sync) while the
+    // strip is open. Dropping those here stops a stale pill from pinning a task
+    // the algorithm explicitly excludes.
     _suggestions.removeWhere((t) =>
         inTodaysFive.contains(t.id) ||
         doneToday.contains(t.id) ||
-        _completedIds.contains(t.id));
+        _completedIds.contains(t.id) ||
+        !leafIdSet.contains(t.id) ||
+        blockedIds.contains(t.id));
 
     // Keep the existing (stable) order; only (re)compute the full list when we
-    // have nothing to show — avoids reshuffling and per-refresh DB churn.
+    // have nothing to show — avoids reshuffling.
     if (_suggestions.isNotEmpty) return;
 
-    final allLeaves = await provider.getAllLeafTasks();
-    final leafIds = allLeaves.map((t) => t.id!).toList();
-    final blockedIds = await provider.getBlockedChildIds(leafIds);
     final scheduleBoostedIds = await provider.getScheduleBoostedLeafIds();
     final deadlineDaysMap = await provider.getDeadlineBoostedLeafData();
     final normData = await provider.getNormalizationData(leafIds);
@@ -1452,7 +1466,13 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   /// especially beside the X.) The pill also
   /// keeps its inline + (pin) and X (dismiss) quick actions; this sheet adds the
   /// explicit "Go to task" path and a mis-tap-proof menu.
-  void _showSuggestionOptions(Task task) {
+  Future<void> _showSuggestionOptions(Task task) async {
+    // Load the full ancestor path for just this task, on demand — suggestion
+    // pills don't preload paths (see [_loadTaskPaths]).
+    final ancestors = await DatabaseHelper().getAncestorPath(task.id!);
+    final path =
+        ancestors.isEmpty ? null : ancestors.map((t) => t.name).join(' › ');
+    if (!mounted) return;
     final colorScheme = Theme.of(context).colorScheme;
     showModalBottomSheet(
       context: context,
@@ -1480,12 +1500,12 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                             color: colorScheme.onSurface,
                           ),
                     ),
-                    // Full ancestor path (untruncated) — the pill only shows a
-                    // clipped immediate parent, so surface the whole location here.
-                    if (_taskPaths[task.id]?.isNotEmpty ?? false) ...[
+                    // Full ancestor path (untruncated) — the pill omits the
+                    // parent, so surface the whole location here.
+                    if (path != null) ...[
                       const SizedBox(height: 3),
                       Text(
-                        _taskPaths[task.id]!,
+                        path,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                               color: colorScheme.onSurfaceVariant,
                             ),

@@ -2072,10 +2072,12 @@ void main() {
       await tester.tap(find.text('Show suggestions'));
       await pumpAsync(tester);
 
-      // Tap the pill body (its name) → sheet with all three options. Settle the
-      // modal-sheet animation with the pump loop this file uses for bottom
-      // sheets (pumpAsync alone leaves the tiles mid-animation / off-screen).
+      // Tap the pill body (its name) → sheet with all three options. The sheet
+      // now loads the ancestor path on demand (async DB) before opening, so
+      // pumpAsync first (runAsync resolves the query + opens the sheet), then the
+      // pump loop settles the modal-sheet animation.
       await tester.tap(find.text('Candidate task'));
+      await pumpAsync(tester);
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
@@ -2101,6 +2103,7 @@ void main() {
       await tester.tap(find.text('Show suggestions'));
       await pumpAsync(tester);
       await tester.tap(find.text('Candidate task'));
+      await pumpAsync(tester);
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
@@ -2110,6 +2113,60 @@ void main() {
       final saved =
           await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
       expect(saved!.taskIds, contains(id));
+    });
+
+    // [Regression — Codex PR #78 P2] A cached suggestion that later becomes
+    // blocked (or non-leaf) must be revalidated and dropped on refresh, so a
+    // stale pill can't pin a task the algorithm explicitly excludes.
+    testWidgets('a cached suggestion that becomes blocked is pruned on refresh',
+        (tester) async {
+      late int blocker, blockable;
+      await tester.runAsync(() async {
+        blocker = await db.insertTask(Task(name: 'Blocker leaf'));
+        blockable = await db.insertTask(Task(name: 'Blockable leaf'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+      // Both eligible and shown initially.
+      expect(find.text('Blockable leaf'), findsOneWidget);
+
+      // Block it externally, then refresh — the now-blocked cached suggestion is
+      // pruned instead of remaining pinnable.
+      final state =
+          tester.state<TodaysFiveScreenState>(find.byType(TodaysFiveScreen));
+      await tester.runAsync(() => db.addDependency(blockable, blocker));
+      await tester.runAsync(() => state.refreshSnapshots());
+      await pumpAsync(tester);
+
+      expect(find.text('Blockable leaf'), findsNothing);
+      expect(find.text('Blocker leaf'), findsOneWidget);
+    });
+
+    // [Regression — Codex PR #78 P2] Pills preload no path; the options sheet
+    // loads the ancestor path on demand for the tapped task and shows it.
+    testWidgets('options sheet shows the ancestor path (loaded on demand)',
+        (tester) async {
+      await tester.runAsync(() async {
+        final parent = await db.insertTask(Task(name: 'Big Parent'));
+        final child = await db.insertTask(Task(name: 'Nested leaf'));
+        await db.addRelationship(parent, child);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+      // Child is the only leaf → the only suggestion.
+      await tester.tap(find.text('Nested leaf'));
+      await pumpAsync(tester);
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      // Sheet header surfaces the full ancestor path (non-leaf parent isn't shown
+      // anywhere else — it's excluded from suggestions).
+      expect(find.text('Big Parent'), findsOneWidget);
     });
   });
 }
