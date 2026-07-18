@@ -1162,28 +1162,47 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
   /// Sectioned body: Today's 5 → Suggested → Also done today. Each section is
   /// independent so any can be absent without leaving the layout awkward (e.g.
-  /// "Also done today" now shows even when nothing is pinned). When literally
-  /// everything is empty and suggestions aren't open, show a centered hero.
+  /// "Also done today" now shows even when nothing is pinned).
   Widget _buildBody(BuildContext context, ColorScheme colorScheme,
       TextTheme textTheme, int totalCount, int completedCount) {
     // No room to accept a suggestion once Today's 5 is full → don't offer them.
     final showSuggestions = _todaysTasks.length < maxPins;
-    final everythingEmpty = _todaysTasks.isEmpty &&
-        _otherDoneToday.isEmpty &&
-        !_suggestionsExpanded;
-    if (everythingEmpty) {
-      return _buildEmptyHero(context, colorScheme, textTheme,
-          showSuggestions: showSuggestions);
+
+    // Empty Today's 5: keep the big centered hero and let Suggested/also-done
+    // grow BELOW it. The hero is anchored at a fixed offset (not re-centered by
+    // remaining space) so expanding "Show suggestions" never shoves it upward.
+    if (_todaysTasks.isEmpty) {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(height: constraints.maxHeight * 0.26),
+                    _buildEmptyHero(context, colorScheme, textTheme),
+                    const SizedBox(height: 24),
+                    if (showSuggestions)
+                      _buildSuggestionsSection(context, colorScheme, textTheme),
+                    if (_otherDoneToday.isNotEmpty)
+                      _buildOtherDoneBox(context, textTheme, colorScheme),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      );
     }
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // --- Today's 5 ---
-        if (_todaysTasks.isEmpty)
-          _buildTodaysFiveEmpty(context, colorScheme, textTheme)
-        else
-          _buildTodaysFivePopulated(
-              context, colorScheme, textTheme, totalCount, completedCount),
+        _buildTodaysFivePopulated(
+            context, colorScheme, textTheme, totalCount, completedCount),
         // --- Suggested (opt-in, collapsed by default) ---
         if (showSuggestions)
           _buildSuggestionsSection(context, colorScheme, textTheme),
@@ -1194,69 +1213,27 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     );
   }
 
-  /// Full-height centered hero for a completely empty screen (nothing pinned,
-  /// nothing done today, suggestions not open).
-  Widget _buildEmptyHero(BuildContext context, ColorScheme colorScheme,
-      TextTheme textTheme, {required bool showSuggestions}) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.push_pin_outlined, size: 64, color: colorScheme.primary),
-            const SizedBox(height: 16),
-            Text(
-              'Nothing pinned yet',
-              style: textTheme.headlineSmall,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Tap the + button to pick a task to focus on today.',
-              style: textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            if (showSuggestions) ...[
-              const SizedBox(height: 20),
-              OutlinedButton.icon(
-                onPressed: _toggleSuggestions,
-                icon: const Icon(Icons.lightbulb_outline, size: 18),
-                label: const Text('Show suggestions'),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Compact "nothing pinned" prompt for the top of the sectioned layout (when
-  /// suggestions or done-today content sits below it).
-  Widget _buildTodaysFiveEmpty(
+  /// The big centered "Nothing pinned yet" hero shown when Today's 5 is empty.
+  Widget _buildEmptyHero(
       BuildContext context, ColorScheme colorScheme, TextTheme textTheme) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 24),
-      child: Column(
-        children: [
-          Icon(Icons.push_pin_outlined, size: 44, color: colorScheme.primary),
-          const SizedBox(height: 12),
-          Text(
-            'Nothing pinned yet',
-            style: textTheme.titleMedium,
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Tap the + button to pick a task to focus on today.',
-            style: textTheme.bodySmall
-                ?.copyWith(color: colorScheme.onSurfaceVariant),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.push_pin_outlined, size: 64, color: colorScheme.primary),
+        const SizedBox(height: 16),
+        Text(
+          'Nothing pinned yet',
+          style: textTheme.headlineSmall,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Tap the + button to pick a task to focus on today.',
+          style: textTheme.bodyMedium
+              ?.copyWith(color: colorScheme.onSurfaceVariant),
+          textAlign: TextAlign.center,
+        ),
+      ],
     );
   }
 
@@ -1334,19 +1311,28 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   /// screen; expands into up to [_suggestionTarget] weighted-pick cards.
   Widget _buildSuggestionsSection(
       BuildContext context, ColorScheme colorScheme, TextTheme textTheme) {
+    final isEmpty = _todaysTasks.isEmpty;
     if (!_suggestionsExpanded) {
+      // Under the centered empty hero, use an outlined pill button; below a
+      // populated list, a subtle text button. Left-aligned in both cases.
       return Padding(
-        padding: EdgeInsets.only(top: _todaysTasks.isEmpty ? 4 : 20),
+        padding: EdgeInsets.only(top: isEmpty ? 12 : 20),
         child: Align(
           alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: _toggleSuggestions,
-            icon: const Icon(Icons.lightbulb_outline, size: 18),
-            label: const Text('Show suggestions'),
-            style: TextButton.styleFrom(
-              foregroundColor: colorScheme.onSurfaceVariant,
-            ),
-          ),
+          child: isEmpty
+              ? OutlinedButton.icon(
+                  onPressed: _toggleSuggestions,
+                  icon: const Icon(Icons.lightbulb_outline, size: 18),
+                  label: const Text('Show suggestions'),
+                )
+              : TextButton.icon(
+                  onPressed: _toggleSuggestions,
+                  icon: const Icon(Icons.lightbulb_outline, size: 18),
+                  label: const Text('Show suggestions'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: colorScheme.onSurfaceVariant,
+                  ),
+                ),
         ),
       );
     }
@@ -1383,68 +1369,96 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
               ),
             )
           else
-            for (final task in _suggestions)
-              _buildSuggestionCard(context, task, colorScheme, textTheme),
+            // Sleek content-sized pills that auto-flow — just the task name and
+            // its immediate parent, so a handful of suggestions stay
+            // unobtrusive on the focus screen.
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final task in _suggestions)
+                  _buildSuggestionCard(context, task, colorScheme, textTheme),
+              ],
+            ),
         ],
       ),
     );
   }
 
-  /// A single suggestion card: name + hierarchy path, with "Add to Today's 5"
-  /// and "Not now" (dismiss) actions. Tapping opens the task in All Tasks.
+  /// Truncates [s] to [max] characters with an ellipsis so suggestion pills
+  /// stay compact even for long task/parent names.
+  String _truncateLabel(String s, int max) =>
+      s.length <= max ? s : '${s.substring(0, max).trimRight()}…';
+
+  /// The immediate parent name for a task (last segment of its cached ancestor
+  /// path), or null for a root-level task.
+  String? _immediateParentName(int? taskId) {
+    final path = _taskPaths[taskId];
+    if (path == null || path.isEmpty) return null;
+    final segments = path.split(' › ');
+    return segments.isEmpty ? null : segments.last;
+  }
+
+  /// A single compact suggestion pill (content-sized, flows in a [Wrap]):
+  /// lightbulb + truncated task name + "· parent", with "Add to Today's 5"
+  /// (`add_circle`) and "Not now" (`close`) actions. Tapping the pill body
+  /// opens the task in All Tasks.
   Widget _buildSuggestionCard(BuildContext context, Task task,
       ColorScheme colorScheme, TextTheme textTheme) {
-    final path = _taskPaths[task.id];
-    return Card(
+    final parent = _immediateParentName(task.id);
+    return Material(
       key: ValueKey('suggestion_${task.id}'),
       color: colorScheme.surfaceContainerHigh,
-      elevation: 0,
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      shape: StadiumBorder(
         side: BorderSide(color: colorScheme.onSurface.withAlpha(20)),
       ),
-      child: ListTile(
-        leading: Icon(Icons.lightbulb_outline,
-            color: colorScheme.primary.withAlpha(180)),
-        title: Text(
-          task.name,
-          style: textTheme.bodyLarge,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: path != null
-            ? Text(
-                _shortenPath(path),
-                style: textTheme.bodySmall
-                    ?.copyWith(color: colorScheme.onSurfaceVariant),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              )
-            : null,
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.close, size: 18),
-              onPressed: () => _dismissSuggestion(task),
-              tooltip: 'Not now',
-              visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            ),
-            IconButton(
-              icon: const Icon(Icons.add_circle, size: 24),
-              color: colorScheme.primary,
-              onPressed: () => _acceptSuggestion(task),
-              tooltip: "Add to Today’s 5",
-              visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            ),
-          ],
-        ),
+      child: InkWell(
         onTap: widget.onNavigateToTask != null
             ? () => widget.onNavigateToTask!(task)
             : null,
+        child: Padding(
+          padding: const EdgeInsets.only(left: 14, right: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.lightbulb_outline,
+                  size: 18, color: colorScheme.primary.withAlpha(200)),
+              const SizedBox(width: 8),
+              Text(
+                _truncateLabel(task.name, 24),
+                style: textTheme.bodyMedium,
+              ),
+              if (parent != null) ...[
+                const SizedBox(width: 5),
+                Text(
+                  '· ${_truncateLabel(parent, 16)}',
+                  style: textTheme.bodySmall
+                      ?.copyWith(color: colorScheme.onSurfaceVariant),
+                ),
+              ],
+              const SizedBox(width: 4),
+              IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                onPressed: () => _dismissSuggestion(task),
+                tooltip: 'Not now',
+                color: colorScheme.onSurfaceVariant,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              ),
+              IconButton(
+                icon: const Icon(Icons.add_circle, size: 24),
+                onPressed: () => _acceptSuggestion(task),
+                tooltip: "Add to Today’s 5",
+                color: colorScheme.primary,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
