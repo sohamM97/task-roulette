@@ -1722,6 +1722,31 @@ void main() {
       expect(find.text('Also done today'), findsOneWidget);
       expect(find.text('Finished thing'), findsOneWidget);
     });
+
+    // [Regression] The branch replaced the fit-one-row + tap-to-expand collapse
+    // (`_chipsOverflow`/`_otherDoneExpanded`) with a single sideways-scrolling
+    // strip that builds EVERY chip. With many done tasks all names must be in
+    // the tree (a Row builds all children eagerly inside the horizontal scroll),
+    // and the old expand/collapse chevrons must be gone.
+    testWidgets('renders every done chip regardless of count (no one-row '
+        'collapse)', (tester) async {
+      await tester.runAsync(() async {
+        for (var i = 0; i < 8; i++) {
+          final id = await db.insertTask(Task(name: 'Done $i'));
+          await db.completeTask(id);
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Also done today'), findsOneWidget);
+      for (var i = 0; i < 8; i++) {
+        expect(find.text('Done $i'), findsOneWidget);
+      }
+      // The old expand/collapse affordance is gone.
+      expect(find.byIcon(Icons.expand_more), findsNothing);
+      expect(find.byIcon(Icons.expand_less), findsNothing);
+    });
   });
 
   // Task 2: opt-in algorithm-driven "Suggested" section.
@@ -1810,6 +1835,223 @@ void main() {
       await tester.tap(find.byIcon(Icons.close).first);
       await pumpAsync(tester);
       expect(find.byIcon(Icons.add_circle), findsNWidgets(4));
+    });
+
+    testWidgets(
+        'unpinning after a full Today\'s 5 re-populates suggestions inline '
+        '(regression: showed "No suggestions right now")', (tester) async {
+      // 4 pinned + spare leaves: the Suggested section is visible (4 < 5) and
+      // has picks to offer.
+      await tester.runAsync(() async {
+        final a = await db.insertTask(Task(name: 'Pinned A'));
+        final b = await db.insertTask(Task(name: 'Pinned B'));
+        final c = await db.insertTask(Task(name: 'Pinned C'));
+        final d = await db.insertTask(Task(name: 'Pinned D'));
+        await db.insertTask(Task(name: 'Free 1'));
+        await db.insertTask(Task(name: 'Free 2'));
+        await seedTodaysFive(db, [a, b, c, d]);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Expand suggestions, then accept one to fill Today's 5 to the cap (5).
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+      expect(find.byIcon(Icons.add_circle), findsWidgets);
+      await tester.tap(find.byIcon(Icons.add_circle).first);
+      await pumpAsync(tester);
+
+      // Full → the whole Suggested section is hidden (suggestions were cleared).
+      expect(find.text('Show suggestions'), findsNothing);
+      expect(find.text('Suggested'), findsNothing);
+
+      // Unpin one → drops back below the cap, so the (still-expanded) Suggested
+      // section returns. It must backfill immediately, NOT show the stale empty
+      // "No suggestions right now." text until a tab switch.
+      await tester.tap(find.text('Pinned A'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.tap(find.text("Remove from Today’s 5"));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.tap(find.text('Remove'));
+      await pumpAsync(tester, rounds: 20);
+
+      expect(find.text('Suggested'), findsOneWidget);
+      expect(find.text('No suggestions right now.'), findsNothing);
+      expect(find.byIcon(Icons.add_circle), findsWidgets);
+    });
+
+    // [Baseline] Complement to the unpin regression above: at the cap the
+    // `showSuggestions` gate (_todaysTasks.length < maxPins) suppresses the
+    // whole section — there's no "Show suggestions" affordance at all, since a
+    // suggestion couldn't be accepted anyway.
+    testWidgets('a full Today\'s 5 hides the entire Suggested section',
+        (tester) async {
+      await tester.runAsync(() async {
+        final ids = <int>[];
+        for (var i = 0; i < maxPins; i++) {
+          ids.add(await db.insertTask(Task(name: 'Pinned $i')));
+        }
+        await db.insertTask(Task(name: 'Free leaf'));
+        await seedTodaysFive(db, ids);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Show suggestions'), findsNothing);
+      expect(find.text('Suggested'), findsNothing);
+    });
+
+    // [Mechanism] Collapsing via "Hide" clears the picks (_toggleSuggestions
+    // else-branch sets _suggestions = []) and re-expanding recomputes a set —
+    // guards the opt-in toggle's compute-on-expand / free-on-collapse contract.
+    testWidgets('Hide collapses the section and clears the picks; re-expanding '
+        'recomputes them', (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Candidate task'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+      expect(find.text('Candidate task'), findsOneWidget);
+
+      await tester.tap(find.text('Hide'));
+      await pumpAsync(tester);
+      expect(find.text('Show suggestions'), findsOneWidget);
+      expect(find.text('Suggested'), findsNothing);
+      expect(find.text('Candidate task'), findsNothing);
+
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+      expect(find.text('Suggested'), findsOneWidget);
+      expect(find.text('Candidate task'), findsOneWidget);
+    });
+
+    // [Edge case] A dismissed suggestion is suppressed for the session
+    // (_dismissedSuggestionIds) so the backfill can't re-offer it. With a lone
+    // candidate, dismissing exhausts the eligible pool and the section falls to
+    // its empty text rather than immediately re-surfacing the dismissed task.
+    // (Distinct from "dismissing backfills a fresh one", which only asserts the
+    // count stays at target and doesn't prove the dismissed task stays gone.)
+    testWidgets('a dismissed suggestion is suppressed and does not reappear',
+        (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Lonely candidate'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+      expect(find.text('Lonely candidate'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.close));
+      await pumpAsync(tester);
+
+      expect(find.text('Lonely candidate'), findsNothing);
+      expect(find.text('No suggestions right now.'), findsOneWidget);
+    });
+
+    // [Edge case] _refreshSuggestions filters out blocked leaves
+    // (getBlockedChildIds). "Blocked leaf" depends on "Blocker leaf" and so is
+    // ineligible while the blocker is incomplete; only the unblocked blocker is
+    // offered.
+    testWidgets('a blocked leaf is not offered as a suggestion', (tester) async {
+      await tester.runAsync(() async {
+        final blocker = await db.insertTask(Task(name: 'Blocker leaf'));
+        final blocked = await db.insertTask(Task(name: 'Blocked leaf'));
+        await db.addDependency(blocked, blocker);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+
+      expect(find.text('Blocker leaf'), findsOneWidget);
+      expect(find.text('Blocked leaf'), findsNothing);
+    });
+
+    // [Regression] A long task name under a long-named parent used to make the
+    // suggestion pill's Row wider than the available space (the name/parent
+    // Text widgets weren't Flexible), throwing a "RenderFlex overflowed"
+    // exception and pushing the ✓/add buttons off-screen. The Text widgets are
+    // now Flexible + ellipsis, so the pill fits its width with no overflow.
+    testWidgets('a long-named suggestion pill does not overflow its Row',
+        (tester) async {
+      // Reproduce the narrow (phone-width) window where the overflow occurred —
+      // at the default 800px test surface the long pill fits and nothing
+      // overflows. ~380px logical width mirrors the real device.
+      tester.view.physicalSize = const Size(380, 820);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.runAsync(() async {
+        final parentId = await db
+            .insertTask(Task(name: 'Really Long Parent Category Name Here'));
+        final childId = await db.insertTask(Task(
+            name: 'This Is An Extremely Long Leaf Task Name For Truncation'));
+        // Child is the sole leaf → the only suggestion candidate.
+        await db.addRelationship(parentId, childId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+
+      // The pill renders (its accept button is present) and — critically — no
+      // RenderFlex overflow exception was thrown during layout.
+      expect(find.byIcon(Icons.add_circle), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    // [Regression] When the Suggested section is the BOTTOM-most content (no
+    // "Also done today" box below it), its pills sit beside the "+" FAB and must
+    // end before it. Before the fix the pills spanned full width and rendered
+    // *behind* the FAB. The pills' Wrap now carries a right inset (fabClearance)
+    // in that case.
+    double suggestionsBoxRightInset(WidgetTester tester) {
+      final padding = tester.widget<Padding>(
+        find.byKey(const ValueKey('suggestions_box_pad')),
+      );
+      return (padding.padding.resolve(TextDirection.ltr)).right;
+    }
+
+    testWidgets('bottom-most Suggested box clears the FAB (right inset)',
+        (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Lone candidate'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+
+      // No "Also done today" box → Suggested is bottom-most → box inset.
+      expect(find.text('Also done today'), findsNothing);
+      expect(suggestionsBoxRightInset(tester), 64);
+    });
+
+    testWidgets(
+        'Suggested pills are NOT inset when "Also done today" is present '
+        '(the done-box takes the FAB clearance instead)', (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Lone candidate'));
+        final done = await db.insertTask(Task(name: 'Finished thing'));
+        await db.completeTask(done);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+
+      // "Also done today" is bottom-most and takes the inset, so the Suggested
+      // box above it spans full width (no double inset / gap).
+      expect(find.text('Also done today'), findsOneWidget);
+      expect(suggestionsBoxRightInset(tester), 0);
     });
   });
 }

@@ -705,6 +705,18 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       _preWorkedOnLastWorkedAt.remove(task.id);
       _explicitlyUncompletedIds.remove(task.id);
     });
+    // Bug fix: removing a task drops Today's 5 below the cap, so the opt-in
+    // suggestions section becomes visible again. But `_suggestions` was cleared
+    // to empty while the list was full (the `>= maxPins` guard in
+    // _refreshSuggestions), and this removal path never refreshed them.
+    // Before: the section reappeared showing "No suggestions right now." until a
+    // tab switch fired refreshSnapshots → _refreshSuggestions. After: backfill
+    // inline (and load paths for the new pills) so suggestions repopulate at once.
+    await _refreshSuggestions();
+    if (!mounted) return;
+    await _loadTaskPaths();
+    if (!mounted) return;
+    setState(() {});
     await _persist();
   }
 
@@ -1195,9 +1207,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                 ),
         ),
         // --- Suggested + Also done today, pinned to the bottom ---
-        // Suggested spans full width; "Also done today" is the bottom-most row
-        // and shares it with the "+" FAB (bottom-right) — it ends just left of
-        // the FAB (right inset) instead of leaving a tall clearance below.
+        // Whichever of these is the BOTTOM-most section sits beside the "+" FAB
+        // (bottom-right) and gets a right inset so it ends just left of the FAB.
+        // "Also done today" (when present) is always bottom-most and takes the
+        // inset; otherwise the Suggested pills take it (see fabClearance in
+        // _buildSuggestionsSection).
         if (hasBottom)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -1348,58 +1362,77 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
         ),
       );
     }
+    // FAB clearance: when the Suggested box is the bottom-most content (no
+    // "Also done today" box below to take the inset instead), it sits beside the
+    // "+" FAB and must end before it — the same right inset the done-box uses.
+    // (This section only renders when the FAB is visible, so no extra
+    // FAB-visibility guard is needed.)
+    final fabClearance = _otherDoneToday.isEmpty ? 64.0 : 0.0;
     return Padding(
-      padding: EdgeInsets.only(top: _todaysTasks.isEmpty ? 8 : 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Section header: label + divider rule (distinct from the pills).
-          Row(
-            children: [
+      key: const ValueKey('suggestions_box_pad'),
+      padding: EdgeInsets.only(
+          top: _todaysTasks.isEmpty ? 8 : 20, right: fabClearance),
+      // Bordered box mirroring "Also done today" so the two bottom sections read
+      // as matching cards (user's choice). Same surface / border / radius /
+      // padding as _buildOtherDoneBox.
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest.withAlpha(40),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outlineVariant.withAlpha(60)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Plain label + Hide action (no divider rule, per design choice).
+            // The header matches the "Hide" button's size/weight (labelLarge,
+            // the TextButton default) so the two are balanced — just the muted
+            // label colour instead of the primary action colour (user's choice).
+            Row(
+              children: [
+                Text(
+                  'Suggested',
+                  style: textTheme.labelLarge?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: _toggleSuggestions,
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    foregroundColor: colorScheme.primary,
+                  ),
+                  child: const Text('Hide'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (_suggestions.isEmpty)
               Text(
-                'Suggested',
-                style: textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Divider(
-                  color: colorScheme.outlineVariant.withAlpha(140),
-                  thickness: 1,
-                ),
-              ),
-              const SizedBox(width: 4),
-              TextButton(
-                onPressed: _toggleSuggestions,
-                child: const Text('Hide'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          if (_suggestions.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Text(
                 'No suggestions right now.',
                 style: textTheme.bodySmall
                     ?.copyWith(color: colorScheme.onSurfaceVariant),
+              )
+            else
+              // Sleek content-sized pills that wrap across up to ~2 rows. With
+              // ~4 suggestions this reads as two rows. The box already clears the
+              // FAB (fabClearance on the outer Padding), so no per-pill inset.
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final task in _suggestions)
+                    _buildSuggestionCard(context, task, colorScheme, textTheme),
+                ],
               ),
-            )
-          else
-            // Sleek content-sized pills that wrap across up to ~2 rows (there's
-            // vertical room above the pinned bottom). With ~4 suggestions this
-            // reads as two rows; the page stays vertically scrollable.
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final task in _suggestions)
-                  _buildSuggestionCard(context, task, colorScheme, textTheme),
-              ],
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1461,16 +1494,33 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
               Icon(Icons.lightbulb_outline,
                   size: 18, color: colorScheme.primary.withAlpha(200)),
               const SizedBox(width: 8),
-              Text(
-                _truncateLabel(task.name, 24),
-                style: textTheme.bodyMedium,
+              // Bug fix (RenderFlex overflow): the name/parent Text widgets used
+              // to be un-flexed, so `_truncateLabel`'s char cap alone had to keep
+              // the pill within bounds. Before: a long name + long parent (even
+              // after truncation) made the fixed-width Row wider than the
+              // available space and overflowed on the right (the ✓/add buttons
+              // were pushed off-screen). After: both are Flexible with
+              // ellipsis, so the pill can never exceed its available width — the
+              // text ellipsizes to fit. `_truncateLabel` is kept purely as the
+              // soft "compact/sleek" cap when there IS room.
+              Flexible(
+                child: Text(
+                  _truncateLabel(task.name, 24),
+                  style: textTheme.bodyMedium,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
               if (parent != null) ...[
                 const SizedBox(width: 5),
-                Text(
-                  '· ${_truncateLabel(parent, 16)}',
-                  style: textTheme.bodySmall
-                      ?.copyWith(color: colorScheme.onSurfaceVariant),
+                Flexible(
+                  child: Text(
+                    '· ${_truncateLabel(parent, 16)}',
+                    style: textTheme.bodySmall
+                        ?.copyWith(color: colorScheme.onSurfaceVariant),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ],
               const SizedBox(width: 4),
