@@ -1814,10 +1814,11 @@ void main() {
       expect(find.text('Nothing pinned yet'), findsNothing);
     });
 
-    testWidgets('dismissing a suggestion backfills a fresh one',
+    testWidgets('shows ALL eligible tasks; dismissing one removes it',
         (tester) async {
-      // 5 leaves > the 4-at-a-time target, so a dismissal has something to
-      // backfill with.
+      // Show-all: every eligible leaf appears (weighted order) in the sideways
+      // strip — not a fixed handful. (SingleChildScrollView builds all pills
+      // eagerly, so off-screen ones are still found.)
       await tester.runAsync(() async {
         for (var i = 0; i < 5; i++) {
           await db.insertTask(Task(name: 'Leaf $i'));
@@ -1828,10 +1829,11 @@ void main() {
       await tester.tap(find.text('Show suggestions'));
       await pumpAsync(tester);
 
-      // 4 suggestions shown (each card has an add_circle accept button).
-      expect(find.byIcon(Icons.add_circle), findsNWidgets(4));
+      // All 5 eligible leaves shown (each pill has an add_circle accept button).
+      expect(find.byIcon(Icons.add_circle), findsNWidgets(5));
 
-      // Dismiss one → the backfill keeps the count at 4.
+      // Dismiss one → it's removed (and suppressed); the rest stay. No backfill
+      // is needed since every eligible task was already shown.
       await tester.tap(find.byIcon(Icons.close).first);
       await pumpAsync(tester);
       expect(find.byIcon(Icons.add_circle), findsNWidgets(4));
@@ -2052,6 +2054,62 @@ void main() {
       // box above it spans full width (no double inset / gap).
       expect(find.text('Also done today'), findsOneWidget);
       expect(suggestionsBoxRightInset(tester), 0);
+    });
+
+    // Tapping a suggestion pill's BODY opens an options sheet (user's chosen
+    // behaviour over a bare navigate/pin): Add / Go to task / Not now.
+    testWidgets('tapping a suggestion pill body opens the options sheet, and '
+        '"Go to task" navigates', (tester) async {
+      Task? navigated;
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Candidate task'));
+      });
+
+      await pumpAndLoad(
+        tester,
+        buildTestWidget(onNavigateToTask: (t) => navigated = t),
+      );
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+
+      // Tap the pill body (its name) → sheet with all three options. Settle the
+      // modal-sheet animation with the pump loop this file uses for bottom
+      // sheets (pumpAsync alone leaves the tiles mid-animation / off-screen).
+      await tester.tap(find.text('Candidate task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(find.text("Add to Today’s 5"), findsOneWidget);
+      expect(find.text('Go to task'), findsOneWidget);
+      expect(find.text('Dismiss suggestion'), findsOneWidget);
+
+      await tester.tap(find.text('Go to task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(navigated?.name, 'Candidate task');
+    });
+
+    testWidgets('options sheet "Add to Today\'s 5" pins the suggestion',
+        (tester) async {
+      late int id;
+      await tester.runAsync(() async {
+        id = await db.insertTask(Task(name: 'Candidate task'));
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+      await tester.tap(find.text('Candidate task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.tap(find.text("Add to Today’s 5"));
+      await pumpAsync(tester);
+
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.taskIds, contains(id));
     });
   });
 }
