@@ -1420,17 +1420,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                     ?.copyWith(color: colorScheme.onSurfaceVariant),
               )
             else
-              // Sleek content-sized pills that wrap across up to ~2 rows. With
-              // ~4 suggestions this reads as two rows. The box already clears the
-              // FAB (fabClearance on the outer Padding), so no per-pill inset.
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final task in _suggestions)
-                    _buildSuggestionCard(context, task, colorScheme, textTheme),
-                ],
-              ),
+              _buildSuggestionStrip(context, colorScheme, textTheme),
           ],
         ),
       ),
@@ -1468,15 +1458,60 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     return segments.isEmpty ? null : segments.last;
   }
 
-  /// A single compact suggestion pill (content-sized, flows in a [Wrap]):
+  /// The suggestion pills laid out as a **2-row band that scrolls sideways**,
+  /// so the height stays bounded on any screen: ~4 content-sized pills read as
+  /// two rows on desktop and as two rows that scroll horizontally on a phone —
+  /// instead of a `Wrap` stacking one-per-row into N tall rows on narrow width
+  /// (which is what happens on mobile). Pills fill row-major: first half on top,
+  /// the rest on the bottom row. A right-edge fade hints there's more to swipe.
+  Widget _buildSuggestionStrip(
+      BuildContext context, ColorScheme colorScheme, TextTheme textTheme) {
+    final half = (_suggestions.length / 2).ceil();
+    final topRow = _suggestions.take(half).toList();
+    final bottomRow = _suggestions.skip(half).toList();
+    Widget rowOf(List<Task> tasks) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final task in tasks)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child:
+                    _buildSuggestionCard(context, task, colorScheme, textTheme),
+              ),
+          ],
+        );
+    return _fadeRightEdge(
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            rowOf(topRow),
+            if (bottomRow.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              rowOf(bottomRow),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// A single compact suggestion pill (content-sized, width-capped):
   /// lightbulb + truncated task name + "· parent", with "Add to Today's 5"
   /// (`add_circle`) and "Not now" (`close`) actions. Tapping the pill body
   /// opens the task in All Tasks.
   Widget _buildSuggestionCard(BuildContext context, Task task,
       ColorScheme colorScheme, TextTheme textTheme) {
     final parent = _immediateParentName(task.id);
-    return Material(
-      key: ValueKey('suggestion_${task.id}'),
+    // Width cap: keeps each pill compact AND — inside the unbounded horizontal
+    // scroll strip — gives its Flexible name/parent texts a bounded box to
+    // ellipsize within (a Flexible in an unbounded Row would otherwise throw).
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 260),
+      child: Material(
+        key: ValueKey('suggestion_${task.id}'),
       color: colorScheme.surfaceContainerHigh,
       clipBehavior: Clip.antiAlias,
       shape: StadiumBorder(
@@ -1546,7 +1581,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           ),
         ),
       ),
-    );
+    ));
   }
 
 
