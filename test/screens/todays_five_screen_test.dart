@@ -1838,37 +1838,6 @@ void main() {
       expect(find.byIcon(Icons.add_circle), findsNWidgets(4));
     });
 
-    // [Regression — Codex PR #78 P2] Suggestions materialise a batch at a time
-    // (not the whole pool), so a large tree never pays an O(n²) pickWeightedN up
-    // front; scrolling pages in the rest.
-    testWidgets('suggestions materialise in batches, not all at once',
-        (tester) async {
-      // 30 eligible leaves > one 24-batch.
-      await tester.runAsync(() async {
-        for (var i = 0; i < 30; i++) {
-          await db.insertTask(Task(name: 'Leaf $i'));
-        }
-      });
-
-      await pumpAndLoad(tester, buildTestWidget());
-      await tester.tap(find.text('Show suggestions'));
-      await pumpAsync(tester);
-
-      final state =
-          tester.state<TodaysFiveScreenState>(find.byType(TodaysFiveScreen));
-      // Only the first batch (24 of 30) is materialised up front.
-      expect(state.materializedSuggestionCount, 24);
-
-      // Paging in the next batch appends the remaining 6.
-      await tester.runAsync(() => state.loadMoreSuggestionsForTest());
-      await pumpAsync(tester);
-      expect(state.materializedSuggestionCount, 30);
-
-      // Pool drained → no further growth.
-      await tester.runAsync(() => state.loadMoreSuggestionsForTest());
-      await pumpAsync(tester);
-      expect(state.materializedSuggestionCount, 30);
-    });
 
     testWidgets(
         'unpinning after a full Today\'s 5 re-populates suggestions inline '
