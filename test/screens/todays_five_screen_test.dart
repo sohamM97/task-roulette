@@ -1814,11 +1814,11 @@ void main() {
       expect(find.text('Nothing pinned yet'), findsNothing);
     });
 
-    testWidgets('shows ALL eligible tasks; dismissing one removes it',
+    testWidgets('shows all eligible tasks (within a batch); dismissing removes one',
         (tester) async {
-      // Show-all: every eligible leaf appears (weighted order) in the sideways
-      // strip — not a fixed handful. (SingleChildScrollView builds all pills
-      // eagerly, so off-screen ones are still found.)
+      // 5 eligible leaves < the 24-batch, so all materialise and render (the
+      // 800x600 test surface fits every column, so ListView.builder builds them
+      // all).
       await tester.runAsync(() async {
         for (var i = 0; i < 5; i++) {
           await db.insertTask(Task(name: 'Leaf $i'));
@@ -1832,11 +1832,42 @@ void main() {
       // All 5 eligible leaves shown (each pill has an add_circle accept button).
       expect(find.byIcon(Icons.add_circle), findsNWidgets(5));
 
-      // Dismiss one → it's removed (and suppressed); the rest stay. No backfill
-      // is needed since every eligible task was already shown.
+      // Dismiss one → it's removed (and suppressed); the rest stay.
       await tester.tap(find.byIcon(Icons.close).first);
       await pumpAsync(tester);
       expect(find.byIcon(Icons.add_circle), findsNWidgets(4));
+    });
+
+    // [Regression — Codex PR #78 P2] Suggestions materialise a batch at a time
+    // (not the whole pool), so a large tree never pays an O(n²) pickWeightedN up
+    // front; scrolling pages in the rest.
+    testWidgets('suggestions materialise in batches, not all at once',
+        (tester) async {
+      // 30 eligible leaves > one 24-batch.
+      await tester.runAsync(() async {
+        for (var i = 0; i < 30; i++) {
+          await db.insertTask(Task(name: 'Leaf $i'));
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+
+      final state =
+          tester.state<TodaysFiveScreenState>(find.byType(TodaysFiveScreen));
+      // Only the first batch (24 of 30) is materialised up front.
+      expect(state.materializedSuggestionCount, 24);
+
+      // Paging in the next batch appends the remaining 6.
+      await tester.runAsync(() => state.loadMoreSuggestionsForTest());
+      await pumpAsync(tester);
+      expect(state.materializedSuggestionCount, 30);
+
+      // Pool drained → no further growth.
+      await tester.runAsync(() => state.loadMoreSuggestionsForTest());
+      await pumpAsync(tester);
+      expect(state.materializedSuggestionCount, 30);
     });
 
     testWidgets(
