@@ -617,14 +617,19 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     await _persistAndTrim();
   }
 
-  /// Shows a bottom sheet: "In progress" / "Done today" / "Done for good!" /
-  /// "Remove from Today's 5".
+  /// Shows a bottom sheet: "Done today" / "Done for good!" / "In progress"
+  /// (or "Stop working") / "Go to task" / "Remove from Today's 5".
   void _showTaskOptions(Task task) {
     final colorScheme = Theme.of(context).colorScheme;
     showModalBottomSheet(
       context: context,
       builder: (ctx) => SafeArea(
-        child: Padding(
+        // Scrollable: with 5 two-line options the column exceeds the default
+        // bottom-sheet height cap (9/16 of the screen) on short screens — a
+        // phone in landscape or a small device overflowed by ~47px once
+        // "Go to task" was added. Scrolling keeps every option reachable
+        // while still sizing to content when there's room.
+        child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -665,6 +670,19 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
                   onTap: () {
                     Navigator.pop(ctx);
                     _stopWorking(task);
+                  },
+                ),
+              // Same "Go to task" affordance the suggestion sheet offers — the
+              // card's inline open_in_new icon is easy to miss (and easy to
+              // mis-tap next to the X), so the sheet gets an explicit path too.
+              if (widget.onNavigateToTask != null)
+                ListTile(
+                  leading: Icon(Icons.open_in_new, color: colorScheme.tertiary),
+                  title: const Text('Go to task'),
+                  subtitle: const Text('Open it in All Tasks'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    widget.onNavigateToTask!(task);
                   },
                 ),
               ListTile(
