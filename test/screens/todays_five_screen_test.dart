@@ -233,6 +233,131 @@ void main() {
       expect(navigatedTask!.name, 'Navigate me');
     });
 
+    testWidgets('pinned task options sheet has "Go to task" and it navigates',
+        (tester) async {
+      await tester.runAsync(() async {
+        final id = await db.insertTask(Task(name: 'Navigate me'));
+        await seedTodaysFive(db, [id]);
+      });
+      Task? navigatedTask;
+
+      await pumpAndLoad(
+        tester,
+        buildTestWidget(onNavigateToTask: (task) => navigatedTask = task),
+      );
+
+      // Tap the card body → options sheet.
+      await tester.tap(find.text('Navigate me'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(find.text('Go to task'), findsOneWidget);
+
+      await tester.tap(find.text('Go to task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(navigatedTask?.name, 'Navigate me');
+    });
+
+    testWidgets(
+        'options sheet has no "Go to task" tile when onNavigateToTask is null',
+        (tester) async {
+      await tester.runAsync(() async {
+        final id = await db.insertTask(Task(name: 'No nav'));
+        await seedTodaysFive(db, [id]);
+      });
+
+      // No onNavigateToTask callback supplied.
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('No nav'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      // The other options are still present...
+      expect(find.text('Done today'), findsOneWidget);
+      expect(find.text('Done for good!'), findsOneWidget);
+      expect(find.text('In progress'), findsOneWidget);
+      expect(find.text("Remove from Today’s 5"), findsOneWidget);
+      // ...but the gated "Go to task" tile is absent.
+      expect(find.text('Go to task'), findsNothing);
+    });
+
+    testWidgets(
+        'options sheet keeps every other option alongside "Go to task"',
+        (tester) async {
+      await tester.runAsync(() async {
+        final id = await db.insertTask(Task(name: 'All options'));
+        await seedTodaysFive(db, [id]);
+      });
+
+      await pumpAndLoad(
+        tester,
+        buildTestWidget(onNavigateToTask: (_) {}),
+      );
+
+      await tester.tap(find.text('All options'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      // All five options coexist — "Go to task" was inserted, not swapped in
+      // for an existing option.
+      expect(find.text('Done today'), findsOneWidget);
+      expect(find.text('Done for good!'), findsOneWidget);
+      expect(find.text('In progress'), findsOneWidget);
+      expect(find.text('Go to task'), findsOneWidget);
+      expect(find.text('Open it in All Tasks'), findsOneWidget);
+      expect(find.text("Remove from Today’s 5"), findsOneWidget);
+    });
+
+    // [Regression] Before the fix, the sheet body was a fixed-size
+    // Padding+Column: with all 5 two-line options present (including the new
+    // "Go to task" tile), the content exceeded the default bottom-sheet
+    // height cap (9/16 of the screen) on short screens, throwing a
+    // "RenderFlex overflowed by ~47px" layout exception. The body is now a
+    // SingleChildScrollView, so it must lay out (and be scrollable to the
+    // last option) without overflowing even on a short/narrow window.
+    testWidgets(
+        'options sheet does not overflow on a short screen with all 5 options',
+        (tester) async {
+      // Mirror a small phone window where the previous fixed-height Column
+      // overflowed — the default 800x600 test surface has room to spare.
+      tester.view.physicalSize = const Size(360, 560);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.runAsync(() async {
+        final id = await db.insertTask(Task(name: 'Short screen task'));
+        await seedTodaysFive(db, [id]);
+      });
+
+      await pumpAndLoad(
+        tester,
+        buildTestWidget(onNavigateToTask: (_) {}),
+      );
+
+      await tester.tap(find.text('Short screen task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      // No overflow exception was thrown during layout of the 5-option sheet.
+      expect(tester.takeException(), isNull);
+
+      // The last option is reachable by scrolling the sheet body.
+      await tester.dragUntilVisible(
+        find.text("Remove from Today’s 5"),
+        find.byType(SingleChildScrollView),
+        const Offset(0, -50),
+      );
+      expect(find.text("Remove from Today’s 5"), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('shows progress bar', (tester) async {
       await tester.runAsync(() async {
         final id = await db.insertTask(Task(name: 'Task 1'));
