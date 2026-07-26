@@ -20,6 +20,7 @@ import '../utils/display_utils.dart';
 import '../widgets/delete_task_dialog.dart';
 import '../widgets/schedule_dialog.dart';
 import '../widgets/task_picker_dialog.dart';
+import '../widgets/task_search.dart';
 import '../widgets/triage_dialog.dart';
 import '../services/backup_service.dart';
 import '../widgets/profile_icon.dart';
@@ -928,29 +929,14 @@ class TaskListScreenState extends State<TaskListScreen>
     );
   }
 
-  Future<void> _searchTask() async {
-    final provider = context.read<TaskProvider>();
-    final (allTasks, parentNamesMap) = await _fetchCandidateData();
-
-    if (!mounted) return;
-
-    final selected = await showDialog<Task>(
-      context: context,
-      builder: (dialogCtx) => TaskPickerDialog(
-        candidates: allTasks,
-        title: 'Search tasks',
-        parentNamesMap: parentNamesMap,
-        // Empty results → offer to create a task named after the search term.
-        onCreateTask: (name) {
-          Navigator.of(dialogCtx).pop();
-          _createTaskFromSearch(name);
-        },
-      ),
-    );
-
-    if (selected == null || !mounted) return;
-    await provider.navigateToTask(selected);
-  }
+  /// Search is the shared [showTaskSearch] flow (same dialog the Starred and
+  /// Today's 5 tabs open); selecting a result drills into it right here.
+  Future<void> _searchTask() => showTaskSearch(
+        context,
+        onSelected: (selected) =>
+            context.read<TaskProvider>().navigateToTask(selected),
+        onCreateTask: _createTaskFromSearch,
+      );
 
   /// Creates a task from an empty search result, named after the search term.
   /// Search is a global action, so the task is always filed at the root (Inbox
