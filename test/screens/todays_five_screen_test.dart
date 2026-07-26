@@ -2121,6 +2121,82 @@ void main() {
       // …so nothing is cut off and the fade is gone.
       expect(find.byType(ShaderMask), findsNothing);
     });
+
+    // [Mechanism] The other half of the toggle: once the user swipes back away
+    // from the right-hand end there IS content cut off again, so the hint must
+    // come back. This also guards the `GlobalKey`/`KeyedSubtree` in
+    // `_FadeRightEdge`: adding/removing the ShaderMask re-parents the strip, and
+    // without the key the Scrollable would be rebuilt from scratch and snap back
+    // to offset 0 — so the scroll offset must survive both toggles.
+    testWidgets('re-shows the fade when scrolled back from the far right, '
+        'keeping the scroll offset', (tester) async {
+      await tester.runAsync(() async {
+        for (var i = 0; i < 12; i++) {
+          final id = await db.insertTask(
+              Task(name: 'A rather long finished task name $i'));
+          await db.completeTask(id);
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.pump();
+
+      final strip = find.byWidgetPredicate(
+        (w) => w is Scrollable && w.axisDirection == AxisDirection.right,
+      );
+
+      // To the end: the mask comes off (the strip is re-parented).
+      await tester.drag(strip, const Offset(-3000, 0));
+      await tester.pumpAndSettle();
+      final maxExtent =
+          tester.state<ScrollableState>(strip).position.maxScrollExtent;
+      expect(maxExtent, greaterThan(0));
+      // Offset survived the un-masking rather than resetting to 0.
+      expect(tester.state<ScrollableState>(strip).position.pixels, maxExtent);
+      expect(find.byType(ShaderMask), findsNothing);
+
+      // Back left a little: the mask goes back on (re-parented again).
+      await tester.drag(strip, const Offset(200, 0));
+      await tester.pumpAndSettle();
+
+      final position = tester.state<ScrollableState>(strip).position;
+      expect(position.extentAfter, greaterThan(0));
+      // Still mid-strip — the re-masking didn't reset the offset either.
+      expect(position.pixels, greaterThan(0));
+      expect(position.pixels, lessThan(maxExtent));
+      expect(find.byType(ShaderMask), findsOneWidget);
+    });
+
+    // [Edge case] Whether the strip overflows is a function of the viewport, not
+    // just the chip count: the same three chips that fit on a desktop-width
+    // window run off the right edge on a phone. The fade is driven by
+    // `ScrollMetricsNotification` (viewport/content size) — not only by the user
+    // scrolling — so a narrow screen must show it with no interaction at all.
+    testWidgets('fades at phone width for chips that fit at desktop width',
+        (tester) async {
+      await tester.runAsync(() async {
+        for (var i = 0; i < 3; i++) {
+          final id = await db.insertTask(
+              Task(name: 'A rather long finished task name $i'));
+          await db.completeTask(id);
+        }
+      });
+
+      // Desktop-width baseline (default 800x600 test surface): all three fit.
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.pump();
+      expect(find.byType(ShaderMask), findsNothing);
+
+      // Same three chips on a phone-width screen: now they overflow.
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.pump();
+      expect(find.byType(ShaderMask), findsOneWidget);
+    });
   });
 
   // Task 2: opt-in algorithm-driven "Suggested" section.
