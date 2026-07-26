@@ -722,4 +722,108 @@ void main() {
       expect(gpParents, isNot(contains(parentId)));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // App bar search — routed through the shared showTaskSearch helper
+  // ---------------------------------------------------------------------------
+  // `feature/search-in-all-tabs` moved this screen's home-grown search body
+  // into `lib/widgets/task_search.dart` (`showTaskSearch`) so the Starred and
+  // Today's 5 tabs could reuse it. All Tasks is the ORIGINAL caller and the one
+  // whose behaviour must not have drifted: it navigates in place (no
+  // `onNavigateToTask` callback) and its create-from-search still goes through
+  // `_runAddFlow(atRoot: true)`. These are refactor guards.
+  group('TaskListScreen - search (shared showTaskSearch flow)', () {
+    /// Types into the picker's search field and lets its 200ms debounce fire.
+    /// pumpAsync pumps without advancing the fake clock, so the debounce Timer
+    /// would never run and the filter would stay stale.
+    Future<void> search(WidgetTester tester, String query) async {
+      await tester.enterText(find.byType(TextField).first, query);
+      await tester.pump(const Duration(milliseconds: 300));
+      await pumpAsync(tester);
+    }
+
+    // [Regression] The app bar search action still opens the "Search tasks"
+    // picker after the body was extracted into the shared helper.
+    testWidgets('app bar search icon opens the "Search tasks" dialog',
+        (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Write report'));
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+
+      expect(find.text('Search tasks'), findsOneWidget);
+    });
+
+    // [Regression] All Tasks drills into the pick ITSELF (currentParent), unlike
+    // the other two tabs which hand it to onNavigateToTask. Guards the
+    // `onSelected: navigateToTask` wiring of the extracted helper.
+    testWidgets('picking a result drills into it in place', (tester) async {
+      await tester.runAsync(() async {
+        final parentId = await db.insertTask(Task(name: 'Deep parent'));
+        final childId = await db.insertTask(Task(name: 'Deep child'));
+        await db.addRelationship(parentId, childId);
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+      await search(tester, 'Deep child');
+      await tester.tap(find.text('Deep child').last);
+      await pumpAsync(tester);
+
+      expect(provider.currentParent, isNotNull,
+          reason: 'All Tasks opens the result in place, not via a callback');
+      expect(provider.currentParent!.name, 'Deep child');
+    });
+
+    // [Regression] Search is GLOBAL, so create-from-search files at root even
+    // while the tab is drilled into a parent (`_runAddFlow(atRoot: true)`) — the
+    // opposite of the "+" FAB, which nests under the open task. This is the one
+    // behaviour most easily lost when rerouting through a shared helper.
+    testWidgets('create-from-search files at root while drilled into a parent',
+        (tester) async {
+      late int parentId;
+      await tester.runAsync(() async {
+        parentId = await db.insertTask(Task(name: 'Open project'));
+        final childId = await db.insertTask(Task(name: 'Existing child'));
+        await db.addRelationship(parentId, childId);
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Drill in so there IS a current parent to (wrongly) capture the add.
+      await tester.tap(find.text('Open project'));
+      await pumpAsync(tester);
+      expect(provider.currentParent!.name, 'Open project');
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+      await search(tester, 'Global capture');
+      await tester.tap(find.textContaining('Create'));
+      await pumpAsync(tester);
+
+      expect(find.text('Add Task'), findsOneWidget);
+      // Inbox toggle is offered because the add lands at root.
+      expect(find.text('Inbox'), findsOneWidget);
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Add'));
+      });
+      await pumpAsync(tester);
+
+      final created = await tester.runAsync(() async {
+        final all = await db.getAllTasks();
+        return all.firstWhere((t) => t.name == 'Global capture');
+      });
+      final parents =
+          await tester.runAsync(() => db.getParentIds(created!.id!)) ?? [];
+      expect(parents, isEmpty,
+          reason: 'search create must ignore the drilled-in parent');
+      expect(parents, isNot(contains(parentId)));
+    });
+  });
 }

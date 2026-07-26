@@ -1015,6 +1015,166 @@ void main() {
     });
   });
 
+  group('StarredScreen - search', () {
+    /// Types into the picker's search field and lets its 200ms debounce fire.
+    /// pumpAsync alone pumps without advancing the fake clock, so the debounce
+    /// Timer would never run and the filter would stay stale.
+    Future<void> search(WidgetTester tester, String query) async {
+      await tester.enterText(find.byType(TextField).first, query);
+      await tester.pump(const Duration(milliseconds: 300));
+      await pumpAsync(tester);
+    }
+
+    // [Mechanism] The app bar search icon opens the shared global search
+    // picker — the same "Search tasks" dialog the All Tasks tab opens.
+    testWidgets('app bar search icon opens the global search dialog',
+        (tester) async {
+      await tester.runAsync(() => createStarredTask('Guitar practice'));
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+
+      expect(find.text('Search tasks'), findsOneWidget);
+    });
+
+    // [Mechanism] Search spans EVERY task, not just starred ones — the whole
+    // point of putting it on this tab. Picking a result hands it to
+    // onNavigateToTask (AppShell drills in + slides to the All Tasks tab).
+    testWidgets('picking an unstarred result navigates to it', (tester) async {
+      await tester.runAsync(() async {
+        await createStarredTask('Guitar practice');
+        await db.insertTask(Task(name: 'Buy strings'));
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+
+      await search(tester, 'strings');
+
+      await tester.tap(find.text('Buy strings').last);
+      await pumpAsync(tester);
+
+      expect(navigatedTask, isNotNull,
+          reason: 'a search result must open in the All Tasks tab');
+      expect(navigatedTask!.name, 'Buy strings');
+    });
+
+    // [Mechanism] Empty search → "Create ..." routes into the shared root add
+    // flow with the query pre-filled and the Inbox toggle shown.
+    testWidgets('empty search offers create with the query pre-filled',
+        (tester) async {
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+
+      await search(tester, 'Nothing matches');
+
+      expect(find.textContaining('Create'), findsOneWidget);
+      await tester.tap(find.textContaining('Create'));
+      await pumpAsync(tester);
+
+      expect(find.text('Add Task'), findsOneWidget);
+      expect(find.text('Inbox'), findsOneWidget);
+      // Name pre-filled from the search term.
+      final field = tester.widget<TextField>(find.byType(TextField).first);
+      expect(field.controller?.text, 'Nothing matches');
+    });
+
+    // [Mechanism] Search is a GLOBAL action, so unlike the screen "+" FAB it
+    // does NOT auto-star what it creates — it files a plain root task (the
+    // user picked "same as All Tasks" behavior).
+    testWidgets('create-from-search files a plain root task, not starred',
+        (tester) async {
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+      await search(tester, 'Fresh capture');
+      await tester.tap(find.textContaining('Create'));
+      await pumpAsync(tester);
+
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Add'));
+      });
+      await pumpAsync(tester);
+
+      final created = await tester.runAsync(() async {
+        final all = await db.getAllTasks();
+        return all.firstWhere((t) => t.name == 'Fresh capture');
+      });
+      expect(created!.isStarred, isFalse,
+          reason: 'search create must not auto-star');
+      final parents =
+          await tester.runAsync(() => provider.getParentIds(created.id!));
+      expect(parents, isEmpty, reason: 'search create files at root');
+    });
+
+    // [Mechanism] showTaskSearch pre-loads getParentNamesMap() and hands it to
+    // the picker, so a query can match a task by its PARENT's name and the row
+    // shows the "under X" context. Without that wiring the search would be
+    // name-only and buried subtasks would be unreachable from this tab.
+    testWidgets('matches a task by its parent name and shows "under X"',
+        (tester) async {
+      await tester.runAsync(() async {
+        final parentId = await db.insertTask(Task(name: 'Guitar practice'));
+        final childId = await db.insertTask(Task(name: 'Restring'));
+        await db.addRelationship(parentId, childId);
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+
+      // Query matches the PARENT's name only — "Restring" contains none of it.
+      await search(tester, 'Guitar');
+
+      expect(find.text('Restring'), findsOneWidget,
+          reason: 'child must surface via its parent name');
+      expect(find.text('under Guitar practice'), findsOneWidget);
+    });
+
+    // [Edge case] The pre-filled name can be edited into one that already
+    // exists (the search that opened this dialog found nothing, but the user
+    // retypes). showRootAddFromSearch wires onUseExisting → onOpenExisting, so
+    // tapping the match OPENS the existing task instead of creating a duplicate
+    // — there is no parent to file it under at root.
+    testWidgets('create-from-search "Open" suggestion opens existing, '
+        'no duplicate', (tester) async {
+      await tester.runAsync(() => db.insertTask(Task(name: 'Write report')));
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+      await search(tester, 'Nothing matches');
+      await tester.tap(find.textContaining('Create'));
+      await pumpAsync(tester);
+
+      // Retype the name of an existing task → in-field suggestion indicator.
+      await tester.enterText(find.byType(TextField).first, 'write REPORT');
+      await pumpAsync(tester);
+      expect(find.byIcon(Icons.info_outline), findsOneWidget);
+
+      // pumpAndSettle is needed for the popup's open animation (pumpAsync does
+      // not advance the fake clock, leaving the menu collapsed and unhittable).
+      await tester.tap(find.byIcon(Icons.info_outline));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(find.byWidgetPredicate(
+            (w) => w is PopupMenuItem<Task> && w.enabled));
+      });
+      await pumpAsync(tester);
+
+      expect(navigatedTask, isNotNull);
+      expect(navigatedTask!.name, 'Write report');
+      final all = await tester.runAsync(() => db.getAllTasks()) ?? [];
+      expect(all.where((t) => t.name.toLowerCase() == 'write report').length, 1,
+          reason: 'no duplicate created');
+    });
+  });
+
   group('TaskProvider - starOrder preservation', () {
     test('updateTaskStarred with explicit starOrder preserves position',
         () async {

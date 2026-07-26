@@ -14,6 +14,8 @@ import '../utils/display_utils.dart';
 import '../widgets/add_task_dialog.dart';
 import '../widgets/completion_animation.dart';
 import '../widgets/task_picker_dialog.dart';
+import '../widgets/tab_app_bar_title.dart';
+import '../widgets/task_search.dart';
 import '../widgets/profile_icon.dart';
 import 'completed_tasks_screen.dart';
 
@@ -1035,6 +1037,23 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     }
   }
 
+  /// Global search (shared with the All Tasks and Starred tabs). Distinct from
+  /// [_handlePickExistingForToday], which is scoped to pinnable leaves and pins
+  /// the pick: search spans EVERY task and opens the result in the All Tasks
+  /// tab via [TodaysFiveScreen.onNavigateToTask].
+  Future<void> _searchTask() => showTaskSearch(
+        context,
+        onSelected: (selected) async => widget.onNavigateToTask?.call(selected),
+        onCreateTask: (name) => showRootAddFromSearch(
+          context,
+          initialName: name,
+          onOpenExisting: (existing) => widget.onNavigateToTask?.call(existing),
+          // The add dialog offers "Pin for today" while a slot is free, so the
+          // new task may land in Today's 5 — reload so it shows immediately.
+          onCompleted: refreshSnapshots,
+        ),
+      );
+
   /// Pick-existing flow: opens TaskPickerDialog filtered to leaf tasks not
   /// already in Today's 5, then pins the selection.
   Future<void> _handlePickExistingForToday() async {
@@ -1131,31 +1150,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
               child: const Icon(Icons.add),
             ),
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Task Roulette',
-              style: const TextStyle(
-                fontFamily: 'Outfit',
-                fontSize: 30,
-                fontWeight: FontWeight.w400,
-                letterSpacing: -0.3,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              "Today\u2019s 5",
-              style: TextStyle(
-                fontFamily: 'Outfit',
-                fontSize: 16,
-                fontWeight: FontWeight.w300,
-                color: colorScheme.onSurfaceVariant,
-                letterSpacing: 1.0,
-              ),
-            ),
-          ],
-        ),
+        title: const TabAppBarTitle(subtitle: "Today\u2019s 5"),
         toolbarHeight: 72,
         actions: [
           if (kDebugMode)
@@ -1182,6 +1177,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
               tooltip: 'Simulate midnight rollover',
             ),
           const ProfileIcon(),
+          IconButton(
+            icon: const Icon(Icons.search, size: 22),
+            onPressed: _searchTask,
+            tooltip: 'Search',
+          ),
           Consumer<ThemeProvider>(
             builder: (context, themeProvider, _) {
               return IconButton(

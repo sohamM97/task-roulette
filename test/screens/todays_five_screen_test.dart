@@ -1662,6 +1662,188 @@ void main() {
     });
   });
 
+  group('TodaysFiveScreen - search', () {
+    /// Types into the picker's search field and lets its 200ms debounce fire.
+    /// pumpAsync alone pumps without advancing the fake clock, so the debounce
+    /// Timer would never run and the filter would stay stale.
+    Future<void> search(WidgetTester tester, String query) async {
+      await tester.enterText(find.byType(TextField).first, query);
+      await tester.pump(const Duration(milliseconds: 300));
+      await pumpAsync(tester);
+    }
+
+    // [Mechanism] The app bar search icon opens the shared global search
+    // picker — the same "Search tasks" dialog the other two tabs open. It is
+    // NOT the "Pin a task to Today's 5" picker (which is leaves-only and pins
+    // the pick); search spans every task and opens the result instead.
+    testWidgets('app bar search icon opens the global search dialog',
+        (tester) async {
+      await tester.runAsync(() => db.insertTask(Task(name: 'Some task')));
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+
+      expect(find.text('Search tasks'), findsOneWidget);
+      expect(find.text("Pin a task to Today’s 5"), findsNothing);
+    });
+
+    // [Mechanism] Search results include non-leaf parents (unpinnable), which
+    // the pin picker excludes — picking one navigates rather than pinning.
+    testWidgets('picking a result navigates instead of pinning', (tester) async {
+      Task? navigated;
+      await tester.runAsync(() async {
+        final parentId = await db.insertTask(Task(name: 'Parent project'));
+        final childId = await db.insertTask(Task(name: 'A child'));
+        await db.addRelationship(parentId, childId);
+      });
+      await pumpAndLoad(
+        tester,
+        buildTestWidget(onNavigateToTask: (t) => navigated = t),
+      );
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+      await search(tester, 'Parent project');
+      await tester.tap(find.text('Parent project').last);
+      await pumpAsync(tester);
+
+      expect(navigated, isNotNull,
+          reason: 'a search result must open in the All Tasks tab');
+      expect(navigated!.name, 'Parent project');
+      // Navigating must not pin it — Today's 5 stays empty.
+      final state = await tester.runAsync(
+          () => db.getTodaysFiveTaskAndPinIds(_todayKey()));
+      expect(state!.taskIds, isEmpty);
+    });
+
+    // [Mechanism] Empty search → "Create ..." opens the shared root add flow
+    // with the query pre-filled. Unlike the FAB's create-new flow (pin is
+    // implicit there), the pin is OPTIONAL here — the toggle is shown while a
+    // slot is free, and the task is not pinned unless the user asks.
+    testWidgets('create-from-search files a root task without pinning it',
+        (tester) async {
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+      await search(tester, 'Fresh capture');
+      await tester.tap(find.textContaining('Create'));
+      await pumpAsync(tester);
+
+      expect(find.text('Add Task'), findsOneWidget);
+      expect(find.text('Inbox'), findsOneWidget);
+      // Pin toggle offered (a slot is free) but left off.
+      expect(find.text('Pin'), findsOneWidget);
+
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Add'));
+      });
+      await pumpAsync(tester);
+
+      final created = await tester.runAsync(() async {
+        final all = await db.getAllTasks();
+        return all.firstWhere((t) => t.name == 'Fresh capture');
+      });
+      final parents =
+          await tester.runAsync(() => provider.getParentIds(created!.id!));
+      expect(parents, isEmpty, reason: 'search create files at root');
+      final state = await tester.runAsync(
+          () => db.getTodaysFiveTaskAndPinIds(_todayKey()));
+      expect(state!.taskIds, isEmpty,
+          reason: 'pin toggle left off → not pinned');
+    });
+
+    // [Mechanism] Turning the optional pin toggle ON must both persist the pin
+    // AND make the new task visible right away: only the Today's 5 caller passes
+    // `onCompleted: refreshSnapshots` to showRootAddFromSearch. Drop that wiring
+    // and the task is pinned in the DB but the list still reads "Nothing pinned
+    // yet" until a tab switch.
+    testWidgets('create-from-search with the pin toggle on pins it and shows '
+        'it immediately', (tester) async {
+      await pumpAndLoad(tester, buildTestWidget());
+      expect(find.text('Nothing pinned yet'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+      await search(tester, 'Pin me now');
+      await tester.tap(find.textContaining('Create'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.text('Pin'));
+      await pumpAsync(tester);
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Add'));
+      });
+      // The pin path (defer-notify add → pin write → refreshAfterMutation →
+      // refreshSnapshots reload) needs the fake clock advanced as well as real
+      // async drained; pumpAsync alone starves the timers those DB locks wait
+      // on and the reload never lands.
+      for (var i = 0; i < 30; i++) {
+        await tester.runAsync(() => Future<void>.delayed(
+            const Duration(milliseconds: 10)));
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      final created = await tester.runAsync(() async {
+        final all = await db.getAllTasks();
+        return all.firstWhere((t) => t.name == 'Pin me now');
+      });
+      final state = await tester.runAsync(
+          () => db.getTodaysFiveTaskAndPinIds(_todayKey()));
+      expect(state!.pinnedIds, contains(created!.id),
+          reason: 'pin toggle on → persisted as a pin');
+      // Rendered without any reload/tab switch.
+      expect(find.text('Nothing pinned yet'), findsNothing);
+      expect(find.text('Pin me now'), findsOneWidget);
+    });
+
+    // [Edge case] `showRootAddFromSearch` gates the pin toggle on a free slot
+    // (`pinnedIds.length < maxPins`). With Today's 5 already full the toggle must
+    // be absent — otherwise it would be a control that can only fail.
+    //
+    // Deliberately ends at Cancel rather than Add: committing the add here
+    // deadlocks the WIDGET-TEST HARNESS (not the app). Under FakeAsync +
+    // databaseFactoryFfiNoIsolate, the reload that a full Today's 5 triggers
+    // holds sqflite's `synchronized` lock while waiting on timers pumpAsync
+    // never advances ("database has been locked for 0:00:10"), and tearDown's
+    // db.reset() then blocks forever. The same flow completes in ~2s against
+    // the real DB factory, and creating-at-root is already covered by the
+    // no-pin test above, so nothing is lost by stopping at the gate.
+    testWidgets('create-from-search hides the pin toggle when Today\'s 5 is '
+        'full', (tester) async {
+      await tester.runAsync(() async {
+        final ids = <int>[];
+        for (var i = 1; i <= 5; i++) {
+          ids.add(await db.insertTask(Task(name: 'Pinned $i')));
+        }
+        await seedTodaysFive(db, ids);
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+      await search(tester, 'Overflow capture');
+      await tester.tap(find.textContaining('Create'));
+      await pumpAsync(tester);
+
+      expect(find.text('Add Task'), findsOneWidget);
+      expect(find.text('Inbox'), findsOneWidget);
+      expect(find.text('Pin'), findsNothing,
+          reason: 'no free slot → no pin toggle');
+
+      // `.last` = the Add Task dialog's Cancel; the search picker's own Cancel
+      // is still in the tree while its pop animation settles.
+      await tester.tap(find.text('Cancel').last);
+      await pumpAsync(tester);
+
+      final state = await tester.runAsync(
+          () => db.getTodaysFiveTaskAndPinIds(_todayKey()));
+      expect(state!.pinnedIds.length, 5,
+          reason: 'the full Today\'s 5 is untouched');
+    });
+  });
+
   group('+ FAB visibility at max pins', () {
     // [Mechanism] Once Today's 5 holds maxPins tasks, the + FAB is hidden so
     // there's never an add button that can only fail with a "full" message.

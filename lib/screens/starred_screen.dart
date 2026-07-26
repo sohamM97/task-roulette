@@ -8,6 +8,8 @@ import '../providers/task_provider.dart';
 import '../utils/display_utils.dart';
 import '../widgets/add_task_flow.dart';
 import '../widgets/profile_icon.dart';
+import '../widgets/tab_app_bar_title.dart';
+import '../widgets/task_search.dart';
 import '../providers/theme_provider.dart';
 import 'completed_tasks_screen.dart';
 
@@ -143,6 +145,19 @@ class StarredScreenState extends State<StarredScreen>
       onProviderRefresh: provider.refreshAfterMutation,
     ).run(context);
   }
+
+  /// Global search (shared with the All Tasks and Today's 5 tabs). A picked
+  /// task opens in the All Tasks tab via [StarredScreen.onNavigateToTask] —
+  /// results can be any task, most of which have no place on this page.
+  Future<void> _searchTask() => showTaskSearch(
+        context,
+        onSelected: (selected) async => widget.onNavigateToTask?.call(selected),
+        onCreateTask: (name) => showRootAddFromSearch(
+          context,
+          initialName: name,
+          onOpenExisting: (existing) => widget.onNavigateToTask?.call(existing),
+        ),
+      );
 
   void _onProviderChanged() {
     if (!mounted || _loading) return;
@@ -295,58 +310,36 @@ class StarredScreenState extends State<StarredScreen>
 
     return AppBar(
       titleSpacing: 16,
-      title: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Task Roulette',
-            style: TextStyle(
-              fontFamily: 'Outfit',
-              fontSize: 30,
-              fontWeight: FontWeight.w400,
-              letterSpacing: -0.3,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Row(
-            children: [
-              Text(
-                'Starred',
-                style: TextStyle(
-                  fontFamily: 'Outfit',
-                  fontSize: 16,
-                  fontWeight: FontWeight.w300,
-                  color: colorScheme.onSurfaceVariant,
-                  letterSpacing: 1.0,
+      title: TabAppBarTitle(
+        subtitle: 'Starred',
+        trailing: _starredTasks.isEmpty
+            ? null
+            : Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 6,
+                  vertical: 1,
+                ),
+                decoration: BoxDecoration(
+                  color: colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '${_starredTasks.length}',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: colorScheme.onPrimaryContainer,
+                    fontSize: 10,
+                  ),
                 ),
               ),
-              if (_starredTasks.isNotEmpty) ...[
-                const SizedBox(width: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 1,
-                  ),
-                  decoration: BoxDecoration(
-                    color: colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '${_starredTasks.length}',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: colorScheme.onPrimaryContainer,
-                      fontSize: 10,
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ],
       ),
       toolbarHeight: 72,
       actions: [
         const ProfileIcon(),
+        IconButton(
+          icon: const Icon(Icons.search, size: 22),
+          onPressed: _searchTask,
+          tooltip: 'Search',
+        ),
         Consumer<ThemeProvider>(
           builder: (context, themeProvider, _) {
             return IconButton(
