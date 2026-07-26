@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'inbox_toggle_chip.dart';
 
 /// Dialog for rapid multi-task entry. Each line becomes a separate task.
 /// Returns a list of task names (non-empty, trimmed).
@@ -13,7 +14,18 @@ class BrainDumpDialog extends StatefulWidget {
   final String initialText;
   final bool showInboxOption;
 
-  const BrainDumpDialog({super.key, this.initialText = '', this.showInboxOption = false});
+  /// Starting state of the Inbox toggle. Defaults ON (a fresh brain dump files
+  /// to the Inbox), but callers arriving from the Add Task dialog's "Add
+  /// multiple" pass the toggle state the user had already set there, so the
+  /// choice survives the switch instead of silently reverting to ON.
+  final bool initialInbox;
+
+  const BrainDumpDialog({
+    super.key,
+    this.initialText = '',
+    this.showInboxOption = false,
+    this.initialInbox = true,
+  });
 
   @override
   State<BrainDumpDialog> createState() => _BrainDumpDialogState();
@@ -22,11 +34,12 @@ class BrainDumpDialog extends StatefulWidget {
 class _BrainDumpDialogState extends State<BrainDumpDialog> {
   final _controller = TextEditingController();
   int _lineCount = 0;
-  bool _inbox = true;
+  late bool _inbox;
 
   @override
   void initState() {
     super.initState();
+    _inbox = widget.initialInbox;
     if (widget.initialText.isNotEmpty) {
       _controller.text = widget.initialText;
     }
@@ -107,33 +120,9 @@ class _BrainDumpDialogState extends State<BrainDumpDialog> {
                     ),
                   const Spacer(),
                   if (widget.showInboxOption)
-                    InkWell(
-                      borderRadius: BorderRadius.circular(8),
-                      onTap: () => setState(() => _inbox = !_inbox),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              _inbox ? Icons.inbox : Icons.inbox_outlined,
-                              size: 16,
-                              color: _inbox
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Theme.of(context).colorScheme.onSurfaceVariant.withAlpha(120),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              'Inbox',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: _inbox
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Theme.of(context).colorScheme.onSurfaceVariant.withAlpha(120),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                    InboxToggleChip(
+                      value: _inbox,
+                      onChanged: (v) => setState(() => _inbox = v),
                     ),
                 ],
               ),

@@ -1013,6 +1013,48 @@ void main() {
       expect(parents, isEmpty,
           reason: 'screen FAB must add at root, not under any task');
     });
+
+    // [Regression] Same dropped-Inbox-toggle bug as the All Tasks "+" FAB, but
+    // through the Starred screen's own AddTaskFlow (a different addBatch closure
+    // — isStarred + atRoot). Before: turning Inbox OFF and tapping "Add
+    // multiple" reopened the brain dump with Inbox back ON, so the whole batch
+    // was filed into the Inbox against the user's choice. After: the batch lands
+    // as plain starred root tasks.
+    testWidgets('screen FAB: Inbox OFF survives "Add multiple"',
+        (tester) async {
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await pumpAsync(tester);
+      expect(find.text('Inbox'), findsOneWidget);
+
+      // Turn Inbox OFF, then switch to the brain dump.
+      await tester.tap(find.text('Inbox'));
+      await pumpAsync(tester);
+      await tester.tap(find.text('Add multiple'));
+      await pumpAsync(tester);
+      expect(find.text('Brain dump'), findsOneWidget);
+
+      await tester.enterText(
+          find.byType(TextField).first, 'Starred one\nStarred two');
+      await pumpAsync(tester);
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Add 2'));
+      });
+      await pumpAsync(tester);
+
+      final batch = await tester.runAsync(() async {
+        final all = await db.getAllTasks();
+        return all.where((t) => t.name.startsWith('Starred ')).toList();
+      });
+      expect(batch, hasLength(2), reason: 'both lines created');
+      for (final t in batch!) {
+        expect(t.isInbox, isFalse,
+            reason: '"${t.name}" must honour the Inbox-OFF choice');
+        expect(t.isStarred, isTrue,
+            reason: 'screen FAB auto-stars the batch too');
+      }
+    });
   });
 
   group('StarredScreen - search', () {

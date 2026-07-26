@@ -272,6 +272,153 @@ void main() {
       expect((result as SwitchToBrainDump).initialText, 'buy milk');
     });
 
+    // [Regression] Inbox OFF → "Add multiple" used to drop the toggle state:
+    // SwitchToBrainDump carried only the text, so the brain dump reopened with
+    // its own default-ON and filed the batch to the Inbox against the user's
+    // choice. The state must ride along on the result object.
+    testWidgets('"Add multiple" carries the Inbox toggle state (OFF)',
+        (tester) async {
+      AddTaskResult? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  result = await showDialog<AddTaskResult>(
+                    context: context,
+                    builder: (_) => const AddTaskDialog(showInboxOption: true),
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      // Inbox defaults ON — turn it OFF before switching to the brain dump.
+      await tester.tap(find.text('Inbox'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add multiple'));
+      await tester.pumpAndSettle();
+
+      expect(result, isA<SwitchToBrainDump>());
+      expect((result as SwitchToBrainDump).addToInbox, isFalse,
+          reason: 'the OFF choice must survive the switch');
+    });
+
+    // [Baseline] The untouched default (ON) must also carry over, so the fix
+    // isn't just inverting the value.
+    testWidgets('"Add multiple" carries the Inbox toggle state (ON)',
+        (tester) async {
+      AddTaskResult? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  result = await showDialog<AddTaskResult>(
+                    context: context,
+                    builder: (_) => const AddTaskDialog(showInboxOption: true),
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Add multiple'));
+      await tester.pumpAndSettle();
+
+      expect((result as SwitchToBrainDump).addToInbox, isTrue);
+    });
+
+    // [Mechanism] The receiving end: BrainDumpDialog must honour initialInbox
+    // instead of always starting ON.
+    testWidgets('BrainDumpDialog honours initialInbox: false', (tester) async {
+      BrainDumpResult? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  result = await showDialog<BrainDumpResult>(
+                    context: context,
+                    builder: (_) => const BrainDumpDialog(
+                      showInboxOption: true,
+                      initialInbox: false,
+                    ),
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).first, 'one\ntwo');
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('Add'));
+      await tester.pumpAndSettle();
+
+      expect(result, isNotNull);
+      expect(result!.names, ['one', 'two']);
+      expect(result!.addToInbox, isFalse,
+          reason: 'opened with Inbox OFF, so the batch must not go to Inbox');
+    });
+
+    // [Edge case] Pin ON + Inbox OFF: the Pin choice has no brain-dump
+    // equivalent (BrainDumpDialog offers no pin toggle) and is dropped, but that
+    // must not disturb the Inbox state riding across. Documents actual
+    // behaviour so a future "carry the pin too" change is a deliberate one.
+    testWidgets('"Add multiple" carries Inbox OFF even with Pin toggled on',
+        (tester) async {
+      AddTaskResult? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  result = await showDialog<AddTaskResult>(
+                    context: context,
+                    builder: (_) => const AddTaskDialog(
+                      showInboxOption: true,
+                      showPinOption: true,
+                    ),
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Pin'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Inbox'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add multiple'));
+      await tester.pumpAndSettle();
+
+      expect((result as SwitchToBrainDump).addToInbox, isFalse);
+    });
+
     testWidgets('"Add multiple" is hidden when showAddMultiple is false',
         (tester) async {
       // Bug fix: the Today's 5 create flow only handles SingleTask, so it must
@@ -791,7 +938,8 @@ void main() {
   group('BrainDumpDialog inbox toggle', () {
     Future<void> openBrainDumpWithInbox(WidgetTester tester,
         {required ValueChanged<BrainDumpResult?> onResult,
-        bool showInboxOption = true}) async {
+        bool showInboxOption = true,
+        bool initialInbox = true}) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -800,8 +948,10 @@ void main() {
                 onPressed: () async {
                   final result = await showDialog<BrainDumpResult>(
                     context: context,
-                    builder: (_) =>
-                        BrainDumpDialog(showInboxOption: showInboxOption),
+                    builder: (_) => BrainDumpDialog(
+                      showInboxOption: showInboxOption,
+                      initialInbox: initialInbox,
+                    ),
                   );
                   onResult(result);
                 },
@@ -862,6 +1012,34 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(result, isNotNull);
+      expect(result!.addToInbox, isFalse);
+    });
+
+    // [Edge case] A caller with showInboxOption:false (e.g. the Starred
+    // "Add subtask" flow, where inbox filing makes no sense) is unaffected by
+    // the new initialInbox seed: no chip is offered and nothing is filed to the
+    // Inbox, even though the seed arrives ON. Guards the double gate — the
+    // "Add multiple" hand-off passes _inbox UNgated, so BrainDumpDialog's own
+    // `showInboxOption && _inbox` gate is what keeps subtask batches out of the
+    // Inbox.
+    testWidgets('showInboxOption:false ignores an initialInbox:true seed',
+        (tester) async {
+      BrainDumpResult? result;
+      await openBrainDumpWithInbox(tester,
+          onResult: (r) => result = r,
+          showInboxOption: false,
+          initialInbox: true);
+
+      await tester.enterText(find.byType(TextField), 'Sub A\nSub B');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Inbox'), findsNothing,
+          reason: 'no Inbox chip when the surface does not offer inbox filing');
+
+      await tester.tap(find.text('Add 2'));
+      await tester.pumpAndSettle();
+
+      expect(result!.names, ['Sub A', 'Sub B']);
       expect(result!.addToInbox, isFalse);
     });
   });

@@ -742,6 +742,46 @@ void main() {
       await pumpAsync(tester);
     }
 
+    // [Regression] End-to-end for the dropped-Inbox-toggle bug, through the real
+    // AddTaskDialog → SwitchToBrainDump → AddTaskFlow → BrainDumpDialog chain
+    // (the unit tests in small_widgets_test.dart cover each seam in isolation).
+    // Before: turning Inbox OFF at root and then tapping "Add multiple" reopened
+    // the brain dump with Inbox back ON, so the whole batch was filed into the
+    // Inbox against the user's choice. After: every task lands outside the Inbox.
+    testWidgets('Inbox OFF survives the switch to "Add multiple"',
+        (tester) async {
+      await tester.runAsync(() => provider.loadRootTasks());
+      await pumpAndLoad(tester, buildTestWidget());
+
+      // Root level, so the "+" FAB's dialog offers the Inbox toggle.
+      await tester.tap(find.byType(FloatingActionButton));
+      await pumpAsync(tester);
+      expect(find.text('Inbox'), findsOneWidget);
+
+      // Turn Inbox OFF, then switch to the brain dump.
+      await tester.tap(find.text('Inbox'));
+      await pumpAsync(tester);
+      await tester.tap(find.text('Add multiple'));
+      await pumpAsync(tester);
+
+      await tester.enterText(
+          find.byType(TextField).first, 'Batch one\nBatch two');
+      await pumpAsync(tester);
+      await tester.runAsync(() async {
+        await tester.tap(find.textContaining('Add'));
+      });
+      await pumpAsync(tester);
+
+      final all = await tester.runAsync(() => db.getAllTasks()) ?? [];
+      final batch =
+          all.where((t) => t.name.startsWith('Batch ')).toList();
+      expect(batch.length, 2, reason: 'both lines created');
+      for (final t in batch) {
+        expect(t.isInbox, isFalse,
+            reason: '"${t.name}" must honour the Inbox-OFF choice');
+      }
+    });
+
     // [Regression] The app bar search action still opens the "Search tasks"
     // picker after the body was extracted into the shared helper.
     testWidgets('app bar search icon opens the "Search tasks" dialog',
