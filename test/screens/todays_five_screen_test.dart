@@ -2054,6 +2054,149 @@ void main() {
       expect(find.byIcon(Icons.expand_more), findsNothing);
       expect(find.byIcon(Icons.expand_less), findsNothing);
     });
+
+    // [Regression] The right-edge "scroll sideways" fade was a bare ShaderMask
+    // applied unconditionally, so the last chip was always dimmed — even when
+    // the whole strip fit on screen with room to spare. The fade must only be
+    // painted when there is content scrolled off past the right edge.
+    testWidgets('does not fade the last chip when the strip fits on screen',
+        (tester) async {
+      await tester.runAsync(() async {
+        final id = await db.insertTask(Task(name: 'Solo done'));
+        await db.completeTask(id);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Solo done'), findsOneWidget);
+      expect(find.byType(ShaderMask), findsNothing);
+    });
+
+    testWidgets('fades the right edge when the chips overflow the strip',
+        (tester) async {
+      await tester.runAsync(() async {
+        for (var i = 0; i < 12; i++) {
+          final id = await db.insertTask(
+              Task(name: 'A rather long finished task name $i'));
+          await db.completeTask(id);
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      // The fade is applied one frame after the scroll metrics land.
+      await tester.pump();
+
+      expect(find.byType(ShaderMask), findsOneWidget);
+    });
+
+    // [Regression] Second half of the same bug: because the old fade was
+    // unconditional, it stayed painted after the user had scrolled all the way
+    // right — the last chip was dimmed exactly when there was nothing more to
+    // scroll to. The fade must clear once `extentAfter` hits 0.
+    testWidgets('clears the fade once the strip is scrolled to the far right',
+        (tester) async {
+      await tester.runAsync(() async {
+        for (var i = 0; i < 12; i++) {
+          final id = await db.insertTask(
+              Task(name: 'A rather long finished task name $i'));
+          await db.completeTask(id);
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.pump();
+      expect(find.byType(ShaderMask), findsOneWidget);
+
+      // Swipe the chip strip (the only right-scrolling list on screen — the
+      // Suggested band is collapsed) to its right-hand end.
+      final strip = find.byWidgetPredicate(
+        (w) => w is Scrollable && w.axisDirection == AxisDirection.right,
+      );
+      expect(strip, findsOneWidget);
+      await tester.drag(strip, const Offset(-3000, 0));
+      await tester.pumpAndSettle();
+
+      // Scrolled to the end…
+      expect(tester.state<ScrollableState>(strip).position.extentAfter, 0);
+      // …so nothing is cut off and the fade is gone.
+      expect(find.byType(ShaderMask), findsNothing);
+    });
+
+    // [Mechanism] The other half of the toggle: once the user swipes back away
+    // from the right-hand end there IS content cut off again, so the hint must
+    // come back. This also guards the `GlobalKey`/`KeyedSubtree` in
+    // `_FadeRightEdge`: adding/removing the ShaderMask re-parents the strip, and
+    // without the key the Scrollable would be rebuilt from scratch and snap back
+    // to offset 0 — so the scroll offset must survive both toggles.
+    testWidgets('re-shows the fade when scrolled back from the far right, '
+        'keeping the scroll offset', (tester) async {
+      await tester.runAsync(() async {
+        for (var i = 0; i < 12; i++) {
+          final id = await db.insertTask(
+              Task(name: 'A rather long finished task name $i'));
+          await db.completeTask(id);
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.pump();
+
+      final strip = find.byWidgetPredicate(
+        (w) => w is Scrollable && w.axisDirection == AxisDirection.right,
+      );
+
+      // To the end: the mask comes off (the strip is re-parented).
+      await tester.drag(strip, const Offset(-3000, 0));
+      await tester.pumpAndSettle();
+      final maxExtent =
+          tester.state<ScrollableState>(strip).position.maxScrollExtent;
+      expect(maxExtent, greaterThan(0));
+      // Offset survived the un-masking rather than resetting to 0.
+      expect(tester.state<ScrollableState>(strip).position.pixels, maxExtent);
+      expect(find.byType(ShaderMask), findsNothing);
+
+      // Back left a little: the mask goes back on (re-parented again).
+      await tester.drag(strip, const Offset(200, 0));
+      await tester.pumpAndSettle();
+
+      final position = tester.state<ScrollableState>(strip).position;
+      expect(position.extentAfter, greaterThan(0));
+      // Still mid-strip — the re-masking didn't reset the offset either.
+      expect(position.pixels, greaterThan(0));
+      expect(position.pixels, lessThan(maxExtent));
+      expect(find.byType(ShaderMask), findsOneWidget);
+    });
+
+    // [Edge case] Whether the strip overflows is a function of the viewport, not
+    // just the chip count: the same three chips that fit on a desktop-width
+    // window run off the right edge on a phone. The fade is driven by
+    // `ScrollMetricsNotification` (viewport/content size) — not only by the user
+    // scrolling — so a narrow screen must show it with no interaction at all.
+    testWidgets('fades at phone width for chips that fit at desktop width',
+        (tester) async {
+      await tester.runAsync(() async {
+        for (var i = 0; i < 3; i++) {
+          final id = await db.insertTask(
+              Task(name: 'A rather long finished task name $i'));
+          await db.completeTask(id);
+        }
+      });
+
+      // Desktop-width baseline (default 800x600 test surface): all three fit.
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.pump();
+      expect(find.byType(ShaderMask), findsNothing);
+
+      // Same three chips on a phone-width screen: now they overflow.
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.pump();
+      expect(find.byType(ShaderMask), findsOneWidget);
+    });
   });
 
   // Task 2: opt-in algorithm-driven "Suggested" section.
@@ -2082,6 +2225,41 @@ void main() {
 
       expect(find.text('Suggested'), findsOneWidget);
       expect(find.text('Candidate task'), findsOneWidget);
+    });
+
+    // [Regression] The Suggested pill band shares the same right-edge fade
+    // helper as "Also done today", so it carried the same bug: the rightmost
+    // pills were dimmed even when the whole band fit on screen.
+    testWidgets('does not fade the pill band when it fits on screen',
+        (tester) async {
+      await tester.runAsync(() async {
+        for (var i = 0; i < 4; i++) {
+          await db.insertTask(Task(name: 'Leaf $i'));
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+
+      // 2 columns of pills on an 800px-wide surface — nothing off the right.
+      expect(find.text('Leaf 0'), findsOneWidget);
+      expect(find.byType(ShaderMask), findsNothing);
+    });
+
+    testWidgets('fades the pill band when the columns overflow',
+        (tester) async {
+      await tester.runAsync(() async {
+        for (var i = 0; i < 24; i++) {
+          await db.insertTask(Task(name: 'A fairly long candidate name $i'));
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+
+      expect(find.byType(ShaderMask), findsOneWidget);
     });
 
     testWidgets('does not suggest tasks already in Today\'s 5', (tester) async {
