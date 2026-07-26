@@ -24,6 +24,17 @@ launch — deleting the file is equivalent to clearing all tables.)
    `pgrep -af "task_roulette|dev.sh"`. Kill the matched PIDs
    (`kill <pids>`). This ends the `./dev.sh` hot-reload session too — that's
    expected; a full restart is needed for the empty DB to take effect anyway.
+
+   **Pre-flight: read the binary's PATH before you kill anything.** The DB path
+   is keyed to the app ID, so **every** checkout — including
+   `~/projects/personal/app-worktrees/<name>/` worktrees — shares this ONE
+   database. `pgrep -af` prints the full path; check which checkout each match
+   actually came from. If a running app (or any `dev.sh`) belongs to a
+   **different worktree/branch** than the one you're working in, or if you find
+   **more than one** `dev.sh`, **stop and tell the user before killing or
+   deleting** — name the worktree, and confirm they're fine with that session's
+   app being killed and its data wiped. Another session may be mid-test against
+   that data, and neither the kill nor the clear is scoped to your checkout.
 3. **Back up first (safety, always).** This is a dev machine — the local DB is
    often the only copy. Copy before deleting:
    `cp -v "$DB" "$DBDIR/task_roulette.db.preclear_$(date +%Y%m%d_%H%M%S)"`.
@@ -42,5 +53,9 @@ launch — deleting the file is equivalent to clearing all tables.)
   or `shared_preferences.json` (app settings, not task data).
 - Don't run this while a release/manual test that depends on existing data is
   mid-flight without confirming — clearing is only for a deliberate clean slate.
+- **One DB, all checkouts.** There is a single DB per app ID, so a clear hits
+  every worktree, not just the current one. Never assume the running app is
+  yours — verify via the process path (see step 2) and confirm with the user
+  when it isn't.
 - To restore: `cp "$DBDIR/task_roulette.db.preclear_<ts>" "$DBDIR/task_roulette.db"`
   (with the app stopped), then relaunch.
