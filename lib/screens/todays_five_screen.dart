@@ -1469,20 +1469,10 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
   /// Wraps a left-packed horizontal strip with a soft right-edge fade so an
   /// overflowing item fades out (a "scroll sideways →" hint) instead of being
-  /// chopped mid-word. When the content doesn't overflow, the right edge is
-  /// empty so the fade is invisible.
-  Widget _fadeRightEdge({required Widget child}) {
-    return ShaderMask(
-      shaderCallback: (Rect bounds) => const LinearGradient(
-        begin: Alignment.centerLeft,
-        end: Alignment.centerRight,
-        stops: [0.0, 0.88, 1.0],
-        colors: [Colors.black, Colors.black, Colors.transparent],
-      ).createShader(bounds),
-      blendMode: BlendMode.dstIn,
-      child: child,
-    );
-  }
+  /// chopped mid-word. The fade is only painted while there is content past the
+  /// right edge — see [_FadeRightEdge].
+  Widget _fadeRightEdge({required Widget child}) =>
+      _FadeRightEdge(child: child);
 
   /// Options sheet for a suggestion pill's body tap (user's choice over a bare
   /// navigate/pin): "Add to Today's 5" / "Go to task" / "Dismiss suggestion".
@@ -2018,6 +2008,83 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Soft right-edge fade for a horizontally scrolling strip ("Also done today"
+/// chips, the Suggested pills), painted **only while there is content scrolled
+/// off past the right edge**.
+///
+/// Bug fix: this used to be a bare [ShaderMask] applied unconditionally, so the
+/// rightmost ~12% of the strip was always faded — the last "Also done today"
+/// chip looked dimmed even when the whole row fit on screen with room to spare,
+/// and it stayed dimmed once the user scrolled to the end. Now the strip's
+/// scroll metrics drive the fade: it appears only when `extentAfter > 0` (there
+/// really is more to swipe to) and disappears at the end of the scroll.
+class _FadeRightEdge extends StatefulWidget {
+  const _FadeRightEdge({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_FadeRightEdge> createState() => _FadeRightEdgeState();
+}
+
+class _FadeRightEdgeState extends State<_FadeRightEdge> {
+  bool _hasMoreRight = false;
+
+  /// Toggling the fade adds/removes the [ShaderMask] above the strip, which
+  /// re-parents it. Without a [GlobalKey] the strip's `Scrollable` would be
+  /// rebuilt from scratch on every toggle and snap back to offset 0 — so the
+  /// first swipe would reset itself and the fade could never clear. The key
+  /// carries the live scroll position across the re-parent.
+  final GlobalKey _stripKey = GlobalKey();
+
+  /// Scroll metrics arrive during layout, so defer the rebuild to after the
+  /// current frame rather than calling `setState` mid-layout.
+  void _syncFade(ScrollMetrics metrics) {
+    final hasMoreRight = metrics.extentAfter > 0.5;
+    if (hasMoreRight == _hasMoreRight) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || hasMoreRight == _hasMoreRight) return;
+      setState(() => _hasMoreRight = hasMoreRight);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Both notifications matter: metrics fire when the content or viewport size
+    // changes (chips added/removed, window resized), scroll fires as the user
+    // swipes towards the end.
+    final strip = KeyedSubtree(
+      key: _stripKey,
+      child: NotificationListener<ScrollMetricsNotification>(
+        onNotification: (n) {
+          _syncFade(n.metrics);
+          return false;
+        },
+        child: NotificationListener<ScrollNotification>(
+          onNotification: (n) {
+            _syncFade(n.metrics);
+            return false;
+          },
+          child: widget.child,
+        ),
+      ),
+    );
+
+    if (!_hasMoreRight) return strip;
+
+    return ShaderMask(
+      shaderCallback: (Rect bounds) => const LinearGradient(
+        begin: Alignment.centerLeft,
+        end: Alignment.centerRight,
+        stops: [0.0, 0.88, 1.0],
+        colors: [Colors.black, Colors.black, Colors.transparent],
+      ).createShader(bounds),
+      blendMode: BlendMode.dstIn,
+      child: strip,
     );
   }
 }

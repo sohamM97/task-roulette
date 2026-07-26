@@ -1872,6 +1872,73 @@ void main() {
       expect(find.byIcon(Icons.expand_more), findsNothing);
       expect(find.byIcon(Icons.expand_less), findsNothing);
     });
+
+    // [Regression] The right-edge "scroll sideways" fade was a bare ShaderMask
+    // applied unconditionally, so the last chip was always dimmed — even when
+    // the whole strip fit on screen with room to spare. The fade must only be
+    // painted when there is content scrolled off past the right edge.
+    testWidgets('does not fade the last chip when the strip fits on screen',
+        (tester) async {
+      await tester.runAsync(() async {
+        final id = await db.insertTask(Task(name: 'Solo done'));
+        await db.completeTask(id);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+
+      expect(find.text('Solo done'), findsOneWidget);
+      expect(find.byType(ShaderMask), findsNothing);
+    });
+
+    testWidgets('fades the right edge when the chips overflow the strip',
+        (tester) async {
+      await tester.runAsync(() async {
+        for (var i = 0; i < 12; i++) {
+          final id = await db.insertTask(
+              Task(name: 'A rather long finished task name $i'));
+          await db.completeTask(id);
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      // The fade is applied one frame after the scroll metrics land.
+      await tester.pump();
+
+      expect(find.byType(ShaderMask), findsOneWidget);
+    });
+
+    // [Regression] Second half of the same bug: because the old fade was
+    // unconditional, it stayed painted after the user had scrolled all the way
+    // right — the last chip was dimmed exactly when there was nothing more to
+    // scroll to. The fade must clear once `extentAfter` hits 0.
+    testWidgets('clears the fade once the strip is scrolled to the far right',
+        (tester) async {
+      await tester.runAsync(() async {
+        for (var i = 0; i < 12; i++) {
+          final id = await db.insertTask(
+              Task(name: 'A rather long finished task name $i'));
+          await db.completeTask(id);
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.pump();
+      expect(find.byType(ShaderMask), findsOneWidget);
+
+      // Swipe the chip strip (the only right-scrolling list on screen — the
+      // Suggested band is collapsed) to its right-hand end.
+      final strip = find.byWidgetPredicate(
+        (w) => w is Scrollable && w.axisDirection == AxisDirection.right,
+      );
+      expect(strip, findsOneWidget);
+      await tester.drag(strip, const Offset(-3000, 0));
+      await tester.pumpAndSettle();
+
+      // Scrolled to the end…
+      expect(tester.state<ScrollableState>(strip).position.extentAfter, 0);
+      // …so nothing is cut off and the fade is gone.
+      expect(find.byType(ShaderMask), findsNothing);
+    });
   });
 
   // Task 2: opt-in algorithm-driven "Suggested" section.
@@ -1900,6 +1967,41 @@ void main() {
 
       expect(find.text('Suggested'), findsOneWidget);
       expect(find.text('Candidate task'), findsOneWidget);
+    });
+
+    // [Regression] The Suggested pill band shares the same right-edge fade
+    // helper as "Also done today", so it carried the same bug: the rightmost
+    // pills were dimmed even when the whole band fit on screen.
+    testWidgets('does not fade the pill band when it fits on screen',
+        (tester) async {
+      await tester.runAsync(() async {
+        for (var i = 0; i < 4; i++) {
+          await db.insertTask(Task(name: 'Leaf $i'));
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+
+      // 2 columns of pills on an 800px-wide surface — nothing off the right.
+      expect(find.text('Leaf 0'), findsOneWidget);
+      expect(find.byType(ShaderMask), findsNothing);
+    });
+
+    testWidgets('fades the pill band when the columns overflow',
+        (tester) async {
+      await tester.runAsync(() async {
+        for (var i = 0; i < 24; i++) {
+          await db.insertTask(Task(name: 'A fairly long candidate name $i'));
+        }
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+
+      expect(find.byType(ShaderMask), findsOneWidget);
     });
 
     testWidgets('does not suggest tasks already in Today\'s 5', (tester) async {
