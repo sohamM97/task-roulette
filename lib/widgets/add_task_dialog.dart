@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/task.dart';
 import '../utils/display_utils.dart' show normalizeUrl, isAllowedUrl, showInfoSnackBar, UrlTextField;
+import 'inbox_toggle_chip.dart';
 
 /// Result from AddTaskDialog: a single task name, a request to switch to brain
 /// dump mode, or a request to use an already-existing task instead of creating
@@ -17,7 +18,17 @@ class SingleTask extends AddTaskResult {
 
 class SwitchToBrainDump extends AddTaskResult {
   final String initialText;
-  SwitchToBrainDump({this.initialText = ''});
+
+  /// The Inbox toggle's state when the user tapped "Add multiple", carried over
+  /// so the brain dump opens with the choice they already made.
+  ///
+  /// Bug fix: this used to be dropped. Before — turn Inbox OFF, tap "Add
+  /// multiple", and the brain dump opened with Inbox back ON (its own default),
+  /// silently filing the batch into the Inbox against the user's choice. After —
+  /// the toggle state carries across the switch.
+  final bool addToInbox;
+
+  SwitchToBrainDump({this.initialText = '', this.addToInbox = true});
 }
 
 /// The user tapped an inline "already exists" suggestion — they want to act on
@@ -238,33 +249,9 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   List<Widget> _buildToggles(ColorScheme colorScheme) {
     return [
       if (widget.showInboxOption)
-        InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: () => setState(() => _inbox = !_inbox),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  _inbox ? Icons.inbox : Icons.inbox_outlined,
-                  size: 16,
-                  color: _inbox
-                      ? colorScheme.primary
-                      : colorScheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  'Inbox',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _inbox
-                        ? colorScheme.primary
-                        : colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
+        InboxToggleChip(
+          value: _inbox,
+          onChanged: (v) => setState(() => _inbox = v),
         ),
       if (widget.showPinOption)
         InkWell(
@@ -364,7 +351,15 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
             Row(
               children: [
                 TextButton(
-                  onPressed: () => Navigator.pop(context, SwitchToBrainDump(initialText: _controller.text.trim())),
+                  // Carry _inbox across so the brain dump keeps the user's Inbox
+                  // choice instead of resetting to its own default-ON.
+                  onPressed: () => Navigator.pop(
+                    context,
+                    SwitchToBrainDump(
+                      initialText: _controller.text.trim(),
+                      addToInbox: _inbox,
+                    ),
+                  ),
                   style: TextButton.styleFrom(
                     foregroundColor: colorScheme.onSurfaceVariant,
                     textStyle: Theme.of(context).textTheme.bodySmall,

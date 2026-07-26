@@ -152,7 +152,8 @@ class AddTaskFlow {
     if (result is SingleTask) {
       await _addOne(context, result);
     } else if (result is SwitchToBrainDump) {
-      await _addMany(context, result.initialText);
+      await _addMany(context, result.initialText,
+          initialInbox: result.addToInbox);
     } else if (result is UseExisting) {
       await onUseExisting?.call(result.task);
     }
@@ -208,12 +209,17 @@ class AddTaskFlow {
     await onCompleted?.call(1);
   }
 
-  Future<void> _addMany(BuildContext context, String initialText) async {
+  /// [initialInbox] is the Inbox toggle state the user had set in the Add Task
+  /// dialog before tapping "Add multiple" — forwarded so the brain dump opens
+  /// with that choice rather than its own default-ON.
+  Future<void> _addMany(BuildContext context, String initialText,
+      {bool initialInbox = true}) async {
     final result = await showDialog<BrainDumpResult>(
       context: context,
       builder: (_) => BrainDumpDialog(
         initialText: initialText,
         showInboxOption: showInboxOption,
+        initialInbox: initialInbox,
       ),
     );
     if (!context.mounted || result == null || result.names.isEmpty) return;
