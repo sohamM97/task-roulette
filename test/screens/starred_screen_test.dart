@@ -573,7 +573,7 @@ void main() {
       expect(navigatedTask!.name, 'Go here');
     });
 
-    testWidgets('leaf node shows navigate icon', (tester) async {
+    testWidgets('only the header carries a navigate icon', (tester) async {
       await tester.runAsync(() async {
         final parentId = await createStarredTask('Parent');
         final leaf = await db.insertTask(Task(name: 'My leaf'));
@@ -585,8 +585,11 @@ void main() {
       await tester.tap(find.text('Parent'));
       await pumpAsync(tester);
 
-      // Header has one ↗, leaf row has another
-      expect(find.byIcon(Icons.open_in_new_rounded), findsNWidgets(2));
+      // Leaf rows have no ↗ of their own — the whole row body navigates, and
+      // dropping the icon frees the width the trailing "+" needs. Only the
+      // dialog header keeps a "Go to task" arrow.
+      expect(find.byIcon(Icons.open_in_new_rounded), findsOneWidget);
+      expect(find.byTooltip('Go to task'), findsOneWidget);
     });
   });
 
@@ -1514,6 +1517,241 @@ void main() {
       final ancestorParents =
           await tester.runAsync(() => db.getParentIds(ancestorId)) ?? [];
       expect(ancestorParents, isNot(contains(starredId)));
+    });
+  });
+
+  group('StarredScreen - add a subtask at any level', () {
+    // [Mechanism] Every tree row carries its own "+", so a subtask can be
+    // created under a nested row without leaving the expanded dialog. Before
+    // this, the dialog's only add control was a FAB that always parented to the
+    // starred task at the top.
+    testWidgets('a nested row\'s + parents the new task under that row',
+        (tester) async {
+      late int childId;
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        childId = await db.insertTask(Task(name: 'Phase one'));
+        await db.addRelationship(starredId, childId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byTooltip('Add subtask under "Phase one"'));
+      await pumpAsync(tester);
+
+      await tester.enterText(find.byType(TextField).first, 'Sub of phase one');
+      await tester.tap(find.text('Add'));
+      await pumpAsync(tester);
+
+      final childIds =
+          await tester.runAsync(() => db.getChildIds(childId)) ?? [];
+      expect(childIds, hasLength(1));
+      final created =
+          await tester.runAsync(() => db.getTaskById(childIds.first));
+      expect(created!.name, 'Sub of phase one');
+    });
+
+    // [Mechanism] The new subtask is revealed straight away: _reloadAfterAdd
+    // expands the row it was added under and refreshes the level above too, so
+    // the row that was a leaf gains its chevron instead of staying stale.
+    testWidgets('adding under a leaf reveals the new subtask in place',
+        (tester) async {
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        final leafId = await db.insertTask(Task(name: 'Lonely leaf'));
+        await db.addRelationship(starredId, leafId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byTooltip('Add subtask under "Lonely leaf"'));
+      await pumpAsync(tester);
+      await tester.enterText(find.byType(TextField).first, 'Brand new');
+      await tester.tap(find.text('Add'));
+      await pumpAsync(tester);
+
+      // Visible without any further tap — the parent row was auto-expanded.
+      expect(find.text('Brand new'), findsOneWidget);
+    });
+
+    // [Mechanism] The dialog's FAB adds a direct child of the starred task —
+    // the same thing each row's "+" does for that row.
+    testWidgets('the FAB parents the new task under the starred task',
+        (tester) async {
+      late int starredId;
+      await tester.runAsync(() async {
+        starredId = await createStarredTask('Project');
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byTooltip('Add subtask'));
+      await pumpAsync(tester);
+      await tester.enterText(find.byType(TextField).first, 'Top level sub');
+      await tester.tap(find.text('Add'));
+      await pumpAsync(tester);
+
+      final childIds =
+          await tester.runAsync(() => db.getChildIds(starredId)) ?? [];
+      expect(childIds, hasLength(1));
+      final created =
+          await tester.runAsync(() => db.getTaskById(childIds.first));
+      expect(created!.name, 'Top level sub');
+    });
+  });
+
+  group('StarredScreen - mark a task done', () {
+    /// Opens the expanded dialog for [starred] and taps the done circle on its
+    /// only leaf row.
+    Future<void> openDoneMenu(WidgetTester tester, String starred) async {
+      await tester.tap(find.text(starred));
+      await pumpAsync(tester);
+      await tester.tap(find.byTooltip('Mark done'));
+      // The menu animates open. pumpAsync alone pumps frames without moving
+      // the fake clock, so the items exist but are still mid-animation and off
+      // their final position — every tap on one would miss.
+      await pumpAsync(tester, rounds: 5);
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    /// Picks [label] from the done chooser and waits the action out.
+    ///
+    /// Two animations have to finish in turn, and neither is advanced by a bare
+    /// pump: the menu delivers the choice only once its pop animation ends, and
+    /// the completion animation then holds for 700ms before the database write.
+    /// Advancing the clock in slices, interleaved with [pumpAsync] for the real
+    /// async database work, clears both.
+    Future<void> chooseDone(WidgetTester tester, String label) async {
+      await tester.tap(find.text(label));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 300));
+        await pumpAsync(tester, rounds: 5);
+      }
+    }
+
+    /// The task name as the expanded dialog renders it (17px). The starred
+    /// card's tree preview behind the dialog shows the same names at 14px, so a
+    /// bare find.text matches twice.
+    Text rowText(WidgetTester tester, String name) => tester
+        .widgetList<Text>(find.text(name))
+        .firstWhere((t) => t.style?.fontSize == 17);
+
+    // [Mechanism] Only leaves get a done circle: "Done for good!" lives in
+    // LeafTaskDetail, which All Tasks shows only for leaves, so a task with
+    // children has no completion path anywhere in the app.
+    testWidgets('leaf rows get a done circle, branch rows do not',
+        (tester) async {
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        final branchId = await db.insertTask(Task(name: 'Branch'));
+        await db.addRelationship(starredId, branchId);
+        final grandChild = await db.insertTask(Task(name: 'Grandchild'));
+        await db.addRelationship(branchId, grandChild);
+        final leafId = await db.insertTask(Task(name: 'Leaf'));
+        await db.addRelationship(starredId, leafId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      // Both rows are on screen, and only the leaf carries a done circle.
+      expect(find.byTooltip('Add subtask under "Branch"'), findsOneWidget);
+      expect(find.byTooltip('Add subtask under "Leaf"'), findsOneWidget);
+      expect(find.byTooltip('Mark done'), findsOneWidget);
+    });
+
+    // [Mechanism] The circle offers the same pair of actions Today's 5 offers
+    // in its bottom sheet, rather than silently completing for good.
+    testWidgets('tapping the circle offers both kinds of done', (tester) async {
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        final leafId = await db.insertTask(Task(name: 'Leaf'));
+        await db.addRelationship(starredId, leafId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await openDoneMenu(tester, 'Project');
+
+      expect(find.text('Done today'), findsOneWidget);
+      expect(find.text('Done for good!'), findsOneWidget);
+    });
+
+    // [Mechanism] "Done for good!" completes the task in the database and the
+    // row stays on screen struck through, rather than vanishing — the user can
+    // see what they just cleared.
+    testWidgets('"Done for good!" completes the task and keeps the row',
+        (tester) async {
+      late int leafId;
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        leafId = await db.insertTask(Task(name: 'Leaf'));
+        await db.addRelationship(starredId, leafId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await openDoneMenu(tester, 'Project');
+      await chooseDone(tester, 'Done for good!');
+
+      final task = await tester.runAsync(() => db.getTaskById(leafId));
+      expect(task!.completedAt, isNotNull);
+
+      expect(rowText(tester, 'Leaf').style!.decoration,
+          TextDecoration.lineThrough);
+    });
+
+    // [Mechanism] "Done today" stamps last_worked_at instead of completing, so
+    // the task resurfaces later. The row dims rather than striking through.
+    testWidgets('"Done today" marks worked-on without completing',
+        (tester) async {
+      late int leafId;
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        leafId = await db.insertTask(Task(name: 'Leaf'));
+        await db.addRelationship(starredId, leafId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await openDoneMenu(tester, 'Project');
+      await chooseDone(tester, 'Done today');
+
+      final task = await tester.runAsync(() => db.getTaskById(leafId));
+      expect(task!.completedAt, isNull);
+      expect(task.isWorkedOnToday, isTrue);
+
+      expect(rowText(tester, 'Leaf').style!.decoration,
+          isNot(TextDecoration.lineThrough));
+    });
+
+    // [Mechanism] A ticked-off row taps straight back to undone, so a mis-tap
+    // is reversible after the 5-second undo snackbar has gone. The stored
+    // DoneOutcome carries the undo closure that restores dependency links.
+    testWidgets('tapping a ticked-off row again undoes it', (tester) async {
+      late int leafId;
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        leafId = await db.insertTask(Task(name: 'Leaf'));
+        await db.addRelationship(starredId, leafId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await openDoneMenu(tester, 'Project');
+      await chooseDone(tester, 'Done for good!');
+
+      // The circle is now a check; tapping it reverses the completion.
+      await tester.tap(find.byTooltip('Undo done'));
+      await pumpAsync(tester);
+
+      final task = await tester.runAsync(() => db.getTaskById(leafId));
+      expect(task!.completedAt, isNull);
+      expect(rowText(tester, 'Leaf').style!.decoration,
+          isNot(TextDecoration.lineThrough));
     });
   });
 }
