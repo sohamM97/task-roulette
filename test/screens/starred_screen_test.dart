@@ -2170,6 +2170,46 @@ void main() {
           reason: 'the dependency link came back with the undo');
     });
 
+    // [Regression] Codex P2, round 2. Undoing from the snackbar goes through
+    // the onChanged callback, which dropped the done outcome without rebuilding
+    // the blocked ids — only the row-circle undo refreshed them. So restoring a
+    // blocker that way left its dependent styled as actionable until the dialog
+    // was reopened, the mirror of the bug the circle path already guards.
+    testWidgets('undo from the snackbar re-dims the row waiting on the blocker',
+        (tester) async {
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        final blockerId = await db.insertTask(Task(name: 'Leaf'));
+        await db.addRelationship(starredId, blockerId);
+        final waitingId = await db.insertTask(Task(name: 'Waiting task'));
+        await db.addRelationship(starredId, waitingId);
+        await db.addDependency(waitingId, blockerId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      final blockedAlpha = rowText(tester, 'Waiting task').style!.color!.a;
+
+      await tester.tap(find.byTooltip('Mark done').first);
+      await pumpAsync(tester, rounds: 5);
+      await tester.pump(const Duration(milliseconds: 500));
+      await chooseDone(tester, 'Done for good!');
+      await tapAndSettle(tester, 'Complete');
+
+      expect(rowText(tester, 'Waiting task').style!.color!.a,
+          greaterThan(blockedAlpha),
+          reason: 'freed while the blocker is completed');
+
+      await tester.tap(find.text('Undo'), warnIfMissed: false);
+      await pumpAsync(tester);
+
+      expect(rowText(tester, 'Waiting task').style!.color!.a,
+          closeTo(blockedAlpha, 0.01),
+          reason: 'the restored dependency blocks it again');
+    });
+
     // [Regression] Codex P1. A row ticked off "Done for good!" stays on screen,
     // and its "+" stayed live with it. A task created under it would have an
     // archived task as its only parent, and getRootTasks excludes anything that

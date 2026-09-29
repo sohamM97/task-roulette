@@ -46,14 +46,15 @@ class DoneOutcome {
 /// when the caller is showing the task's own detail page, wrong when the caller
 /// is a list or a dialog that stays open, so it defaults to false.
 ///
-/// [onChanged] fires after the mark lands and again after an undo, so a caller
+/// [onChanged] is awaited after the mark lands and again after an undo, so a
+/// caller
 /// holding its own session state (which rows to strike through, for instance)
 /// can re-render. It is passed true when the task is marked, false on undo.
 Future<DoneOutcome?> markTaskDoneToday(
   BuildContext context,
   Task task, {
   bool navigateBack = false,
-  void Function(bool isDone)? onChanged,
+  Future<void> Function(bool isDone)? onChanged,
 }) async {
   final provider = context.read<TaskProvider>();
   final previousLastWorkedAt = task.lastWorkedAt;
@@ -85,7 +86,7 @@ Future<DoneOutcome?> markTaskDoneToday(
   if (removeDeadline) {
     await provider.updateTaskDeadline(task.id!, null);
   }
-  onChanged?.call(true);
+  await onChanged?.call(true);
 
   final outcome = DoneOutcome(
     choice: DoneChoice.today,
@@ -99,7 +100,7 @@ Future<DoneOutcome?> markTaskDoneToday(
           deadlineType: task.deadlineType,
         );
       }
-      onChanged?.call(false);
+      await onChanged?.call(false);
     },
   );
 
@@ -127,7 +128,7 @@ Future<DoneOutcome?> completeTaskForGood(
   BuildContext context,
   Task task, {
   bool navigateBack = false,
-  void Function(bool isDone)? onChanged,
+  Future<void> Function(bool isDone)? onChanged,
 }) async {
   final provider = context.read<TaskProvider>();
 
@@ -146,13 +147,13 @@ Future<DoneOutcome?> completeTaskForGood(
   final removedDeps = navigateBack
       ? (await provider.completeTask(task.id!)).removedDeps
       : await provider.completeTaskOnly(task.id!);
-  onChanged?.call(true);
+  await onChanged?.call(true);
 
   final outcome = DoneOutcome(
     choice: DoneChoice.forGood,
     undo: () async {
       await provider.uncompleteTask(task.id!, restoredDeps: removedDeps);
-      onChanged?.call(false);
+      await onChanged?.call(false);
     },
   );
 

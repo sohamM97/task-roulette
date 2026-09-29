@@ -1297,9 +1297,17 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
 
   /// Keeps the struck-through / dimmed row in step when the action is reversed
   /// from the undo snackbar rather than by tapping the circle again.
-  void Function(bool) _onDoneChanged(Task task) => (isDone) {
+  ///
+  /// Bug fix (Codex P2): this path also rebuilds the blocked ids. Undoing a
+  /// completion restores the dependency links it removed, so a dependent is
+  /// blocked again — but only the row-circle undo refreshed them.
+  /// Before: restoring a blocker from the snackbar left its dependent styled as
+  /// actionable until the dialog was reopened.
+  /// After: it re-dims immediately, matching the circle path.
+  Future<void> Function(bool) _onDoneChanged(Task task) => (isDone) async {
     if (isDone || !mounted) return;
     setState(() => _doneOutcomes.remove(task.id));
+    await _refreshBlockedIds();
   };
 
   @override
