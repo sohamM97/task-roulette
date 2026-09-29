@@ -2210,6 +2210,38 @@ void main() {
           reason: 'the restored dependency blocks it again');
     });
 
+    // [Regression] Codex P2, round 3. A "Done today" row kept its "+". Adding a
+    // child made it a branch, and the marker column swapped its undo circle for
+    // a chevron — leaving the outcome in _doneOutcomes with nothing able to
+    // invoke it. A non-leaf task has no LeafTaskDetail either, so the
+    // last_worked_at stamp, the auto-start and any deadline the mark removed
+    // became unreachable. Undo first, then add.
+    testWidgets('a row marked done today offers no + until it is undone',
+        (tester) async {
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        final leafId = await db.insertTask(Task(name: 'Leaf'));
+        await db.addRelationship(starredId, leafId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+      expect(find.byTooltip('Add subtask under "Leaf"'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Mark done'));
+      await pumpAsync(tester, rounds: 5);
+      await tester.pump(const Duration(milliseconds: 500));
+      await chooseDone(tester, 'Done today');
+
+      expect(find.byTooltip('Add subtask under "Leaf"'), findsNothing,
+          reason: 'adding here would strand the undo on a branch row');
+
+      await tester.tap(find.byTooltip('Undo done'));
+      await pumpAsync(tester);
+      expect(find.byTooltip('Add subtask under "Leaf"'), findsOneWidget);
+    });
+
     // [Regression] Codex P1. A row ticked off "Done for good!" stays on screen,
     // and its "+" stayed live with it. A task created under it would have an
     // archived task as its only parent, and getRootTasks excludes anything that

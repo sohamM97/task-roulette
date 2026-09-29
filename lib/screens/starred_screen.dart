@@ -1743,15 +1743,24 @@ class _ExpandedTreeRow extends StatelessWidget {
           // the "+" itself is the affordance on mobile, where tooltips don't
           // show.
           //
-          // Bug fix (Codex P1): a row completed for good keeps its place in the
-          // tree, and its "+" went with it. A task created under an archived
-          // parent is unreachable — getRootTasks excludes anything that appears
-          // as a child_id at all, and the completed parent is itself filtered
-          // out of the active tree, so the new task showed up nowhere in All
-          // Tasks. The control is withdrawn rather than disabled, since a
-          // present-but-dead "+" is the same trap. The blank keeps the row's
-          // width, so names stay aligned with the rows around it.
-          if (doneChoice == DoneChoice.forGood)
+          // A row ticked off either way withdraws its "+" until it is undone,
+          // and the blank keeps the row's width so names stay aligned with the
+          // rows around it. The control is withdrawn rather than disabled,
+          // since a present-but-dead "+" is the same trap.
+          //
+          // Bug fix (Codex P1), "Done for good!": a task created under an
+          // archived parent is unreachable — getRootTasks excludes anything
+          // that appears as a child_id at all, and the completed parent is
+          // itself filtered out of the active tree, so the new task showed up
+          // nowhere in All Tasks.
+          //
+          // Bug fix (Codex P2), "Done today": adding a child made the row a
+          // branch, and the marker column swapped its undo circle for a
+          // chevron, stranding the outcome in _doneOutcomes with nothing able
+          // to invoke it. A non-leaf task has no LeafTaskDetail either, so the
+          // last_worked_at stamp, the auto-start and any deadline the mark
+          // removed could not be reversed from the app.
+          if (doneChoice != null)
             const SizedBox(width: 30, height: _rowHeight)
           else
             Tooltip(
