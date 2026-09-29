@@ -1028,6 +1028,32 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
         ),
       );
     }
+
+    // Bug fix (Codex P2): put back the rows ticked off in this session. The
+    // query behind getChildren drops completed tasks, and this runs on every
+    // reload — including the one an add under an unrelated sibling triggers.
+    // Before: a row the user had just completed vanished mid-session while its
+    // DoneOutcome stayed in _doneOutcomes, so the undo it promised had no
+    // circle left to invoke.
+    // After: it holds its own position, struck through, until the dialog is
+    // reopened — at which point _doneOutcomes is empty and it drops out.
+    final previous = _childrenCache[parentId];
+    if (previous != null) {
+      for (var i = 0; i < previous.length; i++) {
+        final old = previous[i];
+        if (!_doneOutcomes.containsKey(old.task.id)) continue;
+        if (nodes.any((n) => n.task.id == old.task.id)) continue;
+        nodes.insert(
+          i.clamp(0, nodes.length),
+          _TreeNode(
+            task: old.task,
+            depth: depth,
+            isLast: false, // recomputed by _addVisibleNodes
+            childCount: old.childCount,
+          ),
+        );
+      }
+    }
     return nodes;
   }
 
@@ -1532,6 +1558,10 @@ class _ExpandedTreeRow extends StatelessWidget {
   /// done circle (leaf rows). Fixed so names line up down the whole tree.
   static const double _markerWidth = 22.0;
 
+  /// Width of the trailing "+" (and of the blank left in its place on a row
+  /// that has been ticked off).
+  static const double _trailingWidth = 30.0;
+
   const _ExpandedTreeRow({
     required this.node,
     required this.lineColor,
@@ -1761,12 +1791,12 @@ class _ExpandedTreeRow extends StatelessWidget {
           // last_worked_at stamp, the auto-start and any deadline the mark
           // removed could not be reversed from the app.
           if (doneChoice != null)
-            const SizedBox(width: 30, height: _rowHeight)
+            const SizedBox(width: _trailingWidth, height: _rowHeight)
           else
             Tooltip(
               message: 'Add subtask under "${node.task.name}"',
               child: SizedBox(
-                width: 30,
+                width: _trailingWidth,
                 height: _rowHeight,
                 child: InkWell(
                   onTap: onAddSubtask,

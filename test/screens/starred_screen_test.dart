@@ -2210,6 +2210,51 @@ void main() {
           reason: 'the restored dependency blocks it again');
     });
 
+    // [Regression] Codex P2, round 4. _fetchChildren filters completed tasks
+    // out, so any reload dropped a row completed earlier in the session. Adding
+    // a subtask under a sibling triggers _reloadAfterAdd, which refetches every
+    // cached level — the completed row vanished while its DoneOutcome stayed in
+    // _doneOutcomes, leaving no circle to invoke the undo it had promised.
+    testWidgets('a row completed this session survives an add elsewhere',
+        (tester) async {
+      late int doneId;
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        doneId = await db.insertTask(Task(name: 'Leaf'));
+        await db.addRelationship(starredId, doneId);
+        final siblingId = await db.insertTask(Task(name: 'Sibling'));
+        await db.addRelationship(starredId, siblingId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      await tester.tap(find.byTooltip('Mark done').first);
+      await pumpAsync(tester, rounds: 5);
+      await tester.pump(const Duration(milliseconds: 500));
+      await chooseDone(tester, 'Done for good!');
+      expect(find.byTooltip('Undo done'), findsOneWidget);
+
+      // An unrelated add under the sibling refetches every cached level.
+      await tester.tap(find.byTooltip('Add subtask under "Sibling"'));
+      await pumpAsync(tester);
+      await tester.enterText(find.byType(TextField).first, 'Unrelated');
+      await tester.tap(find.text('Add'));
+      await pumpAsync(tester);
+
+      expect(find.byTooltip('Undo done'), findsOneWidget,
+          reason: 'the completed row keeps its undo reachable');
+      expect(rowText(tester, 'Leaf').style!.decoration,
+          TextDecoration.lineThrough,
+          reason: 'and keeps its place until the dialog reopens');
+
+      await tester.tap(find.byTooltip('Undo done'));
+      await pumpAsync(tester);
+      final restored = await tester.runAsync(() => db.getTaskById(doneId));
+      expect(restored!.completedAt, isNull);
+    });
+
     // [Regression] Codex P2, round 3. A "Done today" row kept its "+". Adding a
     // child made it a branch, and the marker column swapped its undo circle for
     // a chevron — leaving the outcome in _doneOutcomes with nothing able to
