@@ -863,7 +863,18 @@ class TaskProvider extends ChangeNotifier {
     for (final ancestor in ancestors) {
       _parentStack.add(ancestor);
     }
-    _currentParent = task;
+    // Bug fix: re-read the row instead of trusting [task]. Callers pass a Task
+    // they are holding, which may predate a mutation — the Starred expanded
+    // dialog keeps its rows on screen across a "Done today", so its snapshot
+    // still carries the deadline that mark just cleared. _refreshCurrentList
+    // only reloads children, never _currentParent, so nothing corrected it
+    // afterwards.
+    // Before: leaf detail showed the removed deadline and a "Done today"
+    // button for a task already worked on today.
+    // After: leaf detail shows the task as it is in the database.
+    // Falls back to [task] if the row is gone (deleted mid-navigation), which
+    // leaves the old behaviour rather than crashing on a null parent.
+    _currentParent = await _db.getTaskById(task.id!) ?? task;
     await _refreshCurrentList();
   }
 

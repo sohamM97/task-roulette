@@ -938,8 +938,9 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
   /// Cache loaded children per task ID.
   final Map<int, List<_TreeNode>> _childrenCache = {};
 
-  /// IDs of tasks that are blocked by a dependency.
-  final Set<int> _blockedIds = {};
+  /// IDs of tasks that are blocked by a dependency. Rebuilt by
+  /// [_refreshBlockedIds] whenever a completion frees a dependent.
+  Set<int> _blockedIds = {};
 
   /// Task IDs currently pinned in Today's 5. Drives the "this task is pinned"
   /// warning before adding a subtask under it (mirrors `task_list_screen.dart`'s
@@ -1234,6 +1235,8 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     if (done != null) {
       await done.undo();
       if (!mounted) return;
+      await _refreshBlockedIds();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).clearSnackBars();
       showInfoSnackBar(context, 'Restored "${task.name}"');
       return;
@@ -1257,6 +1260,32 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     if (outcome == null || !mounted) return;
     final marked = outcome;
     setState(() => _doneOutcomes[task.id!] = marked);
+    await _refreshBlockedIds();
+  }
+
+  /// Rebuilds [_blockedIds] from the database for every level loaded into
+  /// [_childrenCache].
+  ///
+  /// Bug fix: completing a task drops the dependency links it was blocking, so
+  /// anything waiting on it becomes actionable — but the set was only ever
+  /// added to, never rebuilt.
+  /// Before: completing a blocker left its dependent dimmed as though still
+  /// blocked, and only closing and reopening the dialog cleared it.
+  /// After: the dependent un-dims as soon as the blocker is completed, and
+  /// dims again if that completion is undone.
+  ///
+  /// Every cached level, not just the visible ones: a collapsed level keeps its
+  /// cache entry and is re-shown from it without re-querying, so dropping its
+  /// ids here would lose the blocked styling when it is expanded again.
+  Future<void> _refreshBlockedIds() async {
+    final ids = _childrenCache.values
+        .expand((nodes) => nodes)
+        .map((node) => node.task.id!)
+        .toList();
+    if (ids.isEmpty) return;
+    final blockedInfo = await DatabaseHelper().getBlockedTaskInfo(ids);
+    if (!mounted) return;
+    setState(() => _blockedIds = blockedInfo.keys.toSet());
   }
 
   /// Keeps the struck-through / dimmed row in step when the action is reversed
@@ -1600,14 +1629,24 @@ class _ExpandedTreeRow extends StatelessWidget {
           // in LeafTaskDetail, which All Tasks shows only for leaves, so a task
           // with children has no completion path anywhere in the app.
           if (!isLeaf)
+            // The chevron carries its own tap target. It sits outside the row's
+            // InkWell, so without one it would look tappable and do nothing —
+            // tapping it now expands and collapses just as tapping the row name
+            // does. It stays a small target, so the row name remains the easier
+            // way in; this only removes the dead spot.
             SizedBox(
               width: _markerWidth,
-              child: Icon(
-                isExpanded
-                    ? Icons.expand_more_rounded
-                    : Icons.chevron_right_rounded,
-                size: 18,
-                color: textColor.withAlpha(150),
+              height: _rowHeight,
+              child: InkWell(
+                onTap: onToggleExpand,
+                customBorder: const CircleBorder(),
+                child: Icon(
+                  isExpanded
+                      ? Icons.expand_more_rounded
+                      : Icons.chevron_right_rounded,
+                  size: 18,
+                  color: textColor.withAlpha(150),
+                ),
               ),
             )
           else
@@ -1622,9 +1661,11 @@ class _ExpandedTreeRow extends StatelessWidget {
               onLongPress: isLeaf ? null : onNavigate,
               borderRadius: BorderRadius.circular(8),
               child: Opacity(
-                // Dimmed once ticked off for the day, matching how All Tasks
-                // renders a worked-on card (task_card.dart:204).
-                opacity: doneChoice == DoneChoice.today ? 0.5 : 1.0,
+                // Dimmed once ticked off either way, matching how All Tasks
+                // renders a worked-on card (task_card.dart:204) — a handled row
+                // should recede whether it was done for today or for good. The
+                // strikethrough on the name is what still tells the two apart.
+                opacity: doneChoice == null ? 1.0 : 0.5,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                     vertical: 6,
@@ -1642,9 +1683,14 @@ class _ExpandedTreeRow extends StatelessWidget {
                             fontSize: 17,
                             isBlocked: isBlocked,
                           ).copyWith(
-                            decoration: doneChoice == DoneChoice.forGood
-                                ? TextDecoration.lineThrough
-                                : null,
+                            // Struck through once ticked off either way, so a
+                            // handled row reads as handled at a glance and
+                            // can't be mistaken for a blocked row, which is
+                            // dimmed but never struck through. The circle is
+                            // what tells "done today" from "done for good".
+                            decoration: doneChoice == null
+                                ? null
+                                : TextDecoration.lineThrough,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
