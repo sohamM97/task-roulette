@@ -1194,17 +1194,24 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     ).run(context);
   }
 
-  /// Reloads every level currently on screen after an add, and expands
-  /// [addedUnderId] so the new subtask is visible straight away.
+  /// Reloads every loaded level after an add, and expands [addedUnderId] so the
+  /// new subtask is visible straight away.
   ///
   /// Every level, not just [addedUnderId]: adding a child changes that task's
   /// own child count, and the count is stored in its PARENT's cache entry.
   /// Refresh only the one entry and a task that was a leaf keeps its leaf row —
   /// no chevron, nothing to expand — so the subtask just added is unreachable.
+  ///
+  /// Bug fix (Codex P2): every entry in [_childrenCache], not only the expanded
+  /// ones. A task can sit under two parents in this DAG. If the second parent
+  /// was expanded once and then collapsed, its entry survives in the cache and
+  /// is re-shown from it without re-querying — so it kept the shared task's old
+  /// `childCount` of 0 and drew it as a leaf, with no way to reach the child
+  /// just added, until the dialog was closed and reopened.
   Future<void> _reloadAfterAdd(int addedUnderId) async {
     final provider = context.read<TaskProvider>();
     _expanded.add(addedUnderId);
-    for (final id in {widget.task.id!, ..._expanded}) {
+    for (final id in {widget.task.id!, ..._childrenCache.keys, ..._expanded}) {
       // The depth passed here is discarded: _addVisibleNodes recomputes every
       // node's depth from its position in the tree when it rebuilds.
       final nodes = await _fetchChildren(provider, id, 0);
@@ -1727,22 +1734,34 @@ class _ExpandedTreeRow extends StatelessWidget {
           // the row so a desktop hover says which task the subtask lands under;
           // the "+" itself is the affordance on mobile, where tooltips don't
           // show.
-          Tooltip(
-            message: 'Add subtask under "${node.task.name}"',
-            child: SizedBox(
-              width: 30,
-              height: _rowHeight,
-              child: InkWell(
-                onTap: onAddSubtask,
-                customBorder: const CircleBorder(),
-                child: Icon(
-                  Icons.add,
-                  size: 18,
-                  color: textColor.withAlpha(130),
+          //
+          // Bug fix (Codex P1): a row completed for good keeps its place in the
+          // tree, and its "+" went with it. A task created under an archived
+          // parent is unreachable — getRootTasks excludes anything that appears
+          // as a child_id at all, and the completed parent is itself filtered
+          // out of the active tree, so the new task showed up nowhere in All
+          // Tasks. The control is withdrawn rather than disabled, since a
+          // present-but-dead "+" is the same trap. The blank keeps the row's
+          // width, so names stay aligned with the rows around it.
+          if (doneChoice == DoneChoice.forGood)
+            const SizedBox(width: 30, height: _rowHeight)
+          else
+            Tooltip(
+              message: 'Add subtask under "${node.task.name}"',
+              child: SizedBox(
+                width: 30,
+                height: _rowHeight,
+                child: InkWell(
+                  onTap: onAddSubtask,
+                  customBorder: const CircleBorder(),
+                  child: Icon(
+                    Icons.add,
+                    size: 18,
+                    color: textColor.withAlpha(130),
+                  ),
                 ),
               ),
             ),
-          ),
         ],
       ),
     );

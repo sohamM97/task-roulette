@@ -1521,6 +1521,65 @@ void main() {
   });
 
   group('StarredScreen - add a subtask at any level', () {
+    // [Regression] Codex P2. _reloadAfterAdd refreshed only the expanded levels.
+    // In a multi-parent DAG the same task sits under two branches; if the second
+    // branch had been expanded and then collapsed, its cache entry kept
+    // childCount == 0, so re-expanding it rendered the shared task as a leaf and
+    // the child just added to it could not be reached.
+    testWidgets('adding to a shared task updates its other cached parent',
+        (tester) async {
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        final branchA = await db.insertTask(Task(name: 'Branch A'));
+        final branchB = await db.insertTask(Task(name: 'Branch B'));
+        await db.addRelationship(starredId, branchA);
+        await db.addRelationship(starredId, branchB);
+        final shared = await db.insertTask(Task(name: 'Shared'));
+        await db.addRelationship(branchA, shared);
+        await db.addRelationship(branchB, shared);
+        // Fillers so each branch's own badge reads 2, leaving the collapsed
+        // chevron count as the unambiguous signal.
+        final fillerA = await db.insertTask(Task(name: 'Filler A'));
+        await db.addRelationship(branchA, fillerA);
+        final fillerB = await db.insertTask(Task(name: 'Filler B'));
+        await db.addRelationship(branchB, fillerB);
+      });
+
+      // The card's tree preview behind the dialog lists the same names at 14px,
+      // so row taps have to target the dialog's own 17px rows.
+      Finder dialogRow(String name) => find.byWidgetPredicate(
+          (w) => w is Text && w.data == name && w.style?.fontSize == 17);
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+
+      // Expand both branches so both cache entries exist, then collapse B.
+      await tester.tap(dialogRow('Branch A'));
+      await pumpAsync(tester);
+      await tester.tap(dialogRow('Branch B'));
+      await pumpAsync(tester);
+      await tester.tap(dialogRow('Branch B'));
+      await pumpAsync(tester);
+
+      // Add under "Shared" as it appears beneath the still-expanded Branch A.
+      await tester.tap(find.byTooltip('Add subtask under "Shared"'));
+      await pumpAsync(tester);
+      await tester.enterText(find.byType(TextField).first, 'New grandchild');
+      await tester.tap(find.text('Add'));
+      await pumpAsync(tester);
+
+      await tester.tap(dialogRow('Branch B'));
+      await pumpAsync(tester);
+
+      // Expansion is keyed by task id, so both copies of "Shared" open: four
+      // expanded rows (Branch A, Branch B, and Shared under each). A stale
+      // childCount leaves B's copy looking like a leaf — a done circle and no
+      // chevron — giving only three.
+      expect(find.byIcon(Icons.expand_more_rounded), findsNWidgets(4),
+          reason: "Branch B's cached copy of Shared must know it has a child");
+    });
+
     // [Edge case] The "already exists" suggestion is advisory, not a block.
     // Typing a name that already exists and tapping Add creates a genuine new
     // task under that row — it neither links to the existing one nor refuses.
@@ -2109,6 +2168,38 @@ void main() {
           await tester.runAsync(() => db.getDependencies(waitingId)) ?? [];
       expect(blockers.map((t) => t.id), contains(blockerId),
           reason: 'the dependency link came back with the undo');
+    });
+
+    // [Regression] Codex P1. A row ticked off "Done for good!" stays on screen,
+    // and its "+" stayed live with it. A task created under it would have an
+    // archived task as its only parent, and getRootTasks excludes anything that
+    // appears as a child_id at all — so the new task showed up nowhere in All
+    // Tasks: not at root, and not under its completed parent.
+    testWidgets('a row completed for good offers no + to add under',
+        (tester) async {
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        final leafId = await db.insertTask(Task(name: 'Leaf'));
+        await db.addRelationship(starredId, leafId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+      expect(find.byTooltip('Add subtask under "Leaf"'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Mark done'));
+      await pumpAsync(tester, rounds: 5);
+      await tester.pump(const Duration(milliseconds: 500));
+      await chooseDone(tester, 'Done for good!');
+
+      expect(find.byTooltip('Add subtask under "Leaf"'), findsNothing,
+          reason: 'nothing may be parented under an archived task');
+
+      // Undoing the completion brings the control back.
+      await tester.tap(find.byTooltip('Undo done'));
+      await pumpAsync(tester);
+      expect(find.byTooltip('Add subtask under "Leaf"'), findsOneWidget);
     });
 
     // [Mechanism] The chevron sits outside the row's InkWell (the marker column
