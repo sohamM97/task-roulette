@@ -25,4 +25,10 @@ Default to whatever the user picks; if they don't express a preference, show the
 
 Present the manual checklist **one section at a time** — never flatten all sections into a single list. Don't advance to the next section until the user reports results for the current one.
 
+**Split a section further when its setup is multi-step.** Send the setup on its own, wait for the user to confirm it's done, then send the tests. A section that opens with "add these 5 tasks, then add a child, then set a deadline, then add a dependency" followed by 7 numbered tests is a wall — the user loses their place and ends up several steps behind where your next reply assumes they are.
+
+**Never name a task or row the user hasn't created yet.** Referring to a later step's fixture while they're still on an earlier step reads as an instruction for right now, and nothing on screen matches it.
+
+When the user reports a partial result, asks a question, or gets stuck mid-section, answer only that and re-send the single step they're on. Don't advance.
+
 When presenting auto-test results, include the test category labels (Regression, Mechanism, Baseline, Edge case) from the agent's report so the user can see at a glance which tests guard the bug vs test the fix mechanism.

@@ -287,6 +287,69 @@ void main() {
       // Should show the leaf task name in AppBar
       expect(find.text('Leaf Task'), findsWidgets);
     });
+
+    /// Taps [label] and lets both the fake clock and the real database work run
+    /// on. The completion animation holds for 700ms before the write, and a
+    /// bare pump never moves the clock under FakeAsync.
+    Future<void> tapAndSettle(WidgetTester tester, String label) async {
+      await tester.tap(find.text(label));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 300));
+        await pumpAsync(tester, rounds: 5);
+      }
+    }
+
+    /// Drills into "Parent" > "Leaf Task" and returns the leaf's id.
+    Future<int> openLeafDetail(WidgetTester tester) async {
+      late int childId;
+      await tester.runAsync(() async {
+        final parentId = await db.insertTask(Task(name: 'Parent'));
+        childId = await db.insertTask(Task(name: 'Leaf Task'));
+        await db.addRelationship(parentId, childId);
+        final sibling = await db.insertTask(Task(name: 'Sibling'));
+        await db.addRelationship(parentId, sibling);
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Parent'));
+      await pumpAsync(tester);
+      await tester.tap(find.text('Leaf Task'));
+      await pumpAsync(tester);
+      return childId;
+    }
+
+    // [Baseline] The leaf detail's "Done today" runs through the shared
+    // markTaskDoneToday with navigateBack, so it both stamps last_worked_at and
+    // pops back to the parent list — landing back on the sibling list is the
+    // half a caller that only mutates would lose.
+    testWidgets('"Done today" marks the leaf and pops back to the parent',
+        (tester) async {
+      final leafId = await openLeafDetail(tester);
+
+      await tapAndSettle(tester, 'Done today');
+
+      final task = await tester.runAsync(() => db.getTaskById(leafId));
+      expect(task!.isWorkedOnToday, isTrue);
+      expect(task.completedAt, isNull);
+      // Back on the parent's child list, not the leaf detail.
+      expect(find.text('Sibling'), findsOneWidget);
+      expect(find.text('Done today'), findsNothing);
+    });
+
+    // [Baseline] "Done for good!" runs through the shared completeTaskForGood
+    // with navigateBack: the task is completed and the stack pops, so the
+    // archived task is no longer listed.
+    testWidgets('"Done for good!" completes the leaf and pops back',
+        (tester) async {
+      final leafId = await openLeafDetail(tester);
+
+      await tapAndSettle(tester, 'Done for good!');
+
+      final task = await tester.runAsync(() => db.getTaskById(leafId));
+      expect(task!.completedAt, isNotNull);
+      expect(find.text('Sibling'), findsOneWidget);
+      expect(find.text('Leaf Task'), findsNothing);
+    });
   });
 
   group('TaskListScreen inbox', () {

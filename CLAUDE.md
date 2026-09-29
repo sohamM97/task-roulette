@@ -62,7 +62,7 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 - **Before exiting plan mode**, ask the user if they want to create a feature branch first (via `/feature`).
 - **Always ask for confirmation before committing.** Never run `/commit` or `git commit` without explicit user approval first.
 - Remind user about committing occasionally — don't wait until asked. Remind them to run `/test-suite` first, then review changes before committing.
-- When a bug is found and confirmed reproducible, always add a test case for it.
+- When a bug is found and confirmed reproducible, always add a test case for it. **Write the test first, run it, and show it failing — then write the fix.** A test added after the fix proves nothing until it's seen to fail, and stashing the fix to check afterwards is slower and easy to get wrong.
 - **Bug fix code comments**: When adding code changes for bug fixes, include a comment documenting the exact bug — behaviour before the fix vs after the fix.
 - **Confirm flow/functionality changes**: If a bug fix involves changing the flow or functionality itself (not just fixing broken code), always ask the user before implementing. Don't unilaterally make radical design decisions like removing auto-pin or changing weighting strategies.
 - When writing tests in bulk, use `flutter test --coverage` to find gaps. Parse `coverage/lcov.info` directly (`genhtml` may not be installed).

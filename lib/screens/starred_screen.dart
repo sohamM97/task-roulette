@@ -7,6 +7,7 @@ import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../utils/display_utils.dart';
 import '../widgets/add_task_flow.dart';
+import '../widgets/done_actions.dart';
 import '../widgets/profile_icon.dart';
 import '../widgets/tab_app_bar_title.dart';
 import '../widgets/task_search.dart';
@@ -937,17 +938,25 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
   /// Cache loaded children per task ID.
   final Map<int, List<_TreeNode>> _childrenCache = {};
 
-  /// IDs of tasks that are blocked by a dependency.
-  final Set<int> _blockedIds = {};
+  /// IDs of tasks that are blocked by a dependency. Rebuilt by
+  /// [_refreshBlockedIds] whenever a completion frees a dependent.
+  Set<int> _blockedIds = {};
 
-  /// True if the starred task is currently pinned in Today's 5.
-  /// Drives the "this task is pinned" warning before adding a subtask
-  /// (mirrors `task_list_screen.dart`'s `_warnIfPinned`).
-  bool _starredTaskPinnedInTodays5 = false;
-  // Count of tasks currently pinned in Today's 5, used to decide whether the
-  // "Pin for today" toggle can be offered on the subtask add flow (a free slot
-  // must exist). Mirrors the All Tasks drill-in flow's showPin logic.
-  int _todays5PinnedCount = 0;
+  /// Task IDs currently pinned in Today's 5. Drives the "this task is pinned"
+  /// warning before adding a subtask under it (mirrors `task_list_screen.dart`'s
+  /// `_warnIfPinned`) and the free-slot check for the "Pin for today" toggle.
+  /// Held as a set rather than a flag + count because any row in the tree can
+  /// now be added under, not just the starred task at the top.
+  Set<int> _todays5PinnedIds = {};
+
+  /// Tasks ticked off during this dialog session, keyed by task id. The rows
+  /// stay in the tree, styled, until the dialog is reopened: [DoneChoice.forGood]
+  /// renders struck through, [DoneChoice.today] renders dimmed with a check,
+  /// matching how All Tasks styles a worked-on card (`task_card.dart:204,321`).
+  /// The stored [DoneOutcome] also carries the undo closure, so tapping a
+  /// ticked-off row can reverse it long after the undo snackbar has gone.
+  final Map<int, DoneOutcome> _doneOutcomes = {};
+
   bool _loading = true;
 
   @override
@@ -962,10 +971,7 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
       todayDateKey(),
     );
     if (!mounted) return;
-    setState(() {
-      _starredTaskPinnedInTodays5 = result.pinnedIds.contains(widget.task.id);
-      _todays5PinnedCount = result.pinnedIds.length;
-    });
+    setState(() => _todays5PinnedIds = result.pinnedIds.toSet());
   }
 
   Future<void> _loadDirectChildren() async {
@@ -974,9 +980,9 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     if (!mounted) return;
     setState(() {
       _childrenCache[widget.task.id!] = nodes;
-      _flatTree = nodes;
       _loading = false;
     });
+    _rebuildFlatTree();
   }
 
   /// Fetches direct children with their own child counts (to know leaf vs not).
@@ -1021,6 +1027,32 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
           childCount: activeGcCount,
         ),
       );
+    }
+
+    // Bug fix (Codex P2): put back the rows ticked off in this session. The
+    // query behind getChildren drops completed tasks, and this runs on every
+    // reload — including the one an add under an unrelated sibling triggers.
+    // Before: a row the user had just completed vanished mid-session while its
+    // DoneOutcome stayed in _doneOutcomes, so the undo it promised had no
+    // circle left to invoke.
+    // After: it holds its own position, struck through, until the dialog is
+    // reopened — at which point _doneOutcomes is empty and it drops out.
+    final previous = _childrenCache[parentId];
+    if (previous != null) {
+      for (var i = 0; i < previous.length; i++) {
+        final old = previous[i];
+        if (!_doneOutcomes.containsKey(old.task.id)) continue;
+        if (nodes.any((n) => n.task.id == old.task.id)) continue;
+        nodes.insert(
+          i.clamp(0, nodes.length),
+          _TreeNode(
+            task: old.task,
+            depth: depth,
+            isLast: false, // recomputed by _addVisibleNodes
+            childCount: old.childCount,
+          ),
+        );
+      }
     }
     return nodes;
   }
@@ -1098,67 +1130,63 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     }
   }
 
-  /// Adds subtask(s) to the starred task via the shared [AddTaskFlow]. The
-  /// new tasks are parented explicitly to the starred task (atRoot ignores the
-  /// All Tasks tab's drilled-in parent). Shows a "Pin for today" toggle (no
-  /// Inbox toggle — subtasks aren't root-level) so a new subtask can go
-  /// straight into Today's 5, mirroring the All Tasks drill-in flow.
-  Future<void> _addSubtask() async {
+  /// Adds subtask(s) under [parent] via the shared [AddTaskFlow]. [parent] is
+  /// any row in the tree, or the starred task itself — so a subtask can be
+  /// created at any level without leaving this dialog.
+  ///
+  /// The new tasks are parented explicitly to [parent] (atRoot ignores the All
+  /// Tasks tab's drilled-in parent). Shows a "Pin for today" toggle (no Inbox
+  /// toggle — subtasks aren't root-level) so a new subtask can go straight into
+  /// Today's 5, mirroring the All Tasks drill-in flow.
+  Future<void> _addSubtask(Task parent) async {
     final provider = context.read<TaskProvider>();
-    // Hide "Pin for today" when the starred parent is itself pinned (adding a
-    // subtask makes it a non-leaf, so it drops out of Today's 5 — the pinned
-    // warning covers that) or when Today's 5 is already full. Mirrors
+    final parentIsPinned = _todays5PinnedIds.contains(parent.id);
+    // Hide "Pin for today" when the parent is itself pinned (adding a subtask
+    // makes it a non-leaf, so it drops out of Today's 5 — the pinned warning
+    // covers that) or when Today's 5 is already full. Mirrors
     // task_list_screen._runAddFlow.
-    final showPin =
-        !_starredTaskPinnedInTodays5 && _todays5PinnedCount < maxPins;
+    final showPin = !parentIsPinned && _todays5PinnedIds.length < maxPins;
     // For the "already exists" suggestion: tapping a match links the existing
-    // task as a subtask of this starred task (multi-parent DAG) instead of
-    // creating a duplicate.
+    // task as a subtask of [parent] (multi-parent DAG) instead of creating a
+    // duplicate.
     final allTasks = await provider.getAllTasks();
     final parentNames = await provider.getParentNamesMap();
     if (!mounted) return;
     await AddTaskFlow(
-      parentId: widget.task.id,
-      parentName: widget.task.name,
-      parentIsPinned: _starredTaskPinnedInTodays5,
+      parentId: parent.id,
+      parentName: parent.name,
+      parentIsPinned: parentIsPinned,
       showPinOption: showPin,
       existingTasks: allTasks,
       existingActionIcon: Icons.add_link,
       existingActionLabel: 'Add here',
       existingParentNames: parentNames,
       onUseExisting: (existing) async {
-        if (existing.id == widget.task.id) {
+        if (existing.id == parent.id) {
           if (mounted) showInfoSnackBar(context, "That's this task");
           return;
         }
-        // Codex P2: if the match is ALREADY a subtask of this starred task,
-        // linking is a no-op that addParentToTask still reports as ok — but the
-        // resulting Undo (removeParentFromTask) would delete the pre-existing
-        // edge and make the subtask vanish. Guard it: no link, no destructive
-        // undo.
-        final existingChildIds = await provider.getChildIds(widget.task.id!);
+        // Codex P2: if the match is ALREADY a subtask of [parent], linking is a
+        // no-op that addParentToTask still reports as ok — but the resulting
+        // Undo (removeParentFromTask) would delete the pre-existing edge and
+        // make the subtask vanish. Guard it: no link, no destructive undo.
+        final existingChildIds = await provider.getChildIds(parent.id!);
         if (!mounted) return;
         if (existingChildIds.contains(existing.id)) {
           showInfoSnackBar(context, '"${existing.name}" is already a subtask');
           return;
         }
-        final ok = await provider.addParentToTask(
-          existing.id!,
-          widget.task.id!,
-        );
+        final ok = await provider.addParentToTask(existing.id!, parent.id!);
         if (!mounted) return;
         if (ok) {
-          await _reloadAfterAdd();
+          await _reloadAfterAdd(parent.id!);
           if (mounted) {
             showInfoSnackBar(
               context,
               'Added "${existing.name}" here',
               onUndo: () async {
-                await provider.removeParentFromTask(
-                  existing.id!,
-                  widget.task.id!,
-                );
-                if (mounted) await _reloadAfterAdd();
+                await provider.removeParentFromTask(existing.id!, parent.id!);
+                if (mounted) await _reloadAfterAdd(parent.id!);
               },
             );
           }
@@ -1172,36 +1200,141 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                 name,
                 url: url,
                 atRoot: true,
-                additionalParentIds: [widget.task.id!],
+                additionalParentIds: [parent.id!],
                 deferNotify: deferNotify,
               ),
       addBatch: (names, {required isInbox}) =>
-          provider.addTasksBatch(names, parentId: widget.task.id!),
+          provider.addTasksBatch(names, parentId: parent.id!),
       onProviderRefresh: provider.refreshAfterMutation,
       // No onTodaysFiveChanged mirror-write here (unlike task_list_screen's
       // flow, which has no post-add reload): _reloadAfterAdd runs on every add
       // and calls _loadTodays5PinState, which re-reads the authoritative pin
-      // state (parent-pinned + count) from the DB. A direct write would just be
-      // overwritten by that re-fetch — and would be stale anyway, since the
-      // PinResult reflects only the newly-pinned task, not the parent dropping
-      // out of Today's 5 as it becomes a non-leaf.
-      onCompleted: (_) => _reloadAfterAdd(),
+      // state from the DB. A direct write would just be overwritten by that
+      // re-fetch — and would be stale anyway, since the PinResult reflects only
+      // the newly-pinned task, not the parent dropping out of Today's 5 as it
+      // becomes a non-leaf.
+      onCompleted: (_) => _reloadAfterAdd(parent.id!),
       // The expanded dialog covers the page's snackbar, and its tree refreshes
       // in place — so the "Added N tasks" snackbar would just flash behind it.
       announceBatchAdd: false,
     ).run(context);
   }
 
-  /// Invalidate cached children so the new subtask(s) appear, then reload.
-  Future<void> _reloadAfterAdd() async {
-    _childrenCache.remove(widget.task.id);
-    _expanded.clear();
-    await _loadDirectChildren();
+  /// Reloads every loaded level after an add, and expands [addedUnderId] so the
+  /// new subtask is visible straight away.
+  ///
+  /// Every level, not just [addedUnderId]: adding a child changes that task's
+  /// own child count, and the count is stored in its PARENT's cache entry.
+  /// Refresh only the one entry and a task that was a leaf keeps its leaf row —
+  /// no chevron, nothing to expand — so the subtask just added is unreachable.
+  ///
+  /// Bug fix (Codex P2): every entry in [_childrenCache], not only the expanded
+  /// ones. A task can sit under two parents in this DAG. If the second parent
+  /// was expanded once and then collapsed, its entry survives in the cache and
+  /// is re-shown from it without re-querying — so it kept the shared task's old
+  /// `childCount` of 0 and drew it as a leaf, with no way to reach the child
+  /// just added, until the dialog was closed and reopened.
+  Future<void> _reloadAfterAdd(int addedUnderId) async {
+    final provider = context.read<TaskProvider>();
+    _expanded.add(addedUnderId);
+    for (final id in {widget.task.id!, ..._childrenCache.keys, ..._expanded}) {
+      // The depth passed here is discarded: _addVisibleNodes recomputes every
+      // node's depth from its position in the tree when it rebuilds.
+      final nodes = await _fetchChildren(provider, id, 0);
+      if (!mounted) return;
+      _childrenCache[id] = nodes;
+    }
+    _rebuildFlatTree();
     // Refresh Today's 5 pin state: adding a subtask can drop the (now non-leaf)
     // parent out of Today's 5 and/or pin a new subtask, both of which change
     // what the pin toggle should do on the next add within this dialog.
     await _loadTodays5PinState();
   }
+
+  /// Handles a tap on a leaf row's done circle.
+  ///
+  /// Untouched rows open the "Done today" / "Done for good!" chooser — the same
+  /// pair of actions Today's 5 offers in its bottom sheet and the All Tasks leaf
+  /// detail offers as two buttons. A row already ticked off in this session taps
+  /// straight back to undone, so a mis-tap is reversible after the undo snackbar
+  /// has gone.
+  ///
+  /// Only leaf rows get a circle at all: "Done for good!" lives in
+  /// [LeafTaskDetail], which All Tasks shows only for leaves, so a task with
+  /// children has no completion path anywhere in the app and this tree keeps
+  /// that rule.
+  Future<void> _onDoneTapped(Task task, DoneChoice? choice) async {
+    final done = _doneOutcomes[task.id];
+    if (done != null) {
+      await done.undo();
+      if (!mounted) return;
+      await _refreshBlockedIds();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).clearSnackBars();
+      showInfoSnackBar(context, 'Restored "${task.name}"');
+      return;
+    }
+    if (choice == null) return; // chooser dismissed
+    if (!mounted) return;
+    final DoneOutcome? outcome;
+    if (choice == DoneChoice.today) {
+      outcome = await markTaskDoneToday(
+        context,
+        task,
+        onChanged: _onDoneChanged(task),
+      );
+    } else {
+      outcome = await completeTaskForGood(
+        context,
+        task,
+        onChanged: _onDoneChanged(task),
+      );
+    }
+    if (outcome == null || !mounted) return;
+    final marked = outcome;
+    setState(() => _doneOutcomes[task.id!] = marked);
+    await _refreshBlockedIds();
+  }
+
+  /// Rebuilds [_blockedIds] from the database for every level loaded into
+  /// [_childrenCache].
+  ///
+  /// Bug fix: completing a task drops the dependency links it was blocking, so
+  /// anything waiting on it becomes actionable — but the set was only ever
+  /// added to, never rebuilt.
+  /// Before: completing a blocker left its dependent dimmed as though still
+  /// blocked, and only closing and reopening the dialog cleared it.
+  /// After: the dependent un-dims as soon as the blocker is completed, and
+  /// dims again if that completion is undone.
+  ///
+  /// Every cached level, not just the visible ones: a collapsed level keeps its
+  /// cache entry and is re-shown from it without re-querying, so dropping its
+  /// ids here would lose the blocked styling when it is expanded again.
+  Future<void> _refreshBlockedIds() async {
+    final ids = _childrenCache.values
+        .expand((nodes) => nodes)
+        .map((node) => node.task.id!)
+        .toList();
+    if (ids.isEmpty) return;
+    final blockedInfo = await DatabaseHelper().getBlockedTaskInfo(ids);
+    if (!mounted) return;
+    setState(() => _blockedIds = blockedInfo.keys.toSet());
+  }
+
+  /// Keeps the struck-through / dimmed row in step when the action is reversed
+  /// from the undo snackbar rather than by tapping the circle again.
+  ///
+  /// Bug fix (Codex P2): this path also rebuilds the blocked ids. Undoing a
+  /// completion restores the dependency links it removed, so a dependent is
+  /// blocked again — but only the row-circle undo refreshed them.
+  /// Before: restoring a blocker from the snackbar left its dependent styled as
+  /// actionable until the dialog was reopened.
+  /// After: it re-dims immediately, matching the circle path.
+  Future<void> Function(bool) _onDoneChanged(Task task) => (isDone) async {
+    if (isDone || !mounted) return;
+    setState(() => _doneOutcomes.remove(task.id));
+    await _refreshBlockedIds();
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -1326,23 +1459,28 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                           ),
                           ancestorIsLast: ancestorIsLast,
                           isExpanded: isExpanded,
+                          doneChoice: _doneOutcomes[taskId]?.choice,
                           onNavigate: () => widget.onNavigateToTask(node.task),
                           onToggleExpand: node.isLeaf
                               ? null
                               : () => _toggleExpand(node),
+                          onDone: (choice) => _onDoneTapped(node.task, choice),
+                          onAddSubtask: () => _addSubtask(node.task),
                         );
                       },
                     ),
             ),
           ],
         ),
-        // Highlighted call-to-action, pinned to the dialog's bottom-right.
+        // The starred task's own add control: it adds a direct child of the
+        // task named in the header, the same thing each row's "+" does for that
+        // row.
         Positioned(
           right: 16,
           bottom: 16,
           child: FloatingActionButton(
             heroTag: null,
-            onPressed: _addSubtask,
+            onPressed: () => _addSubtask(widget.task),
             backgroundColor: fabColor,
             foregroundColor: fabForeground,
             tooltip: 'Add subtask',
@@ -1399,11 +1537,30 @@ class _ExpandedTreeRow extends StatelessWidget {
   final List<bool> ancestorIsLast;
   final bool isExpanded;
   final bool isBlocked;
+
+  /// How this row was ticked off in the current dialog session, or null if it
+  /// hasn't been. Drives the circle's icon and the row's styling.
+  final DoneChoice? doneChoice;
+
   final VoidCallback onNavigate;
   final VoidCallback? onToggleExpand;
 
+  /// Called with the user's pick from the done chooser, or with null when the
+  /// row is already ticked off and the tap means "undo".
+  final void Function(DoneChoice? choice) onDone;
+
+  final VoidCallback onAddSubtask;
+
   static const double _indentWidth = 16.0;
   static const double _rowHeight = 45.0;
+
+  /// Width of the column holding either the expand chevron (branch rows) or the
+  /// done circle (leaf rows). Fixed so names line up down the whole tree.
+  static const double _markerWidth = 22.0;
+
+  /// Width of the trailing "+" (and of the blank left in its place on a row
+  /// that has been ticked off).
+  static const double _trailingWidth = 30.0;
 
   const _ExpandedTreeRow({
     required this.node,
@@ -1413,9 +1570,81 @@ class _ExpandedTreeRow extends StatelessWidget {
     required this.ancestorIsLast,
     required this.isExpanded,
     this.isBlocked = false,
+    this.doneChoice,
     required this.onNavigate,
     this.onToggleExpand,
+    required this.onDone,
+    required this.onAddSubtask,
   });
+
+  /// The leaf row's done control: a chooser when the task is still open, a
+  /// straight undo tap once it has been ticked off.
+  ///
+  /// It sits in the same column a branch row uses for its chevron, so adding it
+  /// costs no width and leaves every name aligned.
+  Widget _buildDoneControl(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final icon = switch (doneChoice) {
+      null => Icon(
+        Icons.radio_button_unchecked,
+        size: 18,
+        color: textColor.withAlpha(120),
+      ),
+      DoneChoice.today => const Icon(Icons.today, size: 18, color: Colors.orange),
+      DoneChoice.forGood => Icon(
+        Icons.check_circle,
+        size: 18,
+        color: colorScheme.primary,
+      ),
+    };
+
+    if (doneChoice != null) {
+      return Tooltip(
+        message: 'Undo done',
+        child: SizedBox(
+          width: _markerWidth,
+          height: _rowHeight,
+          child: InkWell(
+            onTap: () => onDone(null),
+            customBorder: const CircleBorder(),
+            child: icon,
+          ),
+        ),
+      );
+    }
+
+    return PopupMenuButton<DoneChoice>(
+      tooltip: 'Mark done',
+      padding: EdgeInsets.zero,
+      position: PopupMenuPosition.under,
+      onSelected: onDone,
+      // Plain Rows rather than ListTiles: a ListTile brings its own vertical
+      // padding and minimum height, which fights a PopupMenuItem's own 48px.
+      itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: DoneChoice.today,
+          child: Row(
+            children: [
+              Icon(Icons.today, color: Colors.orange),
+              SizedBox(width: 12),
+              Text('Done today'),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: DoneChoice.forGood,
+          child: Row(
+            children: [
+              Icon(Icons.check_circle, color: colorScheme.primary),
+              const SizedBox(width: 12),
+              const Text('Done for good!'),
+            ],
+          ),
+        ),
+      ],
+      child: SizedBox(width: _markerWidth, height: _rowHeight, child: icon),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1440,77 +1669,146 @@ class _ExpandedTreeRow extends StatelessWidget {
             painter: _ConnectorPainter(color: lineColor, isLast: node.isLast),
           ),
           const SizedBox(width: 4),
-          // Tappable row: tap to expand/collapse, long-press to navigate
+          // The marker column: a chevron on branch rows, the done circle on
+          // leaf rows. Only leaves get a done control — "Done for good!" lives
+          // in LeafTaskDetail, which All Tasks shows only for leaves, so a task
+          // with children has no completion path anywhere in the app.
+          if (!isLeaf)
+            // The chevron carries its own tap target. It sits outside the row's
+            // InkWell, so without one it would look tappable and do nothing —
+            // tapping it now expands and collapses just as tapping the row name
+            // does. It stays a small target, so the row name remains the easier
+            // way in; this only removes the dead spot.
+            SizedBox(
+              width: _markerWidth,
+              height: _rowHeight,
+              child: InkWell(
+                onTap: onToggleExpand,
+                customBorder: const CircleBorder(),
+                child: Icon(
+                  isExpanded
+                      ? Icons.expand_more_rounded
+                      : Icons.chevron_right_rounded,
+                  size: 18,
+                  color: textColor.withAlpha(150),
+                ),
+              ),
+            )
+          else
+            _buildDoneControl(context),
+          // Tappable row: tap to expand/collapse (branch) or navigate (leaf),
+          // long-press to navigate. A leaf has no navigate arrow of its own —
+          // the whole row body is the target, which frees the width the trailing
+          // "+" needs.
           Expanded(
             child: InkWell(
               onTap: onToggleExpand ?? onNavigate,
               onLongPress: isLeaf ? null : onNavigate,
               borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                child: Row(
-                  children: [
-                    // Chevron for non-leaf nodes; spacer for leaves to align names
-                    if (!isLeaf) ...[
-                      Icon(
-                        isExpanded
-                            ? Icons.expand_more_rounded
-                            : Icons.chevron_right_rounded,
-                        size: 18,
-                        color: textColor.withAlpha(150),
-                      ),
-                      const SizedBox(width: 4),
-                    ] else
-                      const SizedBox(width: 22), // 18 (icon) + 4 (gap)
-                    Expanded(
-                      child: Text(
-                        node.task.name,
-                        style: childTextStyle(
-                          task: node.task,
-                          baseColor: textColor,
-                          accent: accent,
-                          fontSize: 17,
-                          isBlocked: isBlocked,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    // Navigate arrow for leaf nodes
-                    if (isLeaf)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 4),
-                        child: Icon(
-                          Icons.open_in_new_rounded,
-                          size: 13,
-                          color: textColor.withAlpha(100),
-                        ),
-                      ),
-                    // Child count badge for non-leaf nodes
-                    if (!isLeaf)
-                      Container(
-                        margin: const EdgeInsets.only(left: 6),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: textColor.withAlpha(20),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+              child: Opacity(
+                // Dimmed once ticked off either way, matching how All Tasks
+                // renders a worked-on card (task_card.dart:204) — a handled row
+                // should recede whether it was done for today or for good. The
+                // strikethrough on the name is what still tells the two apart.
+                opacity: doneChoice == null ? 1.0 : 0.5,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 6,
+                    horizontal: 4,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
                         child: Text(
-                          '${node.childCount}',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: textColor.withAlpha(140),
+                          node.task.name,
+                          style: childTextStyle(
+                            task: node.task,
+                            baseColor: textColor,
+                            accent: accent,
+                            fontSize: 17,
+                            isBlocked: isBlocked,
+                          ).copyWith(
+                            // Struck through once ticked off either way, so a
+                            // handled row reads as handled at a glance and
+                            // can't be mistaken for a blocked row, which is
+                            // dimmed but never struck through. The circle is
+                            // what tells "done today" from "done for good".
+                            decoration: doneChoice == null
+                                ? null
+                                : TextDecoration.lineThrough,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      // Child count badge for non-leaf nodes
+                      if (!isLeaf)
+                        Container(
+                          margin: const EdgeInsets.only(left: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: textColor.withAlpha(20),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '${node.childCount}',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: textColor.withAlpha(140),
+                            ),
                           ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
+          // Every row can gain a child, at any depth — that is what makes the
+          // starred tree editable without leaving the dialog. The tooltip names
+          // the row so a desktop hover says which task the subtask lands under;
+          // the "+" itself is the affordance on mobile, where tooltips don't
+          // show.
+          //
+          // A row ticked off either way withdraws its "+" until it is undone,
+          // and the blank keeps the row's width so names stay aligned with the
+          // rows around it. The control is withdrawn rather than disabled,
+          // since a present-but-dead "+" is the same trap.
+          //
+          // Bug fix (Codex P1), "Done for good!": a task created under an
+          // archived parent is unreachable — getRootTasks excludes anything
+          // that appears as a child_id at all, and the completed parent is
+          // itself filtered out of the active tree, so the new task showed up
+          // nowhere in All Tasks.
+          //
+          // Bug fix (Codex P2), "Done today": adding a child made the row a
+          // branch, and the marker column swapped its undo circle for a
+          // chevron, stranding the outcome in _doneOutcomes with nothing able
+          // to invoke it. A non-leaf task has no LeafTaskDetail either, so the
+          // last_worked_at stamp, the auto-start and any deadline the mark
+          // removed could not be reversed from the app.
+          if (doneChoice != null)
+            const SizedBox(width: _trailingWidth, height: _rowHeight)
+          else
+            Tooltip(
+              message: 'Add subtask under "${node.task.name}"',
+              child: SizedBox(
+                width: _trailingWidth,
+                height: _rowHeight,
+                child: InkWell(
+                  onTap: onAddSubtask,
+                  customBorder: const CircleBorder(),
+                  child: Icon(
+                    Icons.add,
+                    size: 18,
+                    color: textColor.withAlpha(130),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

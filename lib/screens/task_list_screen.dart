@@ -11,7 +11,7 @@ import '../providers/theme_provider.dart';
 import '../services/sync_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/add_task_flow.dart';
-import '../widgets/completion_animation.dart';
+import '../widgets/done_actions.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/leaf_task_detail.dart';
 import '../widgets/spotlight_overlay.dart';
@@ -663,38 +663,10 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   Future<void> _workedOn(Task task) async {
-    final provider = context.read<TaskProvider>();
-    final previousLastWorkedAt = task.lastWorkedAt;
-    final wasStarted = task.isStarted;
-    _preWorkedOnTimestamps[task.id!] = previousLastWorkedAt;
-    // If the task has its own deadline, ask whether to remove it.
-    // null = cancelled (dismiss/back) → abort the whole "Done today" action.
-    final hadDeadline = task.hasDeadline;
-    bool removeDeadline = false;
-    if (hadDeadline) {
-      final result = await askRemoveDeadlineOnDone(context, task.deadline!, task.deadlineType);
-      if (!mounted) return;
-      if (result == null) return; // user cancelled — abort
-      removeDeadline = result;
-    }
-    await showCompletionAnimation(context);
-    if (!mounted) return;
-    await provider.markWorkedOnAndNavigateBack(
-      task.id!,
-      alsoStart: !task.isStarted,
-    );
-    if (removeDeadline) {
-      await provider.updateTaskDeadline(task.id!, null);
-    }
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).clearSnackBars();
-    showInfoSnackBar(context, '"${task.name}" — nice work!', onUndo: () async {
-      await provider.unmarkWorkedOn(task.id!, restoreTo: previousLastWorkedAt);
-      if (!wasStarted) await provider.unstartTask(task.id!);
-      if (removeDeadline) {
-        await provider.updateTaskDeadline(task.id!, task.deadline!, deadlineType: task.deadlineType);
-      }
-    });
+    _preWorkedOnTimestamps[task.id!] = task.lastWorkedAt;
+    // navigateBack: this runs from the task's own leaf detail page, so the
+    // stack has to pop once the task is marked.
+    await markTaskDoneToday(context, task, navigateBack: true);
   }
 
   Future<void> _moveTask(Task task) async {
@@ -864,24 +836,9 @@ class TaskListScreenState extends State<TaskListScreen>
   }
 
   Future<void> _completeTaskWithUndo(Task task) async {
-    final provider = context.read<TaskProvider>();
-
-    // Check if completing this task will free any dependents — confirm first.
-    final dependentNames = await provider.getDependentTaskNames(task.id!);
-    if (!mounted) return;
-    if (!await confirmDependentUnblock(context, task.name, dependentNames)) return;
-    if (!mounted) return;
-
-    // Show celebratory animation before completing
-    await showCompletionAnimation(context);
-
-    if (!mounted) return;
-
-    final result = await provider.completeTask(task.id!);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).clearSnackBars();
-    showInfoSnackBar(context, '"${task.name}" done for good!',
-        onUndo: () => provider.uncompleteTask(task.id!, restoredDeps: result.removedDeps));
+    // navigateBack: this runs from the task's own leaf detail page, so
+    // completing it has to pop the stack (TaskProvider.completeTask).
+    await completeTaskForGood(context, task, navigateBack: true);
   }
 
   Widget _buildLeafTaskDetail(TaskProvider provider) {

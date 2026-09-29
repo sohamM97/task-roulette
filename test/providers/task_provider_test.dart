@@ -705,6 +705,34 @@ void main() {
       expect(provider.currentParent!.id, childId);
     });
 
+    // [Regression] navigateToTask used to assign the caller's Task straight to
+    // _currentParent. A caller holding a snapshot from before a mutation — the
+    // Starred expanded dialog keeps its rows on screen across a "Done today" —
+    // pushed stale fields into the leaf detail view, which showed a deadline
+    // that had just been cleared. _refreshCurrentList only reloads children, so
+    // nothing corrected it afterwards.
+    test('navigateToTask re-reads the task instead of trusting a stale snapshot',
+        () async {
+      final id = await db.insertTask(Task(
+        name: 'Has deadline',
+        deadline: '2026-09-30',
+        deadlineType: 'due_by',
+      ));
+      await provider.loadRootTasks();
+      final stale = (await db.getAllTasks()).firstWhere((t) => t.id == id);
+      expect(stale.deadline, '2026-09-30', reason: 'snapshot taken pre-mutation');
+
+      // Mutate behind the snapshot's back, exactly as a "Done today" does.
+      await db.updateTaskDeadline(id, null);
+      await db.markWorkedOn(id);
+
+      await provider.navigateToTask(stale);
+
+      expect(provider.currentParent!.id, id);
+      expect(provider.currentParent!.deadline, isNull);
+      expect(provider.currentParent!.isWorkedOnToday, isTrue);
+    });
+
     test('navigateBack after navigateToTask on root task returns to root', () async {
       final id = await db.insertTask(Task(name: 'Root task'));
 
