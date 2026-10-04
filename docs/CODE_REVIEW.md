@@ -3540,20 +3540,365 @@ carry forward. Analyze clean, full test suite green.
 
 ---
 
+## Round 12 (2026-10-04)
+
+Full codebase review after **43 commits** since Round 11 (1.3.10 → 1.4.5).
+New or changed areas:
+- the opt-in weighted Suggested section and "Also done today" on Today's 5
+- "Go to task" in the Today's 5 options sheet
+- search on the Starred and Today's 5 tabs (`task_search.dart`, `tab_app_bar_title.dart`)
+- the "Did you mean" duplicate-task suggestion in `add_task_dialog.dart`
+- `InboxToggleChip`, and the Inbox toggle carried over into "Add multiple"
+- adding subtasks at any level and marking them done from the Starred tree (`done_actions.dart`)
+- length caps on strings read from Firestore
+
+`lib/data/` has no changes since Round 11.
+
+Four parallel subagents reviewed the code: the Today's 5 screen, the Starred screen, the add/task-list/provider changes, and the rest of `lib/` plus UI docs drift. Every Important finding below was then re-checked by hand against the code. `flutter analyze` is clean.
+
+---
+
+### Previous Round Verification
+
+- [x] Round 11 fixes are still in place: `_pushTodaysFiveState` and `_runExclusive` (`sync_service.dart:97,119`), the I-51 `isWorkedOnToday` check (`todays_five_screen.dart:883`), the batched `target_ancestors` CTE (`database_helper.dart:1261`), `insertTaskWithParents` (`:579`), the `_refreshing` flag that coalesces overlapping refreshes (`todays_five_screen.dart:56`), and CLAUDE.md at v23 (`_dbVersion = 23`).
+- [ ] **M-32**: N+1 in `deleteTaskAndReparentChildren` is still present (`database_helper.dart:2125-2139`). It runs one `txn.query` and one `txn.insert` per parent × child pair. Simpler fix than before: `insert(..., conflictAlgorithm: ConflictAlgorithm.ignore)` and check the returned row id, as `addRelationship` (`:633`) already does.
+- [ ] **M-34**: Starred N+1 is still present and now runs more often (see M-62).
+- R-11 / R-12 are still deferred.
+
+---
+
+### Critical
+
+None. `flutter analyze` is clean, and no finding loses data on a single device.
+
+---
+
+### Important
+
+#### I-54. Every successful sync reloads Today's 5, and the reload schedules another push — a signed-in device pushes about every 5 s while the app is open
+**Files:** `lib/screens/todays_five_screen.dart:127-132` (`_onSyncStatusChanged`), `:263` and `:415-427` (`_persist`); `lib/services/sync_service.dart:198-200, 516, 522`
+
+The loop:
+1. `push()` finishes and calls `setSyncStatus(SyncStatus.synced)` (`sync_service.dart:516`).
+2. `_onSyncStatusChanged` sees `synced` and calls `_reloadFromDb()`.
+3. Whenever at least one task is in Today's 5, `_loadTodaysTasksInner` ends with `await _persist()` (`:263`).
+4. `_persist()` calls `onTodaysFivePersisted()`, which calls `schedulePush()` (5 s debounce).
+5. That push sets `synced` again, and the cycle repeats.
+
+Consequences:
+- Today's 5 is written to Firestore about every 5 s.
+- Each push sets `_skipNextPeriodicPull = true` (`:522`), so the 5-minute periodic pull is always skipped. The device stops picking up other devices' edits until the app restarts.
+- `saveTodaysFiveState` stamps `prefsKeyTodaysFivePersistedAt = now` on every save, and since I-48 that stamp is sent as the remote `updated_at`. An idle device therefore always looks newest and wins last-write-wins. It overwrites Today's 5 edits made on another device, which is what PR #72 was meant to prevent.
+
+The listener is older than this round (March), but the I-48 fix made the last-write-wins effect much worse. I confirmed this by reading the code, not by running it. To check at runtime, add a `debugLog` in `push()` and leave the Today tab open with one task pinned.
+
+**Recommended fix:** In `_onSyncStatusChanged`, reload only when a pull actually changed local data, for example via a "pull changed data" flag set by `SyncService`, not on every `synced`. Separately, make `_persist()` skip both the save and the push when the ids, completed set and worked-on set are the same as the last save.
+
+---
+
+#### I-55. "Add here" on an Inbox task lists it under the parent but leaves it in the Inbox
+**Files:** `lib/screens/task_list_screen.dart:442`, `lib/screens/starred_screen.dart:1179`; `lib/providers/task_provider.dart:667` (`addParentToTask`)
+
+Both "Did you mean → Add here" handlers call `provider.addParentToTask`, which only inserts the relationship. Filing an Inbox task normally goes through `fileTask` (`task_provider.dart:~1056`), which also calls `clearInboxFlag`. `getInboxTasks`/`getInboxCount` (`database_helper.dart:960-980`) filter on `is_inbox = 1` alone, so a task with a parent still counts as Inbox.
+
+**Failure scenario:**
+1. Brain-dump "Buy milk" into the Inbox.
+2. Drill into "Groceries", tap +, type "buy milk".
+3. Tap the match. The snackbar says `Added "Buy milk" here`.
+4. "Buy milk" is now under Groceries, yet it is also still in the root Inbox section, and the Inbox count does not drop.
+
+The duplicate suggestion makes this common, because re-typing an Inbox item you haven't filed yet is exactly the duplicate case. The older "Also show under" path (`task_list_screen.dart:605`) has the same gap.
+
+The `_loadInboxCount()` calls at `task_list_screen.dart:450, 456` never run. `parentId != null` here, so `provider.isRoot` is false and `showInbox` is false.
+
+**Recommended fix:** When `existing.isInbox`, call `provider.fileTask(existing.id!, parentId)` and undo with `unfileTask`, which restores the flag. Otherwise keep `addParentToTask`/`removeParentFromTask`. Do this in one shared helper (R-14). Drop the `_loadInboxCount` calls that never run.
+
+---
+
+#### I-56. Flare at root sometimes does nothing when it picks an Inbox task
+**Files:** `lib/providers/task_provider.dart:447-455` (`pickRandom`), `lib/screens/task_list_screen.dart:942-947` (`_showSpotlight`), `lib/data/database_helper.dart:657` (`getRootTasks`)
+
+At root, `_tasks` comes from `getRootTasks`, which includes Inbox tasks, and `pickRandom` draws from `_tasks`. `_showSpotlight` then looks the pick up in `gridTasks`. When `_inboxCount > 0`, `gridTasks` excludes Inbox tasks, so the lookup returns `index == -1` and the method returns with no feedback.
+
+**Failure scenario:** At root with three Inbox tasks and two filed tasks, tap Flare a few times. Some taps do nothing: no spotlight, no snackbar, no dialog.
+
+`docs/UI_VIEWS.md:60` says a "Lucky Pick" dialog appears as a fallback. That dialog (`RandomResultDialog`) has had no caller in `lib/` since b18ceab (see R-16).
+
+**Recommended fix:** In `pickRandom`, exclude `isInbox` tasks when `isRoot`. Then either delete the fallback line from `UI_VIEWS.md` or wire `RandomResultDialog` in for `index == -1`.
+
+---
+
+#### I-57. A "Done for good!" row in the Starred dialog can still be opened, which lets you add a subtask under an archived task
+**File:** `lib/screens/starred_screen.dart:1463` and `:1705`
+
+A leaf row's body tap is `onToggleExpand ?? onNavigate`. A leaf has no `onToggleExpand`, so the tap always navigates, whatever `doneChoice` is. `navigateToTask` (`task_provider.dart:877`) re-reads the task, completed or not.
+
+**Failure scenario:**
+1. In the Starred dialog, mark leaf L "Done for good!".
+2. Tap L's struck-through name.
+3. The dialog closes, and All Tasks opens L's leaf detail with its add button and an active "Done for good!" button.
+4. Add a subtask there. It sits under an archived parent and appears nowhere in All Tasks. This is the Codex P1 case that removing the row's "+" (`:1781-1785`) was meant to close.
+5. Closing the dialog also loses the row's in-session undo.
+
+**Recommended fix:** When `doneChoice == DoneChoice.forGood`, make the row body do nothing, or make it undo, like the circle does.
+
+---
+
+#### I-58. Starred dialog: after a reload, a second "Done today" works from the task as it was after the first mark, so its undo leaves the task worked on today
+**Files:** `lib/screens/starred_screen.dart:994-1029` (`_fetchChildren`), `lib/widgets/done_actions.dart:59-60` (`markTaskDoneToday`)
+
+`markTaskDoneToday` records `previousLastWorkedAt` and `wasStarted` from the `Task` it is passed. A "Done today" task keeps `completed_at` NULL, so the reload that follows any add (`_reloadAfterAdd`) replaces the row's cached `Task` with the copy read after the mark: `lastWorkedAt` = today, `startedAt` set, deadline possibly cleared. Undoing the mark does not refresh that cache.
+
+**Failure scenario:**
+1. Mark leaf L "Done today".
+2. Add a task anywhere in the tree with "+", which reloads every cached level.
+3. Tap L's circle to undo. The database is restored correctly.
+4. Mark L "Done today" again. It skips the auto-start because `wasStarted` is true, and skips the deadline prompt.
+5. Undo. `last_worked_at` is set back to step 1's timestamp, so L stays "worked on today" although every action was undone.
+
+**Recommended fix:** In `markTaskDoneToday` (and `completeTaskForGood`), re-read the task from the database before recording the values the undo restores. This needs a public `TaskProvider.getTaskById`. Alternatively, have `_onDoneChanged(false)` re-read the task into every `_childrenCache` entry.
+
+---
+
+#### I-59. Starred dialog: a parent whose only child was done for good turns into a leaf after a reload, and undoing the child then leaves it active under an archived parent
+**File:** `lib/screens/starred_screen.dart:1018-1028` (child count), `:1040-1056` (re-inserting done rows)
+
+A reload puts the done child back into its parent's list. However, the parent's `childCount` comes from `getChildren`, which excludes completed tasks, so the count drops to 0 and the parent is treated as a leaf.
+
+**Failure scenario:**
+1. Expand A, whose only child is leaf B.
+2. Mark B "Done for good!".
+3. Add a subtask under any other row, which reloads every cached level.
+4. A now draws as a leaf: done circle, no chevron, no way to collapse, while B is still shown indented under it.
+5. Mark A "Done for good!", then tap B's circle to undo.
+6. `uncompleteTask(B)` makes B active under an archived A, so B appears nowhere in All Tasks (the same invisible-task case as I-57).
+
+The Completed screen handles the archived-parent case with `getArchivedParents`/`removeArchivedParentLinks`; this undo path does not.
+
+**Recommended fix:** In `_addVisibleNodes`, treat a node as a branch while its `_childrenCache` entry is non-empty, or count the re-inserted done rows in the parent's `childCount`. Also check for archived parents in the "Done for good" undo, as the Completed screen does.
+
+---
+
+#### I-60. Today's 5: `_reloadFromDb()` discards the undo state for "Done today", so restoring a task afterwards only half-reverts it
+**File:** `lib/screens/todays_five_screen.dart:138-145` (`_reloadFromDb`), `:1126` (`_pinTaskInTodaysFive`), `:883-892` (`_handleUncomplete`)
+
+`_reloadFromDb` clears `_autoStartedIds` and `_preWorkedOnLastWorkedAt`. Both live only in memory and are never saved. Only the reconcile branches use `_reloadPreservingUndoState`. These callers use the plain reload:
+- `_pinTaskInTodaysFive`: accepting a suggestion, creating a task, picking an existing task
+- `_onSyncStatusChanged`, which with I-54 fires every few seconds
+- `_onProviderChanged` at midnight
+
+**Failure scenario:**
+1. Task X is not started, and was last worked on 3 days ago.
+2. Mark X "Done today". This auto-starts it.
+3. Tap "+" on a suggestion pill, or just wait for a sync.
+4. Tap X's done card to restore it.
+5. `wasAutoStarted` is false, so X stays "in progress". `restoreTo` is null, so `last_worked_at` becomes NULL rather than 3 days ago, which changes how it is weighted for suggestions.
+
+**Recommended fix:** `_pinTaskInTodaysFive` and `_onSyncStatusChanged` should call `_reloadPreservingUndoState()`, and it should also keep `_explicitlyUncompletedIds`. Better: keep a `DoneOutcome` per task (R-13), which holds its own undo data.
+
+---
+
+#### I-61. Today's 5: restoring a "Done for good!" task by tapping its done card does not restore its dependency links
+**File:** `lib/screens/todays_five_screen.dart:895` (older than this round)
+
+`_handleUncomplete` calls `provider.uncompleteTask(task.id!)` without `restoredDeps`. Only the snackbar undo (`:837`) passes the `removedDeps` that `completeTaskOnly` returned.
+
+**Failure scenario:**
+1. A blocks B. Pin A.
+2. Mark A "Done for good!" and confirm the unblock.
+3. Let the snackbar expire, then tap A's done card to restore it.
+4. A is active again, but B no longer depends on it.
+
+**Recommended fix:** Use `DoneOutcome` from `done_actions.dart` (R-13). Its undo restores the removed dependencies, and its doc comment already lists the Today's 5 sheet as a caller.
+
+---
+
+### Minor
+
+#### M-53. Undoing "Add here" under a pinned parent does not put the parent back in Today's 5
+**Files:** `task_list_screen.dart:446-451`, `starred_screen.dart:1183-1190`
+
+Linking a child turns the parent into a non-leaf. `_refreshAfterMutation` notifies listeners, and Today's 5 drops the parent and saves that (`todays_five_screen.dart:366-375, 393`). `removeParentFromTask` restores only the relationship.
+
+**Scenario:** Pin leaf "Groceries". Drill into it, tap +, type an existing name, choose "Add anyway" on the pinned-parent warning, then tap the match. Tap Undo. Groceries is a leaf again, but no longer in Today's 5. The user was warned, but the Undo looks like a full restore.
+
+**Fix:** Re-pin the parent with `TodaysFivePinHelper` in the undo if it was pinned before. Or offer no Undo when the parent was pinned, and say the pin is gone.
+
+#### M-54. Firestore sync ids that are too long are cut to 50 characters and used, not rejected
+**File:** `lib/services/firestore_service.dart:887-893`, applied at `:274-275, 321-322, 352-353, 400-401, 494-495, 545-546, 670, 879`
+
+A malformed document whose `child_sync_id` is 60 characters is stored or looked up under a 50-character id that matches no task. `schedule_type`/`deadline_type` are cut to 20 characters in the same way and stored, when they should fall back to `weekly`/`due_by`. Reachable only with a malformed or hostile document. **Fix:** return null for ids that are too long, so the existing `!= null` checks skip the row. Check type fields against their allowed values and use the default otherwise.
+
+#### M-55. "Also done today" tasks load paths, deadlines and schedules they never show
+**File:** `lib/screens/todays_five_screen.dart:437-451`
+
+`_loadTaskPaths` runs one recursive `getAncestorPath` per `_otherDoneToday` task and passes those ids to `getEffectiveDeadlines`/`getEffectiveScheduledTodayIds`. `_buildOtherDoneChip` shows only the name. This runs on every provider notification, so 20 tasks done today means 20 recursive queries per notification. **Fix:** load paths for `_todaysTasks` only.
+
+#### M-56. `_loadTaskPaths` is called "for the suggestion pills" but never loads anything for them, and "suggest another" does not suggest another
+**File:** `lib/screens/todays_five_screen.dart:470-474, 568, 756-760` (calls); `:1553` (sheet subtitle)
+
+`_toggleSuggestions`, `_dismissSuggestion` and `_confirmRemoveFromTodaysFive` call `_loadTaskPaths` for the new pills. `_loadTaskPaths` skips suggestions (its own doc says so, `:431`), so each call only repeats queries. The options-sheet subtitle "Hide this one and suggest another" promises a replacement, but `_refreshSuggestions` re-picks only when the list is empty (`:526`). **Fix:** drop those calls. Reword the subtitle, for example to "Hide this one", and fix the comments listed in M-67.
+
+#### M-57. A suggestion pick that finishes after "Hide" puts old pills back
+**File:** `lib/screens/todays_five_screen.dart:464-478, 544`
+
+Tap "Show suggestions", then "Hide" while the pick is still running. "Hide" sets `_suggestions = []`, then the finished pick assigns its list. On the next expand, the list is non-empty, so the old picks are kept, while the comment at `:476` promises a fresh set. **Fix:** a request counter in `_refreshSuggestions`. Apply the result only if the counter is unchanged and `_suggestionsExpanded` is still true.
+
+#### M-58. Two quick "+" taps on different suggestion pills can lose the first pin
+**File:** `lib/screens/todays_five_screen.dart:556-559, 1095-1118`
+
+`_pinTaskInTodaysFive` reads the saved state, adds one id and saves the whole set. Two overlapping calls both read the old set, so the second save drops the first task. The window is a few awaits, so it needs a fast double tap. **Fix:** ignore a second accept while one is in flight, or run the pins one after another.
+
+#### M-59. Restoring a task that has gained subtasks removes it from the screen but not from the saved state
+**File:** `lib/screens/todays_five_screen.dart:852-865, 906`
+
+`_removeIfNoLongerLeaf` drops the task from `_todaysTasks` but never calls `_persist()`. The database and the next push still list it until a later `refreshSnapshots` reconciles. **Fix:** `await _persist()` after the removal.
+
+#### M-60. Today tab bottom sections may overflow on a phone in landscape
+**File:** `lib/screens/todays_five_screen.dart:1254-1272`
+
+The Suggested and "Also done today" boxes sit in a non-scrolling `Column` below an `Expanded`, and orientation is not locked (`AndroidManifest.xml:20`). Estimated from layout constants, not run:
+- Suggested expanded ≈154dp, Also-done ≈94dp, padding 24dp: ≈270dp in total.
+- Landscape body ≈236dp: 412 screen − 24 status bar − 72 app bar − 80 navigation bar.
+
+That is a RenderFlex overflow of about 35dp. **Fix:** move the bottom block into the scroll area, or wrap it in `Flexible` plus a scroll view. Check with `/debug-build` in landscape.
+
+#### M-61. Pressing Back while the search spinner is showing can pop the wrong route
+**File:** `lib/widgets/task_search.dart:57-74`
+
+`barrierDismissible: false` does not block the Android Back button. If Back closes the spinner while `getAllTasks`/`getParentNamesMap` are loading, the `finally` block's `navigator.pop()` pops the route underneath, which is the app's home route. A database error also escapes `showTaskSearch` uncaught. The window is short with small data. **Fix:** wrap the spinner in `PopScope(canPop: false)` and catch errors in `showTaskSearch`.
+
+#### M-62. Starred: M-34's N+1 now runs after every add or done in the dialog, and the dialog's own reload runs its queries one after another
+**File:** `lib/screens/starred_screen.dart:179-221` (`_loadStarredTasks`), `:1014-1030` (`_fetchChildren`), `:1240-1246` (`_reloadAfterAdd`)
+
+- `_loadStarredTasks` issues about 5S+1 queries for S starred tasks and runs after every provider notification (100 ms debounce, `:163-169`).
+- `_fetchChildren` awaits `getChildren` once per child, one after another.
+- `_reloadAfterAdd` repeats that for every cached level, also one after another. With 10 cached levels of 10 children, one add costs about 130 queries in sequence.
+
+**Fix:** a database query that returns the active child count for each id in a list (`GROUP BY` on `task_relationships` joined to `tasks`). Run the levels in `_reloadAfterAdd` with `Future.wait`. This also closes M-34.
+
+#### M-63. Starred: undoing with the circle refreshes blocked ids twice, and the snackbar's Undo still works meanwhile
+**File:** `lib/screens/starred_screen.dart:1269-1273` (`_onDoneTapped`)
+
+`done.undo()` already calls `_onDoneChanged(false)`, which runs `_refreshBlockedIds`, and `:1271` runs it again. `clearSnackBars()` runs only after both awaits, so a quick tap on the snackbar's Undo reverses the action a second time. The database effect is harmless (dependencies are re-inserted with `ConflictAlgorithm.ignore`), but `onChanged` fires twice. **Fix:** clear the snackbars first, and drop the second `_refreshBlockedIds`.
+
+#### M-64. Starred: `_fetchChildren` adds to `_blockedIds`, while `_refreshBlockedIds` replaces the whole set (latent)
+**File:** `lib/screens/starred_screen.dart:1009` vs `:1321`
+
+If an expand runs at the same time as a done action, the replacement set can be built before the new level is in the cache, so blocked rows in that level lose their dimming. Needs taps at nearly the same moment. **Fix:** return the blocked ids from `_fetchChildren` and merge them in `setState`, or always rebuild through `_refreshBlockedIds`.
+
+#### M-65. Starred: `_onProviderChanged` drops notifications that arrive during a load
+**File:** `lib/screens/starred_screen.dart:163-169`
+
+It returns early while `_loading` is true, so a change that lands mid-load is never shown. If a load throws, `_loading` stays true and every later change is ignored. The dialog now sends notifications in bursts: a "Done today" sends 2-3. **Fix:** set a "reload again" flag in place of returning, and reset `_loading` in a `try`/`finally`.
+
+#### M-66. Starred dialog rows overflow at depth 13 or more (latent)
+**File:** `lib/screens/starred_screen.dart` (`_ExpandedTreeRow`)
+
+The indent width is 72 + 16×depth px, and the dialog content is about 280 px wide on a 360 dp phone. Rows overflow from depth 13. Adding subtasks at any depth makes deep trees easier to build. **Fix:** cap the indent, or shrink the step with depth.
+
+#### M-67. `docs/UI_VIEWS.md` is out of date
+- **Line 16, suggestion count:** says Suggested shows "the whole eligible set". The code caps it at `_suggestionCap = 40` (`todays_five_screen.dart:87`) and re-picks only when the list is empty. The docstring at `:1377` repeats "all eligible".
+- **Line 16, empty state:** the "No suggestions right now." empty state (`:1458`) is not mentioned.
+- **Line 16, weighting:** says suggestions use "the same weighted selection as the All Tasks roulette". They don't:
+  - The roulette's first spin uses `pickRandom` → `_taskWeight`, with no schedule boost, deadline boost or normalization (`task_provider.dart:448-455`).
+  - "Spin Again" calls `pickWeightedN(pool, 1)` with no boost arguments (`task_list_screen.dart:1079`).
+  - Suggestions are the boosted, normalized pick.
+
+  The same wrong claim is in `todays_five_screen.dart:71-72, 481-484`.
+- **Line 33:** omits that long-pressing a branch row in the Starred tree opens it in All Tasks (`starred_screen.dart:1706`).
+- **Line 40, reopened dialog:** says done rows clear on reopen "since the tree only loads active tasks". That is true only for "Done for good!". A "Done today" task is still active, so it comes back as an ordinary row with an empty circle.
+- **Line 40, repeated sentence:** two sentences say the circle tells the two apart.
+- **Line 40, conflicting code comment:** `starred_screen.dart:1709-1710` says the strike-through tells them apart, which contradicts `:1729` and the doc.
+- **Lines 64 and 72:** call Inbox a "checkbox" and "Add multiple" a toggle. Inbox is the shared `InboxToggleChip`: a filled accent inbox icon when on, outlined and muted when off. "Add multiple" is a `TextButton` (`add_task_dialog.dart:350-367`). The chip is not documented. Line 72 also carries a "(Bug fix: …)" history note, which belongs in a commit message.
+- **All Tasks app bar:** not documented. At root it has the "Task graph" button (`account_tree_outlined`, `task_list_screen.dart:1583-1596`), which opens `DagViewScreen`. When drilled in it has Star/Unstar and "Open link".
+- **Line 83 (Archive):** omits the relative status labels ("Completed today / yesterday / N days ago / <date>", `completed_tasks_screen.dart:64-85`), the "Delete permanently?" confirm (`:281`), and the "Restore task" confirm shown when a parent is archived (`:136`).
+- **Line 60:** describes the "Lucky Pick" fallback dialog, which has no caller (I-56).
+
+#### M-68. CLAUDE.md is out of date
+- The "Today's 5 weighted selection" rule tells you to use `_fetchSelectionContext()`, which does not exist in `lib/`. Today's 5 is now manual. The only `pickWeightedN` call in that screen is in `_refreshSuggestions` (`:544`), which passes the boost arguments inline. Reword the rule to name `_refreshSuggestions`.
+- The tabs are listed as "(Today, Starred, All Tasks)". The order is Starred, Today, All Tasks, and Starred is the default (`main.dart:89-92`).
+- `AddTaskFlow` is said to include "pin transfer". Pin transfer was removed (`add_task_flow.dart:21`).
+
+#### M-69. Stale code comments
+- `todays_five_screen.dart:557-558, 562` say dismissing "backfills a fresh pick". It doesn't (M-56).
+- The `_toggleSuggestions` docstring (`:461-463`) says suggestions are computed only on first expand. They are recomputed on every expand.
+- `todays_five_screen.dart:572-574`: a doc comment about `_shortenPath` sits on `_deadlineIconColor`.
+- `task_list_screen.dart:1408-1409` says deadlines are "stored for display only" and don't auto-pin. A deadline of today does auto-pin, and deadlines boost suggestions.
+- `auth_service.dart:28` has "TODO: Replace with your actual Firebase project values". The values come from `--dart-define`.
+
+#### M-70. Starred: a "Done today" row looks untouched when the dialog is reopened (design question)
+**File:** `lib/screens/starred_screen.dart:952-958`
+
+Session styling is gone on reopen, so the circle offers "Done today" again for a task already worked on today. The comment at `:952-958` says the dimming matches All Tasks, but All Tasks dims a card from `last_worked_at`, which survives a reopen. This is a design decision for the user, not a bug fix.
+
+---
+
+### Refactoring
+
+#### R-13. Today's 5 repeats the shared done actions instead of using `DoneOutcome`
+**File:** `lib/screens/todays_five_screen.dart:784-842` (`_workedOnTask`, `_completeNormalTask`)
+
+These repeat `markTaskDoneToday`/`completeTaskForGood` from `done_actions.dart` almost line for line: the deadline prompt, the animation, the dependency confirm and the undo closure. Keep a `Map<int, DoneOutcome>` the way `starred_screen.dart` does, with `onChanged` calling `_markDone`/`_unmarkDone`, and have `_handleUncomplete` call `outcome.undo()`. This fixes I-61 and most of I-60.
+
+#### R-14. The "Add here" link-with-undo handler is written twice
+**Files:** `task_list_screen.dart:417-457`, `starred_screen.dart:1164-1197`
+
+Both handlers do the same steps: self-check → `getChildIds` → "already listed here" → `addParentToTask` → undo with `removeParentFromTask` → loop message. I-55 and M-53 each need fixing in both copies. Extract one helper, for example `linkExistingHere(context, provider, existing, parentId, {onChanged})`.
+
+#### R-15. The suggestion data is fetched with two sequential full-table queries on every "+"
+**Files:** `task_list_screen.dart:402-403`, `starred_screen.dart:96-97, 1152-1153`, `task_search.dart:103-104`
+
+Each site awaits `getAllTasks()` and then `getParentNamesMap()`. `task_search.dart:68` and `_fetchCandidateData` (`task_list_screen.dart:501`) already run the same pair together with `Future.wait`. Make that one shared function, and make `fetchSearchCandidates` (`task_search.dart:54`, used only in that file) private or the shared entry point.
+
+#### R-16. Dead code
+- `lib/widgets/random_result_dialog.dart` is imported only by tests. `spinIcon` (`display_utils.dart:23`) is used only by that dialog. Delete both, plus `test/widgets/random_result_dialog_test.dart`, unless I-56 wires the dialog in.
+- Public members with no caller in `lib/`:
+  - `TaskProvider.hasSchedule` (`task_provider.dart:1021`), which has no caller even in tests
+  - `DatabaseHelper.getLeafDescendants` (`:2718`), `getTaskBySyncId` (`:2527`), `getTaskIdsWithStartedDescendants` (`:2744`), `getTodaysFiveTaskIds` (`:2853`) and `updateStarOrder` (`:1387`; `reorderStarredTasks` took its place)
+  - `Task.priorityLabel` and `Task.isDeadlineOn` (`task.dart:58, 62`)
+- Commented-out `transferPin`/`togglePinInPlace` in `todays_five_pin_helper.dart:108-150`. Git history keeps them.
+- `AddTaskFlow.parentId` (`add_task_flow.dart:59-62`) is never read; its doc says it is "kept as context".
+
+`dag_view_screen.dart`/`force_directed_layout.dart` are **not** dead. The root "Task graph" button reaches them (M-67).
+
+#### R-17. Small cleanups
+- The "Go to task" `ListTile` (`todays_five_screen.dart:680-689, 1540-1549`) and the bordered container decoration (`:1418-1425, 1935-1942`) are each written twice. Extract each one.
+- `_refreshSnapshotsInner` (`:350-358`) calls `getTaskById` per leaf although `getAllLeafTasks()` already returned fresh rows. `_refreshSuggestions` then fetches `getAllLeafTasks()` again. Pass the list through.
+- `_handleTaskDone` (`:846`) and `_fadeRightEdge` (`:1474`) each only call one other function. `_refreshTaskSnapshot`'s return value is unused.
+- `_matches` in `add_task_dialog.dart:140` is a getter that scans the whole task list and is read twice per keystroke (`:312-313`). Compute it once in `build`.
+- `starred_screen.dart` `_loadDirectChildren` (`:981-985`) calls `setState` and then `_rebuildFlatTree`, which calls `setState` again. Merge the two.
+
+---
+
+## Round 12 — Suggested Implementation Order
+
+1. **I-54**: Stop the push loop from sync status changes. It affects every signed-in user and undoes the cross-device last-write-wins fix.
+2. **I-55** together with **R-14**: one shared "Add here" helper that files Inbox tasks with `fileTask`. Fold in **M-53**.
+3. **R-13** together with **I-61** and **I-60**: move Today's 5 onto `DoneOutcome`, and use `_reloadPreservingUndoState` in the pin and sync paths.
+4. **I-57**, **I-59**, **I-58**: Starred dialog done-row fixes (block navigation on archived rows; branch status from the cache; re-read the task before recording undo values).
+5. **I-56**: exclude Inbox tasks from the root Flare pool, and decide what happens to `RandomResultDialog`.
+6. **M-67 / M-68 / M-69**: docs and comments. Cheap; do with the related code fixes.
+7. The remaining Minor items as time permits. **M-60** needs a `/debug-build` in landscape first.
+8. **R-15–R-17**, and **M-32/M-34/M-62** (batched child counts), when touching those files.
+
+---
+
 ### Items Still Open From All Rounds
 
 | Item | Title | Round | Status |
 |------|-------|-------|--------|
-| ~~I-38 / R-9~~ | ~~`_transferPinToChild` bypasses TaskProvider~~ | 9 | **Obsolete** — method removed with manual Today's-5 model |
-| M-32 | N+1 in `deleteTaskAndReparentChildren` | 9 | Open — low impact |
-| M-34 | Starred N+1 for tree preview | 10 | Open — low impact |
-| ~~I-48~~ | ~~Today's-5 LWW clock-basis mismatch~~ | 11 | **FIXED & VERIFIED** (Round 11 fix) |
-| ~~I-49~~ | ~~Task hard-deletes don't propagate~~ | 11 | **FIXED & VERIFIED** (Firestore-only tombstones — sound) |
-| ~~I-50~~ | ~~Bulk sync ops outside `_syncing` mutex~~ | 11 | **FIXED & VERIFIED** |
-| ~~I-51~~ | ~~External "Done today" undo doesn't revert DB~~ | 11 | **FIXED & VERIFIED** |
-| ~~I-52~~ | ~~`getEffectiveDeadlines` N+1 on hot path~~ | 11 | **FIXED & VERIFIED** |
-| ~~I-53~~ | ~~Starred grandchild DRY-rule violation~~ | 11 | **FIXED & VERIFIED** |
-| ~~M-39…M-52~~ | (see Round 11 Fix Verification) | 11 | **All resolved & verified** (M-39 no-op by design; M-41 comment; M-44 guard done, deferNotify batching deferred) |
-| ~~R-10~~ | ~~`addTask` insert not atomic~~ | 11 | **FIXED & VERIFIED** |
-| R-11 | Dedup sync query/reconcile | 11 | **Deferred** — high-risk refactor, recommend focused PR |
-| R-12 | Dedup picker browse-tree | 11 | **Deferred** — divergent per-picker behavior, low value |
+| M-32 | N+1 in `deleteTaskAndReparentChildren` | 9 | Open, low impact |
+| M-34 | Starred N+1 for tree preview | 10 | Open; now runs more often, see M-62 |
+| R-11 | Dedup sync query/reconcile | 11 | Deferred (high-risk refactor; do as its own PR) |
+| R-12 | Dedup picker browse-tree | 11 | Deferred (pickers behave differently, low value) |
+| I-54 | Sync status change → reload → persist → push loop | 12 | Open |
+| I-55 | "Add here" on Inbox task leaves it in Inbox | 12 | Open |
+| I-56 | Flare at root does nothing when it picks an Inbox task | 12 | Open |
+| I-57 | Done-for-good Starred row still opens, so a subtask can be added under an archived task | 12 | Open |
+| I-58 | Starred cached task makes the second "Done today" undo restore the wrong value | 12 | Open |
+| I-59 | Starred parent turns into a leaf after reload; undo leaves child under archived parent | 12 | Open |
+| I-60 | Today's 5 `_reloadFromDb` discards undo state | 12 | Open |
+| I-61 | Today's 5 card restore drops dependency links | 12 | Open |
+| M-53…M-70 | See Round 12 Minor | 12 | Open (M-70 is a design question for the user) |
+| R-13…R-17 | See Round 12 Refactoring | 12 | Open |
