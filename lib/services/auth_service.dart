@@ -25,7 +25,7 @@ class AuthUser {
 /// Linux (via googleapis_auth browser OAuth), then exchanges the Google
 /// ID token for a Firebase ID token via the Firebase Auth REST API.
 class AuthService {
-  // TODO: Replace with your actual Firebase project values
+  // Firebase project values come from --dart-define at build time.
   static const _firebaseApiKey = String.fromEnvironment(
     'FIREBASE_API_KEY',
     defaultValue: '',

@@ -6,6 +6,7 @@ import 'package:task_roulette/data/database_helper.dart';
 import 'package:task_roulette/data/todays_five_pin_helper.dart';
 import 'package:task_roulette/models/task.dart';
 import 'package:task_roulette/models/task_schedule.dart';
+import 'package:task_roulette/utils/display_utils.dart' show todayDateKey;
 
 void main() {
   // saveTodaysFiveState stamps the LWW timestamp in SharedPreferences, so the
@@ -1099,6 +1100,148 @@ void main() {
     });
   });
 
+  // CR M-62 / M-34: batched replacements for per-task getChildren calls.
+  group('getChildrenOfParents / getActiveChildCounts', () {
+    test('groups active children by parent, in getChildren order', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final a1 = await db.insertTask(Task(name: 'A1'));
+      final a2 = await db.insertTask(Task(name: 'A2', priority: 1));
+      final aDone = await db.insertTask(Task(name: 'A done'));
+      final b1 = await db.insertTask(Task(name: 'B1'));
+      await db.addRelationship(a, a1);
+      await db.addRelationship(a, a2);
+      await db.addRelationship(a, aDone);
+      await db.addRelationship(b, b1);
+      await db.completeTask(aDone);
+
+      final result = await db.getChildrenOfParents([a, b]);
+
+      expect(result[a]!.map((t) => t.id),
+          (await db.getChildren(a)).map((t) => t.id));
+      expect(result[a]!.map((t) => t.id), [a2, a1]);
+      expect(result[b]!.map((t) => t.id), [b1]);
+    });
+
+    test('counts active children only, and omits ids with none', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final leaf = await db.insertTask(Task(name: 'Leaf'));
+      final a1 = await db.insertTask(Task(name: 'A1'));
+      final aDone = await db.insertTask(Task(name: 'A done'));
+      await db.addRelationship(a, a1);
+      await db.addRelationship(a, aDone);
+      await db.completeTask(aDone);
+
+      final counts = await db.getActiveChildCounts([a, leaf]);
+
+      expect(counts, {a: 1});
+    });
+
+    test('an empty id list makes no query and returns empty', () async {
+      expect(await db.getChildrenOfParents([]), isEmpty);
+      expect(await db.getActiveChildCounts([]), isEmpty);
+    });
+
+    // [Edge case] A child under two of the requested parents appears in both
+    // lists, and a skipped child is left out like a completed one.
+    test('a shared child is listed under each parent; skipped is excluded',
+        () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      final shared = await db.insertTask(Task(name: 'Shared'));
+      final skipped = await db.insertTask(Task(name: 'Skipped'));
+      await db.addRelationship(a, shared);
+      await db.addRelationship(b, shared);
+      await db.addRelationship(a, skipped);
+      await db.skipTask(skipped);
+
+      final children = await db.getChildrenOfParents([a, b]);
+      final counts = await db.getActiveChildCounts([a, b]);
+
+      expect(children[a]!.map((t) => t.id), [shared]);
+      expect(children[b]!.map((t) => t.id), [shared]);
+      expect(counts, {a: 1, b: 1});
+    });
+  });
+
+  // CR M-53: the shared pin used by "Add here" Undo and AddTaskFlow.
+  group('pinIntoTodaysFive', () {
+    // [Mechanism] Today's 5 has no saved row until the first pin of the day.
+    test('pins into an empty day with no saved row', () async {
+      final id = await db.insertTask(Task(name: 'Leaf'));
+
+      final result = await pinIntoTodaysFive(id);
+
+      expect(result!.taskIds, [id]);
+      final saved = await db.loadTodaysFiveState(todayDateKey());
+      expect(saved!.taskIds, [id]);
+      expect(saved.pinnedIds, {id});
+    });
+
+    // [Edge case] A second pin of the same task changes nothing and does not
+    // add a duplicate entry.
+    test('a task already in the list is left alone', () async {
+      final a = await db.insertTask(Task(name: 'A'));
+      final b = await db.insertTask(Task(name: 'B'));
+      await db.saveTodaysFiveState(
+        date: todayDateKey(),
+        taskIds: [a, b],
+        completedIds: {a},
+        workedOnIds: const {},
+        pinnedIds: {a, b},
+      );
+
+      final result = await pinIntoTodaysFive(b);
+
+      expect(result!.taskIds, [a, b]);
+      final saved = await db.loadTodaysFiveState(todayDateKey());
+      expect(saved!.taskIds, [a, b]);
+      expect(saved.completedIds, {a});
+    });
+
+    // [Edge case] Five pinned tasks: no slot is free, nothing is saved.
+    test('returns null and saves nothing when Today\'s 5 is full', () async {
+      final ids = <int>[];
+      for (var i = 0; i < 5; i++) {
+        ids.add(await db.insertTask(Task(name: 'T$i')));
+      }
+      final extra = await db.insertTask(Task(name: 'Extra'));
+      await db.saveTodaysFiveState(
+        date: todayDateKey(),
+        taskIds: ids,
+        completedIds: const {},
+        workedOnIds: const {},
+        pinnedIds: ids.toSet(),
+      );
+
+      expect(await pinIntoTodaysFive(extra), isNull);
+      final saved = await db.loadTodaysFiveState(todayDateKey());
+      expect(saved!.taskIds, ids);
+    });
+
+    // [Baseline] Pinning keeps the day's completed and worked-on ids.
+    test('keeps completed and worked-on ids of the saved day', () async {
+      final done = await db.insertTask(Task(name: 'Done'));
+      final worked = await db.insertTask(Task(name: 'Worked'));
+      final added = await db.insertTask(Task(name: 'Added'));
+      await db.saveTodaysFiveState(
+        date: todayDateKey(),
+        taskIds: [done, worked],
+        completedIds: {done, worked},
+        workedOnIds: {worked},
+        pinnedIds: {done, worked},
+      );
+
+      await pinIntoTodaysFive(added);
+
+      final saved = await db.loadTodaysFiveState(todayDateKey());
+      expect(saved!.taskIds, [done, worked, added]);
+      expect(saved.completedIds, {done, worked});
+      expect(saved.workedOnIds, {worked});
+      expect(saved.pinnedIds, {done, worked, added});
+    });
+  });
+
   group('hasChildren', () {
     test('returns false for task with no children', () async {
       final id = await db.insertTask(Task(name: 'Leaf'));
@@ -1420,6 +1563,43 @@ void main() {
       );
       final deps = await db.getDependencies(parent);
       expect(deps.map((t) => t.id), contains(other));
+    });
+
+    // [Edge case — CR M-32] With two grandparents and two children, only the
+    // link that already existed is left out of addedReparentLinks, so the
+    // undo removes the three new links and keeps the one that was there.
+    test('two parents x two children: only new links are recorded, and undo '
+        'keeps the pre-existing one', () async {
+      final gp1 = await db.insertTask(Task(name: 'GP1'));
+      final gp2 = await db.insertTask(Task(name: 'GP2'));
+      final parent = await db.insertTask(Task(name: 'Parent'));
+      final c1 = await db.insertTask(Task(name: 'C1'));
+      final c2 = await db.insertTask(Task(name: 'C2'));
+      await db.addRelationship(gp1, parent);
+      await db.addRelationship(gp2, parent);
+      await db.addRelationship(parent, c1);
+      await db.addRelationship(parent, c2);
+      await db.addRelationship(gp2, c1); // pre-existing
+
+      final result = await db.deleteTaskAndReparentChildren(parent);
+
+      expect(
+        result.addedReparentLinks
+            .map((l) => (l.parentId, l.childId))
+            .toSet(),
+        {(gp1, c1), (gp1, c2), (gp2, c2)},
+      );
+
+      await db.restoreTask(
+        result.task, result.parentIds, result.childIds,
+        dependsOnIds: result.dependsOnIds,
+        dependedByIds: result.dependedByIds,
+        removeReparentLinks: result.addedReparentLinks,
+      );
+
+      expect((await db.getChildren(gp1)).map((t) => t.id), [parent]);
+      expect((await db.getChildren(gp2)).map((t) => t.id).toSet(),
+          {parent, c1});
     });
   });
 
@@ -3208,136 +3388,6 @@ void main() {
     });
   });
 
-  group('getLeafDescendants', () {
-    test('returns leaf descendants of a parent tree', () async {
-      final parent = await db.insertTask(Task(name: 'Parent'));
-      final child1 = await db.insertTask(Task(name: 'Child 1 (leaf)'));
-      final child2 = await db.insertTask(Task(name: 'Child 2'));
-      final grandchild = await db.insertTask(Task(name: 'Grandchild (leaf)'));
-
-      await db.addRelationship(parent, child1);
-      await db.addRelationship(parent, child2);
-      await db.addRelationship(child2, grandchild);
-
-      final leaves = await db.getLeafDescendants(parent);
-      final leafIds = leaves.map((t) => t.id).toSet();
-
-      expect(leafIds, contains(child1));
-      expect(leafIds, contains(grandchild));
-      expect(leafIds, isNot(contains(child2))); // child2 has children
-      expect(leafIds, isNot(contains(parent)));
-      expect(leafIds, hasLength(2));
-    });
-
-    test('excludes completed and skipped descendants', () async {
-      final parent = await db.insertTask(Task(name: 'Parent'));
-      final child1 = await db.insertTask(Task(name: 'Active leaf'));
-      final child2 = await db.insertTask(Task(name: 'Completed leaf'));
-      final child3 = await db.insertTask(Task(name: 'Skipped leaf'));
-
-      await db.addRelationship(parent, child1);
-      await db.addRelationship(parent, child2);
-      await db.addRelationship(parent, child3);
-
-      await db.completeTask(child2);
-      await db.skipTask(child3);
-
-      final leaves = await db.getLeafDescendants(parent);
-      final leafIds = leaves.map((t) => t.id).toSet();
-
-      expect(leafIds, {child1});
-    });
-
-    test('task with no descendants returns empty', () async {
-      final lonely = await db.insertTask(Task(name: 'No children'));
-      final leaves = await db.getLeafDescendants(lonely);
-      expect(leaves, isEmpty);
-    });
-
-    test('treats child as leaf when its children are all completed', () async {
-      final parent = await db.insertTask(Task(name: 'Parent'));
-      final child = await db.insertTask(Task(name: 'Child'));
-      final grandchild = await db.insertTask(Task(name: 'Grandchild'));
-
-      await db.addRelationship(parent, child);
-      await db.addRelationship(child, grandchild);
-
-      await db.completeTask(grandchild);
-
-      final leaves = await db.getLeafDescendants(parent);
-      final leafIds = leaves.map((t) => t.id).toSet();
-
-      // child's only child is completed, so child becomes a leaf
-      expect(leafIds, {child});
-    });
-  });
-
-  group('getTaskIdsWithStartedDescendants', () {
-    test('parent with a started child is included', () async {
-      final parent = await db.insertTask(Task(name: 'Parent'));
-      final child = await db.insertTask(Task(name: 'Started child'));
-
-      await db.addRelationship(parent, child);
-      await db.startTask(child);
-
-      final result = await db.getTaskIdsWithStartedDescendants([parent]);
-      expect(result, {parent});
-    });
-
-    test('parent with no started children returns empty', () async {
-      final parent = await db.insertTask(Task(name: 'Parent'));
-      final child = await db.insertTask(Task(name: 'Not started child'));
-
-      await db.addRelationship(parent, child);
-
-      final result = await db.getTaskIdsWithStartedDescendants([parent]);
-      expect(result, isEmpty);
-    });
-
-    test('empty input returns empty set', () async {
-      final result = await db.getTaskIdsWithStartedDescendants([]);
-      expect(result, isEmpty);
-    });
-
-    test('deep chain: A -> B -> C (started) returns A', () async {
-      final a = await db.insertTask(Task(name: 'A'));
-      final b = await db.insertTask(Task(name: 'B'));
-      final c = await db.insertTask(Task(name: 'C'));
-
-      await db.addRelationship(a, b);
-      await db.addRelationship(b, c);
-      await db.startTask(c);
-
-      final result = await db.getTaskIdsWithStartedDescendants([a]);
-      expect(result, {a});
-    });
-
-    test('deep chain: querying middle node also works', () async {
-      final a = await db.insertTask(Task(name: 'A'));
-      final b = await db.insertTask(Task(name: 'B'));
-      final c = await db.insertTask(Task(name: 'C'));
-
-      await db.addRelationship(a, b);
-      await db.addRelationship(b, c);
-      await db.startTask(c);
-
-      final result = await db.getTaskIdsWithStartedDescendants([a, b]);
-      expect(result, {a, b});
-    });
-
-    test('completed started task is not counted', () async {
-      final parent = await db.insertTask(Task(name: 'Parent'));
-      final child = await db.insertTask(Task(name: 'Child'));
-
-      await db.addRelationship(parent, child);
-      await db.startTask(child);
-      await db.completeTask(child);
-
-      final result = await db.getTaskIdsWithStartedDescendants([parent]);
-      expect(result, isEmpty);
-    });
-  });
-
   group('Backup version check accepts version 14', () {
     late Directory tempDir;
     late String mainDbPath;
@@ -3770,44 +3820,6 @@ void main() {
       // Entry should be gone
       final remaining = await db.peekSyncQueue();
       expect(remaining.any((e) => e['id'] == entryId), isFalse);
-    });
-  });
-
-  group('getTodaysFiveTaskIds', () {
-    test('returns empty set when no state saved', () async {
-      final ids = await db.getTodaysFiveTaskIds('2026-01-01');
-      expect(ids, isEmpty);
-    });
-
-    test('returns task IDs for saved date', () async {
-      final t1 = await db.insertTask(Task(name: 'T1'));
-      final t2 = await db.insertTask(Task(name: 'T2'));
-
-      await db.saveTodaysFiveState(
-        date: '2026-01-15',
-        taskIds: [t1, t2],
-        completedIds: {},
-        workedOnIds: {},
-        pinnedIds: {},
-      );
-
-      final ids = await db.getTodaysFiveTaskIds('2026-01-15');
-      expect(ids, containsAll([t1, t2]));
-      expect(ids.length, 2);
-    });
-
-    test('returns empty for different date', () async {
-      final t1 = await db.insertTask(Task(name: 'T1'));
-      await db.saveTodaysFiveState(
-        date: '2026-01-15',
-        taskIds: [t1],
-        completedIds: {},
-        workedOnIds: {},
-        pinnedIds: {},
-      );
-
-      final ids = await db.getTodaysFiveTaskIds('2026-01-16');
-      expect(ids, isEmpty);
     });
   });
 
@@ -6225,16 +6237,7 @@ void main() {
       expect(maxOrder, 7);
     });
 
-    test('updateStarOrder changes star_order for a task', () async {
-      final id = await db.insertTask(Task(name: 'Reorder'));
-      await db.updateTaskStarred(id, true, starOrder: 0);
-      await db.updateStarOrder(id, 42);
-
-      final task = await db.getTaskById(id);
-      expect(task!.starOrder, 42);
-    });
-
-    test('reorder persistence: sequential updateStarOrder calls', () async {
+    test('reorder persistence: reorderStarredTasks', () async {
       final id1 = await db.insertTask(Task(name: 'A'));
       final id2 = await db.insertTask(Task(name: 'B'));
       final id3 = await db.insertTask(Task(name: 'C'));
@@ -6244,9 +6247,7 @@ void main() {
       await db.updateTaskStarred(id3, true, starOrder: 2);
 
       // Reorder: C, A, B
-      await db.updateStarOrder(id3, 0);
-      await db.updateStarOrder(id1, 1);
-      await db.updateStarOrder(id2, 2);
+      await db.reorderStarredTasks([id3, id1, id2]);
 
       final starred = await db.getStarredTasks();
       expect(starred[0].id, id3);

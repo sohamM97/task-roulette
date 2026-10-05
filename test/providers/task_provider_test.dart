@@ -226,6 +226,33 @@ void main() {
   });
 
   group('pickRandom with dependencies', () {
+    // [Regression — CR I-56] At root, Inbox tasks sit in their own section,
+    // not the grid the spotlight searches, so picking one made Flare do
+    // nothing at all.
+    test('pickRandom at root never picks an Inbox task', () async {
+      final filed = await db.insertTask(Task(name: 'Filed'));
+      await db.insertTask(Task(name: 'Inbox A', isInbox: true));
+      await db.insertTask(Task(name: 'Inbox B', isInbox: true));
+
+      await provider.loadRootTasks();
+
+      for (int i = 0; i < 30; i++) {
+        expect(provider.pickRandom()!.id, filed);
+      }
+    });
+
+    // [Edge case — CR I-56] With only Inbox tasks at root, nothing is
+    // eligible, so Flare reports no pick instead of choosing a task the grid
+    // does not show.
+    test('pickRandom at root with only Inbox tasks returns null', () async {
+      await db.insertTask(Task(name: 'Inbox A', isInbox: true));
+      await db.insertTask(Task(name: 'Inbox B', isInbox: true));
+
+      await provider.loadRootTasks();
+
+      expect(provider.pickRandom(), isNull);
+    });
+
     test('pickRandom skips blocked tasks', () async {
       final a = await db.insertTask(Task(name: 'Task A'));
       final b = await db.insertTask(Task(name: 'Task B'));
@@ -2839,6 +2866,30 @@ void main() {
       // parentNamesMap should still contain the leaf's parents
       expect(provider.parentNamesMap[leafId], isNotNull);
       expect(provider.parentNamesMap[leafId], containsAll(['Parent A', 'Parent B']));
+    });
+  });
+
+  // CR R-15: search and the "Did you mean" match read both in one call.
+  group('getAllTasksWithParentNames', () {
+    // [Mechanism] Returns what getAllTasks and getParentNamesMap return
+    // separately, across the whole tree rather than the current view.
+    test('returns every task and the parent names of each', () async {
+      final parentA = await db.insertTask(Task(name: 'Parent A'));
+      final parentB = await db.insertTask(Task(name: 'Parent B'));
+      final shared = await db.insertTask(Task(name: 'Shared'));
+      await db.insertTask(Task(name: 'Inbox item', isInbox: true));
+      await db.addRelationship(parentA, shared);
+      await db.addRelationship(parentB, shared);
+
+      final (tasks, parentNames) = await provider.getAllTasksWithParentNames();
+
+      expect(tasks.map((t) => t.id).toSet(),
+          (await provider.getAllTasks()).map((t) => t.id).toSet());
+      expect(tasks.map((t) => t.name),
+          containsAll(['Parent A', 'Parent B', 'Shared', 'Inbox item']));
+      expect(parentNames, await provider.getParentNamesMap());
+      expect(parentNames[shared], containsAll(['Parent A', 'Parent B']));
+      expect(parentNames[parentA], isNull);
     });
   });
 

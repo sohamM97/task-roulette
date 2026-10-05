@@ -1520,6 +1520,44 @@ void main() {
     });
   });
 
+  // [Regression — CR M-66] The dialog's rows indent 16 px per level with no
+  // limit, so at phone width a row 13 or more levels deep overflowed.
+  testWidgets('a deeply nested row does not overflow at phone width',
+      (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.runAsync(() async {
+      var parentId = await createStarredTask('Project');
+      for (var i = 1; i <= 15; i++) {
+        final id = await db.insertTask(Task(name: 'L$i'));
+        await db.addRelationship(parentId, id);
+        parentId = id;
+      }
+    });
+
+    await pumpAndLoad(tester, buildTestWidget());
+    await tester.tap(find.text('Project'));
+    await pumpAsync(tester);
+    // The dialog's tree is the last Scrollable; rows past the viewport are not
+    // built until it scrolls to them.
+    final tree = find.byType(Scrollable).last;
+    for (var i = 1; i < 15; i++) {
+      final row = find.byWidgetPredicate(
+          (w) => w is Text && w.data == 'L$i' && w.style?.fontSize == 17);
+      await tester.scrollUntilVisible(row, 40, scrollable: tree);
+      await tester.tap(row);
+      await pumpAsync(tester, rounds: 5);
+    }
+
+    final deepest = find.byWidgetPredicate(
+        (w) => w is Text && w.data == 'L15' && w.style?.fontSize == 17);
+    await tester.scrollUntilVisible(deepest, 40, scrollable: tree);
+    await tester.pump();
+    expect(deepest, findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   group('StarredScreen - add a subtask at any level', () {
     // [Regression] Codex P2. _reloadAfterAdd refreshed only the expanded levels.
     // In a multi-parent DAG the same task sits under two branches; if the second
@@ -2485,6 +2523,156 @@ void main() {
       expect(task.isWorkedOnToday, isFalse);
       expect(rowText(tester, 'Leaf').style!.decoration,
           isNot(TextDecoration.lineThrough));
+    });
+
+    /// Adds a subtask named [name] under the row [parent] in the open dialog,
+    /// which reloads every cached level of the tree.
+    Future<void> addSubtaskUnder(
+        WidgetTester tester, String parent, String name) async {
+      await tester.tap(find.byTooltip('Add subtask under "$parent"'));
+      await pumpAsync(tester);
+      await tester.enterText(find.byType(TextField).first, name);
+      await tester.tap(find.text('Add'));
+      await pumpAsync(tester);
+      ScaffoldMessenger.of(tester.element(find.byTooltip('Undo done')))
+          .clearSnackBars();
+      await tester.pump();
+    }
+
+    // [Regression — CR I-57] Tapping the name of a "Done for good!" row opened
+    // the archived task in All Tasks, where a subtask could be added under it.
+    testWidgets('tapping a "Done for good!" row\'s name does nothing',
+        (tester) async {
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        final leafId = await db.insertTask(Task(name: 'Leaf'));
+        await db.addRelationship(starredId, leafId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await openDoneMenu(tester, 'Project');
+      await chooseDone(tester, 'Done for good!');
+
+      await tester.tap(find.byWidgetPredicate(
+          (w) => w is Text && w.data == 'Leaf' && w.style?.fontSize == 17));
+      await pumpAsync(tester);
+
+      expect(navigatedTask, isNull);
+      expect(find.byTooltip('Undo done'), findsOneWidget,
+          reason: 'the dialog is still open');
+    });
+
+    // [Regression — CR I-58] After a reload the row held the task as it was
+    // after the first "Done today", so a second mark and undo restored the
+    // first mark's timestamp and left the task worked on today.
+    testWidgets('a second "Done today" after a reload undoes fully',
+        (tester) async {
+      final threeDaysAgo = DateTime.now()
+          .subtract(const Duration(days: 3))
+          .millisecondsSinceEpoch;
+      late int leafId;
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        leafId = await db.insertTask(
+            Task(name: 'Leaf', lastWorkedAt: threeDaysAgo));
+        await db.addRelationship(starredId, leafId);
+        final otherId = await db.insertTask(Task(name: 'Other'));
+        await db.addRelationship(starredId, otherId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+      // "Leaf" is the first row, so its circle is the first one.
+      Future<void> markLeafDoneToday() async {
+        await tester.tap(find.byTooltip('Mark done').first);
+        await pumpAsync(tester, rounds: 5);
+        await tester.pump(const Duration(milliseconds: 500));
+        await chooseDone(tester, 'Done today');
+      }
+
+      await markLeafDoneToday();
+      await addSubtaskUnder(tester, 'Other', 'New subtask');
+      await tester.tap(find.byTooltip('Undo done'));
+      await pumpAsync(tester);
+
+      await markLeafDoneToday();
+      await tester.tap(find.byTooltip('Undo done'));
+      await pumpAsync(tester);
+
+      final task = await tester.runAsync(() => db.getTaskById(leafId));
+      expect(task!.lastWorkedAt, threeDaysAgo);
+      expect(task.isStarted, isFalse);
+    });
+
+    // [Regression — CR I-59] After a reload, a parent whose only child was
+    // done for good lost its chevron and got a done circle, as if it were a
+    // leaf, while the done child was still drawn under it.
+    testWidgets('a parent whose only child is done for good stays a branch '
+        'after a reload', (tester) async {
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        final parentId = await db.insertTask(Task(name: 'Parent'));
+        await db.addRelationship(starredId, parentId);
+        final childId = await db.insertTask(Task(name: 'Only child'));
+        await db.addRelationship(parentId, childId);
+        final otherId = await db.insertTask(Task(name: 'Other'));
+        await db.addRelationship(starredId, otherId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+      await tester.tap(find.byWidgetPredicate(
+          (w) => w is Text && w.data == 'Parent' && w.style?.fontSize == 17));
+      await pumpAsync(tester);
+
+      // "Only child" is the first leaf row, so its circle is the first one.
+      await tester.tap(find.byTooltip('Mark done').first);
+      await pumpAsync(tester, rounds: 5);
+      await tester.pump(const Duration(milliseconds: 500));
+      await chooseDone(tester, 'Done for good!');
+
+      await addSubtaskUnder(tester, 'Other', 'New subtask');
+
+      // Parent and Other are both branches. The open circles belong to leaves
+      // only: the new subtask, shown because the add expands Other.
+      expect(find.byTooltip('Mark done'), findsOneWidget);
+      expect(find.byTooltip('Undo done'), findsOneWidget);
+    });
+
+    // [Regression — CR I-59] Undoing "Done for good!" on a task whose parent
+    // was archived meanwhile left it active under the archived parent, where
+    // no screen shows it.
+    testWidgets('undoing "Done for good!" under an archived parent drops '
+        'that link', (tester) async {
+      late int parentId, childId;
+      await tester.runAsync(() async {
+        final starredId = await createStarredTask('Project');
+        parentId = await db.insertTask(Task(name: 'Parent'));
+        await db.addRelationship(starredId, parentId);
+        childId = await db.insertTask(Task(name: 'Only child'));
+        await db.addRelationship(parentId, childId);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      await tester.tap(find.text('Project'));
+      await pumpAsync(tester);
+      await tester.tap(find.byWidgetPredicate(
+          (w) => w is Text && w.data == 'Parent' && w.style?.fontSize == 17));
+      await pumpAsync(tester);
+      await tester.tap(find.byTooltip('Mark done').first);
+      await pumpAsync(tester, rounds: 5);
+      await tester.pump(const Duration(milliseconds: 500));
+      await chooseDone(tester, 'Done for good!');
+
+      // The parent is completed somewhere else meanwhile.
+      await tester.runAsync(() => db.completeTask(parentId));
+      await tester.tap(find.byTooltip('Undo done'));
+      await pumpAsync(tester);
+
+      final parents = await tester.runAsync(() => db.getParentIds(childId));
+      expect(parents, isNot(contains(parentId)));
     });
   });
 }

@@ -221,12 +221,7 @@ void main() {
     test('defaults priority to 0 (Normal)', () {
       final task = Task(name: 'Test');
       expect(task.priority, 0);
-      expect(task.priorityLabel, 'Normal');
-    });
-
-    test('priorityLabel returns correct labels', () {
-      expect(Task(name: 'T', priority: 0).priorityLabel, 'Normal');
-      expect(Task(name: 'T', priority: 1).priorityLabel, 'High');
+      expect(task.isHighPriority, isFalse);
     });
 
     test('toMap includes priority', () {
@@ -703,13 +698,11 @@ void main() {
       final task = Task(name: 'T', deadline: '2026-03-20');
       expect(task.deadlineType, 'due_by');
       expect(task.isDeadlineDueBy, isTrue);
-      expect(task.isDeadlineOn, isFalse);
     });
 
     test('can be set to on', () {
       final task = Task(name: 'T', deadline: '2026-03-20', deadlineType: 'on');
       expect(task.deadlineType, 'on');
-      expect(task.isDeadlineOn, isTrue);
       expect(task.isDeadlineDueBy, isFalse);
     });
 
@@ -735,7 +728,7 @@ void main() {
       };
       final task = Task.fromMap(map);
       expect(task.deadlineType, 'on');
-      expect(task.isDeadlineOn, isTrue);
+      expect(task.isDeadlineDueBy, isFalse);
     });
 
     test('fromMap defaults deadline_type to due_by when absent', () {

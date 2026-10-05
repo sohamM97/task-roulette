@@ -371,6 +371,9 @@ class TaskProvider extends ChangeNotifier {
     return _db.getParents(childId);
   }
 
+  /// Reads [taskId] from the database, or null if it no longer exists.
+  Future<Task?> getTaskById(int taskId) => _db.getTaskById(taskId);
+
   /// Returns archived parents of [childId].
   Future<List<Task>> getArchivedParents(int childId) async {
     return _db.getArchivedParents(childId);
@@ -446,9 +449,13 @@ class TaskProvider extends ChangeNotifier {
   }
 
   Task? pickRandom() {
+    // CR-fix I-56: at root, Inbox tasks were in the pool, but the All Tasks
+    // grid shows them in a separate section. The spotlight could not find a
+    // picked Inbox task in the grid, so that Flare tap did nothing.
     final eligible = _tasks.where((t) =>
       !_blockedByNames.containsKey(t.id) &&
-      !t.isWorkedOnToday
+      !t.isWorkedOnToday &&
+      !(isRoot && t.isInbox)
     ).toList();
     if (eligible.isEmpty) return null;
 
@@ -465,6 +472,14 @@ class TaskProvider extends ChangeNotifier {
   Future<List<Task>> getChildren(int taskId) async {
     return _db.getChildren(taskId);
   }
+
+  /// See [DatabaseHelper.getChildrenOfParents].
+  Future<Map<int, List<Task>>> getChildrenOfParents(List<int> parentIds) =>
+      _db.getChildrenOfParents(parentIds);
+
+  /// See [DatabaseHelper.getActiveChildCounts].
+  Future<Map<int, int>> getActiveChildCounts(List<int> taskIds) =>
+      _db.getActiveChildCounts(taskIds);
 
   /// Returns all leaf tasks (tasks with no children) for Today's 5 selection.
   Future<List<Task>> getAllLeafTasks() async {
@@ -645,6 +660,20 @@ class TaskProvider extends ChangeNotifier {
 
   Future<Map<int, List<String>>> getParentNamesMap() async {
     return _db.getParentNamesMap();
+  }
+
+  /// Every task plus each task's parent names, read in parallel. The data
+  /// behind search and the "Did you mean" match in the Add Task dialog.
+  Future<(List<Task>, Map<int, List<String>>)>
+      getAllTasksWithParentNames() async {
+    final results = await Future.wait([
+      _db.getAllTasks(),
+      _db.getParentNamesMap(),
+    ]);
+    return (
+      results[0] as List<Task>,
+      results[1] as Map<int, List<String>>,
+    );
   }
 
   /// Links an existing task as a child of the current parent.
@@ -1016,10 +1045,6 @@ class TaskProvider extends ChangeNotifier {
   Future<void> updateSchedules(int taskId, List<TaskSchedule> schedules, {bool? isOverride}) async {
     await _db.replaceSchedules(taskId, schedules, isOverride: isOverride);
     await _refreshAfterMutation();
-  }
-
-  Future<bool> hasSchedule(int taskId) async {
-    return _db.hasSchedules(taskId);
   }
 
   Future<Set<int>> getEffectiveScheduleDays(int taskId) async {

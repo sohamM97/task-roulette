@@ -36,8 +36,9 @@ class DoneOutcome {
   final Future<void> Function() undo;
 }
 
-/// Marks [task] as worked on today, with the deadline prompt, the celebratory
-/// animation and an undo snackbar.
+/// Marks [cachedTask] as worked on today, with the deadline prompt, the
+/// celebratory animation and an undo snackbar. Only its id is relied on: the
+/// task is read from the database first.
 ///
 /// Returns the [DoneOutcome] when the task was marked, or null when the user
 /// cancelled at the deadline prompt or the widget went away mid-flow.
@@ -52,11 +53,19 @@ class DoneOutcome {
 /// can re-render. It is passed true when the task is marked, false on undo.
 Future<DoneOutcome?> markTaskDoneToday(
   BuildContext context,
-  Task task, {
+  Task cachedTask, {
   bool navigateBack = false,
   Future<void> Function(bool isDone)? onChanged,
 }) async {
   final provider = context.read<TaskProvider>();
+  // CR-fix I-58: the values the undo restores were read from the caller's Task.
+  // The Starred dialog keeps that Task across reloads, so after a "Done today"
+  // and its undo it still held the marked copy: started, with today's
+  // last_worked_at. A second mark then skipped the auto-start, and its undo
+  // restored today's timestamp, leaving the task worked on today. Reading the
+  // task from the database here makes every mark start from its real state.
+  final task = await provider.getTaskById(cachedTask.id!) ?? cachedTask;
+  if (!context.mounted) return null;
   final previousLastWorkedAt = task.lastWorkedAt;
   final wasStarted = task.isStarted;
 
@@ -153,6 +162,15 @@ Future<DoneOutcome?> completeTaskForGood(
     choice: DoneChoice.forGood,
     undo: () async {
       await provider.uncompleteTask(task.id!, restoredDeps: removedDeps);
+      // CR-fix I-59: a parent completed while this task was done stays
+      // archived, and the restored task stayed listed under it, where no
+      // screen shows it. Drop those links, as restoring from the Completed
+      // screen does; with no active parent left, the task returns to the top
+      // level.
+      final archivedParents = await provider.getArchivedParents(task.id!);
+      if (archivedParents.isNotEmpty) {
+        await provider.removeArchivedParentLinks(task.id!, archivedParents);
+      }
       await onChanged?.call(false);
     },
   );

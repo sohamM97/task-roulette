@@ -543,4 +543,65 @@ void main() {
       expect(remaining.first.name, 'Keeper');
     });
   });
+
+  // CR I-54: the Today tab reloads only when this number changes, so it must
+  // move on a pull that wrote local data and stay put on one that did not.
+  group('dataChangeGeneration (I-54: push loop from sync status)', () {
+    test('a pull that writes remote changes bumps the generation', () async {
+      SharedPreferences.setMockInitialValues({'sync_last_sync_at': 1000});
+      final id = await db.insertTask(Task(name: 'Gone', syncId: 'gone'));
+      await db.markTasksSynced([id]);
+      final fakeFs = _FakeFirestoreService()
+        ..tasksDeltaSince = [(task: null, syncId: 'gone', deleted: true)];
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.pull();
+
+      expect(sync.dataChangeGeneration, 1);
+    });
+
+    test('a pull with nothing new leaves the generation unchanged', () async {
+      SharedPreferences.setMockInitialValues({'sync_last_sync_at': 1000});
+      final sync =
+          SyncService(_FakeAuthProvider(), firestore: _FakeFirestoreService());
+
+      await sync.pull();
+
+      expect(sync.dataChangeGeneration, 0);
+    });
+
+    // [Regression — CR I-54] The push sets `synced` too. The Today tab
+    // reloaded on that `synced`, re-saved, and queued the next push. A push
+    // must set `synced` without moving the generation.
+    test('a push sets synced but leaves the generation unchanged', () async {
+      SharedPreferences.setMockInitialValues({});
+      final id = await db.insertTask(Task(name: 'Pinned', syncId: 'pinned'));
+      await db.markTasksSynced([id]);
+      await db.saveTodaysFiveState(
+        date: todayDateKey(),
+        taskIds: [id],
+        completedIds: const {},
+        workedOnIds: const {},
+        pinnedIds: {id},
+      );
+      final auth = _FakeAuthProvider();
+      final sync = SyncService(auth, firestore: _FakeFirestoreService());
+
+      await sync.push();
+
+      expect(auth.syncStatus, SyncStatus.synced);
+      expect(sync.dataChangeGeneration, 0);
+    });
+
+    // [Mechanism] Replacing local data with the cloud copy rewrites the
+    // database, so the Today tab must reload after it.
+    test('replaceLocalWithCloud bumps the generation', () async {
+      final sync =
+          SyncService(_FakeAuthProvider(), firestore: _FakeFirestoreService());
+
+      await sync.replaceLocalWithCloud();
+
+      expect(sync.dataChangeGeneration, 1);
+    });
+  });
 }

@@ -14,6 +14,7 @@ import '../widgets/add_task_flow.dart';
 import '../widgets/done_actions.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/leaf_task_detail.dart';
+import '../widgets/link_existing_here.dart';
 import '../widgets/spotlight_overlay.dart';
 import '../widgets/task_card.dart';
 import '../utils/display_utils.dart';
@@ -399,12 +400,11 @@ class TaskListScreenState extends State<TaskListScreen>
       // For the "already exists" suggestion: at root there's no parent to file
       // under, so tapping a match opens the existing task; under a parent it
       // links the existing task here (multi-parent DAG) instead of duplicating.
-      final allTasks = await provider.getAllTasks();
-      final parentNames = await provider.getParentNamesMap();
+      final (allTasks, parentNames) =
+          await provider.getAllTasksWithParentNames();
       if (!mounted) return;
       await AddTaskFlow(
         initialName: initialName,
-        parentId: parentId,
         parentName: atRoot ? null : provider.currentParent?.name,
         parentIsPinned: parentIsPinned,
         showPinOption: showPin,
@@ -420,40 +420,18 @@ class TaskListScreenState extends State<TaskListScreen>
             await provider.navigateToTask(existing);
             return;
           }
-          if (existing.id == parentId) {
-            // Typed the parent's own name — can't parent a task to itself.
-            if (mounted) {
-              showInfoSnackBar(context, "That's the task you're already in");
-            }
-            return;
-          }
-          // Codex P2: if the match is ALREADY a child of this parent, linking is
-          // a no-op that addParentToTask still reports as ok (addRelationship is
-          // INSERT-OR-IGNORE) — but the resulting Undo (removeParentFromTask)
-          // would delete the pre-existing edge and make the child vanish. Guard
-          // it: no link, no destructive undo.
-          final existingChildIds = await provider.getChildIds(parentId);
           if (!mounted) return;
-          if (existingChildIds.contains(existing.id)) {
-            showInfoSnackBar(
-                context, '"${existing.name}" is already listed here');
-            return;
-          }
-          final ok = await provider.addParentToTask(existing.id!, parentId);
-          if (!mounted) return;
-          if (ok) {
-            showInfoSnackBar(
-              context,
-              'Added "${existing.name}" here',
-              onUndo: () async {
-                await provider.removeParentFromTask(existing.id!, parentId);
-                if (mounted && showInbox) await _loadInboxCount();
-              },
-            );
-          } else {
-            showInfoSnackBar(context, "Couldn't add — it would create a loop");
-          }
-          if (showInbox) await _loadInboxCount();
+          await linkExistingHere(
+            context,
+            existing: existing,
+            parentId: parentId,
+            selfMessage: "That's the task you're already in",
+            alreadyLinkedMessage: '"${existing.name}" is already listed here',
+            parentIsPinned: parentIsPinned,
+            onChanged: () async {
+              if (mounted) await loadTodaysFiveIds();
+            },
+          );
         },
         addSingle: ({required name, url, required isInbox, required deferNotify}) =>
             provider.addTask(name,
@@ -484,29 +462,6 @@ class TaskListScreenState extends State<TaskListScreen>
     }
   }
 
-  /// Fetches allTasks and parentNamesMap concurrently.
-  Future<(List<Task>, Map<int, List<String>>)> _fetchCandidateData() async {
-    // Show a brief loading indicator while fetching task data for picker dialogs.
-    final navigator = Navigator.of(context);
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
-    try {
-      final provider = context.read<TaskProvider>();
-      late List<Task> allTasks;
-      late Map<int, List<String>> parentNamesMap;
-      await Future.wait([
-        provider.getAllTasks().then((v) => allTasks = v),
-        provider.getParentNamesMap().then((v) => parentNamesMap = v),
-      ]);
-      return (allTasks, parentNamesMap);
-    } finally {
-      if (mounted) navigator.pop();
-    }
-  }
-
   Future<void> _linkExistingTask() async {
     if (!await _warnIfPinned()) return;
     if (!mounted) return;
@@ -514,7 +469,9 @@ class TaskListScreenState extends State<TaskListScreen>
     final currentParent = provider.currentParent;
     if (currentParent == null) return;
 
-    final (allTasks, parentNamesMap) = await _fetchCandidateData();
+    final data = await fetchSearchCandidates(context);
+    if (data == null) return;
+    final (allTasks, parentNamesMap) = data;
     final existingChildIds = await provider.getChildIds(currentParent.id!);
     final existingChildIdSet = existingChildIds.toSet();
 
@@ -552,7 +509,9 @@ class TaskListScreenState extends State<TaskListScreen>
   Future<void> _addParentToTask(Task task) async {
     final provider = context.read<TaskProvider>();
 
-    final (allTasks, parentNamesMap) = await _fetchCandidateData();
+    final data = await fetchSearchCandidates(context);
+    if (data == null) return;
+    final (allTasks, parentNamesMap) = data;
     final existingParentIds = await provider.getParentIds(task.id!);
     final existingParentIdSet = existingParentIds.toSet();
 
@@ -602,7 +561,12 @@ class TaskListScreenState extends State<TaskListScreen>
 
     if (selected == null || !mounted) return;
 
-    final success = await provider.addParentToTask(task.id!, selected.id!);
+    // CR-fix I-55: this also called addParentToTask for an Inbox task, which
+    // left its Inbox flag set, so it showed under the new parent and in the
+    // Inbox. fileTask clears the flag.
+    final success = task.isInbox
+        ? await provider.fileTask(task.id!, selected.id!)
+        : await provider.addParentToTask(task.id!, selected.id!);
     if (!success && mounted) {
       showInfoSnackBar(context, 'Cannot link: would create a cycle');
     }
@@ -674,7 +638,9 @@ class TaskListScreenState extends State<TaskListScreen>
     final currentParent = provider.currentParent;
     if (currentParent == null) return;
 
-    final (allTasks, parentNamesMap) = await _fetchCandidateData();
+    final data = await fetchSearchCandidates(context);
+    if (data == null) return;
+    final (allTasks, parentNamesMap) = data;
     final existingParentIds = (await provider.getParentIds(task.id!)).toSet();
 
     // Filter out: the task itself, all existing parents (including current)
@@ -1274,7 +1240,9 @@ class TaskListScreenState extends State<TaskListScreen>
 
   Future<void> _addDependencyToTask(Task task) async {
     final provider = context.read<TaskProvider>();
-    final (allTasks, parentNamesMap) = await _fetchCandidateData();
+    final data = await fetchSearchCandidates(context);
+    if (data == null) return;
+    final (allTasks, parentNamesMap) = data;
 
     // Filter out: the task itself
     final candidates = allTasks.where((t) => t.id != task.id).toList();
@@ -1406,9 +1374,9 @@ class TaskListScreenState extends State<TaskListScreen>
       final newDeadline = result.deadline != null
           ? (result.deadline!.isEmpty ? null : result.deadline)
           : task.deadline;
-      // Manual model: setting a deadline no longer auto-pins into Today's 5.
-      // The user picks tasks themselves; deadlines are stored for display only.
-      // (TODO: future "you have X coming up" suggestion mechanism.)
+      // A leaf due today is auto-pinned by the Today tab on its next load or
+      // refresh, and deadlines boost the Today tab's suggestions. Nothing is
+      // pinned here.
       await provider.updateTaskDeadline(task.id!, newDeadline, deadlineType: deadlineType);
     }
     // Refresh Today's 5 indicators in case the deadline change is relevant.

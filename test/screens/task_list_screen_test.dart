@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../helpers/async_pump.dart';
@@ -696,6 +698,93 @@ void main() {
       expect(all!.where((t) => t.name == 'Shared task'), hasLength(1));
     });
 
+    // [Regression — CR I-55] "Add here" on an Inbox task linked it under the
+    // parent but left its Inbox flag set, so it showed in both places. Undo
+    // must put it back in the Inbox.
+    testWidgets('under a parent: Add here on an Inbox task files it, and Undo '
+        'returns it to the Inbox', (tester) async {
+      late int parentId;
+      late int inboxId;
+      await tester.runAsync(() async {
+        parentId = await db.insertTask(Task(name: 'Groceries'));
+        inboxId = await db.insertTask(Task(name: 'Buy milk', isInbox: true));
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Groceries'));
+      await pumpAsync(tester);
+      await tapSuggestion(tester, 'Buy milk', 'Add here');
+
+      var task = await tester.runAsync(() => db.getTaskById(inboxId));
+      expect(task!.isInbox, isFalse);
+      expect(await tester.runAsync(() => db.getInboxCount()), 0);
+
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Undo'), warnIfMissed: false);
+      await pumpAsync(tester);
+
+      task = await tester.runAsync(() => db.getTaskById(inboxId));
+      expect(task!.isInbox, isTrue);
+      final children =
+          await tester.runAsync(() => db.getChildren(parentId)) ?? [];
+      expect(children.map((t) => t.id), isNot(contains(inboxId)));
+    });
+
+    // [Regression — CR M-53] Linking a task under a pinned leaf makes the leaf
+    // a parent, and Today's 5 drops it. Undo removed the link but did not pin
+    // the leaf again.
+    testWidgets('under a pinned parent: Undo of Add here pins the parent again',
+        (tester) async {
+      late int parentId;
+      await tester.runAsync(() async {
+        parentId = await db.insertTask(Task(name: 'Pinned leaf'));
+        await db.insertTask(Task(name: 'Shared task'));
+        await db.saveTodaysFiveState(
+          date: todayDateKey(),
+          taskIds: [parentId],
+          completedIds: const {},
+          workedOnIds: const {},
+          pinnedIds: {parentId},
+        );
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Pinned leaf'));
+      await pumpAsync(tester);
+      await tester.tap(find.byIcon(Icons.add));
+      await pumpAsync(tester);
+      await tester.tap(find.text('Add anyway'));
+      await pumpAsync(tester);
+      await tester.enterText(find.byType(TextField).first, 'Shared task');
+      await pumpAsync(tester);
+      await tester.tap(find.byIcon(Icons.info_outline));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(find.byWidgetPredicate(
+            (w) => w is PopupMenuItem<Task> && w.enabled));
+      });
+      await pumpAsync(tester);
+
+      // Today's 5 drops the parent once it has a child.
+      await tester.runAsync(() => db.saveTodaysFiveState(
+            date: todayDateKey(),
+            taskIds: const [],
+            completedIds: const {},
+            workedOnIds: const {},
+          ));
+
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Undo'), warnIfMissed: false);
+      await pumpAsync(tester);
+
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(todayDateKey()));
+      expect(saved?.taskIds, contains(parentId));
+      expect(saved?.pinnedIds, contains(parentId));
+    });
+
     // [Edge case — Codex P2] Typing the name of a task that is ALREADY a child
     // of the drilled-in parent must NOT wire a destructive Undo. Re-linking is a
     // no-op (INSERT-OR-IGNORE) that would report ok, and its Undo would remove
@@ -929,4 +1018,100 @@ void main() {
       expect(parents, isNot(contains(parentId)));
     });
   });
+
+  group('Round 12 review fixes', () {
+    // [Regression — CR I-55] "Also show under..." on an Inbox task called
+    // addParentToTask, which kept the Inbox flag, so the task showed under the
+    // new parent and in the Inbox.
+    testWidgets('"Also show under..." on an Inbox task files it',
+        (tester) async {
+      late int groceriesId;
+      late int inboxId;
+      await tester.runAsync(() async {
+        groceriesId = await db.insertTask(Task(name: 'Groceries'));
+        inboxId = await db.insertTask(Task(name: 'Buy milk', isInbox: true));
+        await provider.loadRootTasks();
+        final inboxTask = await db.getTaskById(inboxId);
+        await provider.navigateInto(inboxTask!);
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Also show under...'));
+      await pumpAsync(tester);
+      await tester.enterText(find.byType(TextField).first, 'Groceries');
+      await tester.pump(const Duration(milliseconds: 300));
+      await pumpAsync(tester);
+      await tester.tap(find.text('Groceries').last);
+      await pumpAsync(tester);
+
+      final task = await tester.runAsync(() => db.getTaskById(inboxId));
+      expect(task!.isInbox, isFalse);
+      final parents =
+          await tester.runAsync(() => db.getParentIds(inboxId)) ?? [];
+      expect(parents, [groceriesId]);
+    });
+
+    // [Edge case — CR M-61] A database error while loading the search pool
+    // escaped every caller. It now closes the spinner and shows a snackbar.
+    testWidgets('a failed search load shows a snackbar and no picker',
+        (tester) async {
+      provider = _SearchLoadProvider()..error = StateError('db closed');
+      await tester.runAsync(() => provider.loadRootTasks());
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.search));
+      await pumpAsync(tester);
+
+      expect(find.text("Couldn't load tasks — please retry"), findsOneWidget);
+      expect(find.text('Search tasks'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(TaskListScreen), findsOneWidget);
+    });
+
+    // [Regression — CR M-61] Android Back closed the spinner mid-fetch, and
+    // the `finally` pop then closed the route under it: the home route.
+    // Back is now ignored until the fetch ends.
+    testWidgets('Back during the search spinner keeps the home route',
+        (tester) async {
+      final gated = _SearchLoadProvider()..gate = Completer<void>();
+      provider = gated;
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Write report'));
+        await provider.loadRootTasks();
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.byIcon(Icons.search));
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget,
+          reason: 'Back must not close the spinner');
+
+      gated.gate!.complete();
+      await pumpAsync(tester);
+
+      expect(find.text('Search tasks'), findsOneWidget);
+      expect(find.byType(TaskListScreen), findsOneWidget);
+    });
+  });
+}
+
+/// A [TaskProvider] whose search-pool read can be held open until [gate]
+/// completes, or made to throw [error].
+class _SearchLoadProvider extends TaskProvider {
+  Completer<void>? gate;
+  Object? error;
+
+  @override
+  Future<(List<Task>, Map<int, List<String>>)>
+      getAllTasksWithParentNames() async {
+    if (gate != null) await gate!.future;
+    if (error != null) throw error!;
+    return super.getAllTasksWithParentNames();
+  }
 }

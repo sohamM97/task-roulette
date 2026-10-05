@@ -492,7 +492,7 @@ class FirestoreService {
         results.add({
           'sync_id': syncId,
           'task_sync_id': _stringField(fields, 'task_sync_id', maxLength: _maxSyncIdLen) ?? '',
-          'schedule_type': _stringField(fields, 'schedule_type', maxLength: _maxTypeFieldLen) ?? 'weekly',
+          'schedule_type': _enumField(fields, 'schedule_type', _scheduleTypes, 'weekly'),
           'day_of_week': _intFieldNullable(fields, 'day_of_week'),
           'updated_at': _intFieldNullable(fields, 'updated_at'),
         });
@@ -543,7 +543,7 @@ class FirestoreService {
       results.add({
         'sync_id': syncId,
         'task_sync_id': _stringField(fields, 'task_sync_id', maxLength: _maxSyncIdLen) ?? '',
-        'schedule_type': _stringField(fields, 'schedule_type', maxLength: _maxTypeFieldLen) ?? 'weekly',
+        'schedule_type': _enumField(fields, 'schedule_type', _scheduleTypes, 'weekly'),
         'day_of_week': _intFieldNullable(fields, 'day_of_week'),
         'updated_at': _intFieldNullable(fields, 'updated_at'),
         'deleted': _intFieldNullable(fields, 'deleted_at') != null,
@@ -876,7 +876,7 @@ class FirestoreService {
         final raw = _stringField(fields, 'deadline');
         return raw != null && raw.length <= 10 ? raw : null;
       }(),
-      deadlineType: _stringField(fields, 'deadline_type', maxLength: _maxTypeFieldLen) ?? 'due_by',
+      deadlineType: _enumField(fields, 'deadline_type', _deadlineTypes, 'due_by'),
       isStarred: _boolField(fields, 'is_starred'),
       starOrder: _intFieldNullable(fields, 'star_order'),
     );
@@ -885,13 +885,31 @@ class FirestoreService {
   String? _stringField(Map<String, dynamic> fields, String key, {int? maxLength}) {
     final field = fields[key] as Map<String, dynamic>?;
     final val = field?['stringValue'] as String?;
-    // SEC-fix INFO-12: cap oversized remote strings (defense-in-depth against a
-    // corrupted/hostile Firestore document persisting oversized junk locally).
+    // SEC-fix INFO-12: reject oversized remote strings (defense-in-depth against
+    // a corrupted/hostile Firestore document persisting oversized junk locally).
+    // CR-fix M-54: an oversized value was cut to maxLength and used. A cut sync
+    // id matches no task, so the row was stored pointing at nothing. Returning
+    // null lets each caller's `!= null` check skip the row or use its default.
     if (val != null && maxLength != null && val.length > maxLength) {
-      return val.substring(0, maxLength);
+      return null;
     }
     return val;
   }
+
+  /// [_stringField] restricted to [allowed], with [fallback] for a missing,
+  /// oversized or unknown value.
+  String _enumField(
+    Map<String, dynamic> fields,
+    String key,
+    Set<String> allowed,
+    String fallback,
+  ) {
+    final val = _stringField(fields, key, maxLength: _maxTypeFieldLen);
+    return val != null && allowed.contains(val) ? val : fallback;
+  }
+
+  static const _deadlineTypes = {'due_by', 'on'};
+  static const _scheduleTypes = {'weekly'};
 
   int _intField(Map<String, dynamic> fields, String key) {
     final field = fields[key] as Map<String, dynamic>?;
