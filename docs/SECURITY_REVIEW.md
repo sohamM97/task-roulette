@@ -1451,7 +1451,7 @@ For sync_id fields, add a 50-char cap or UUID format validation.
 
 ### Findings
 
-#### INFO-13: Several direct dependencies are a major version behind, and the lockfile has not moved since Round 6
+#### INFO-13: Several direct dependencies are a major version behind, and the lockfile has not moved since Round 6 [FIXED in Round 8 fix — in-range part only]
 
 - **Severity:** Informational
 - **File:** `pubspec.yaml:45-48`, `pubspec.lock`
@@ -1467,6 +1467,7 @@ For sync_id fields, add a 50-char cap or UUID format validation.
 
   No known CVE affects these versions. However, the three packages that handle credentials or the backup file are the ones furthest behind. A future advisory is likely to be fixed only on the newer major, which would turn a routine bump into a migration done in a hurry.
 - **Recommended Fix:** Run `flutter pub upgrade` to take the in-range updates (`flutter_secure_storage` 10.3.4, `url_launcher` 6.3.3, `shared_preferences`, `path_provider`, `uuid`). Plan the `google_sign_in` 7 and `googleapis_auth` 2 migration as its own branch, because it changes the sign-in code in `auth_service.dart`.
+- **Fix note (Round 8 fix):** `flutter pub upgrade` changed 56 locked packages, with no change to `pubspec.yaml`. Now locked: `flutter_secure_storage` 10.3.4, `url_launcher` 6.3.3, `shared_preferences` 2.5.6, `uuid` 4.6.0, `sqlite3` 3.5.2. `path_provider_android` 2.3.1 now calls Android through the `jni` package, which adds `jni` to `linux/flutter/generated_plugins.cmake`. `flutter analyze` is clean, all 1617 tests pass and `flutter build linux` succeeds. The major upgrades are not done: `google_sign_in` (6.3.0), `googleapis_auth` (1.6.0) and `file_picker` (10.3.10) stay where they were and remain open for their own branch.
 
 ### Positive Security Findings
 
@@ -1500,4 +1501,4 @@ For sync_id fields, add a 50-char cap or UUID format validation.
 | Priority | Finding | Effort | Status |
 |----------|---------|--------|--------|
 | **LOW** | LOW-15: Deploy `firestore.rules` with the Firebase CLI and add a cross-uid rules unit test | Low–Medium | Open (deferred) |
-| **INFO** | INFO-13: Take in-range dependency updates; plan the `google_sign_in` 7 / `googleapis_auth` 2 migration | Low (bump) / Medium (migration) | Open |
+| **INFO** | INFO-13: Take in-range dependency updates; plan the `google_sign_in` 7 / `googleapis_auth` 2 migration | Low (bump) / Medium (migration) | Bump done (Round 8 fix); migration open |
