@@ -416,7 +416,9 @@ void main() {
   });
 
   group('taskFromFirestoreDoc remote string caps (INFO-12)', () {
-    test('truncates oversized deadline_type to 20 characters', () {
+    // [Regression — CR M-54] An oversized or unknown deadline_type was cut to
+    // 20 characters and stored. It now falls back to the default.
+    test('falls back to due_by for an oversized deadline_type', () {
       final doc = {
         'name': 'a/b/tasks/id1',
         'fields': {
@@ -428,10 +430,10 @@ void main() {
       };
 
       final task = service.taskFromFirestoreDoc(doc);
-      expect(task!.deadlineType.length, 20);
+      expect(task!.deadlineType, 'due_by');
     });
 
-    test('preserves normal-length deadline_type', () {
+    test('falls back to due_by for an unknown deadline_type', () {
       final doc = {
         'name': 'a/b/tasks/id1',
         'fields': {
@@ -443,7 +445,22 @@ void main() {
       };
 
       final task = service.taskFromFirestoreDoc(doc);
-      expect(task!.deadlineType, 'hard_deadline');
+      expect(task!.deadlineType, 'due_by');
+    });
+
+    test('preserves the "on" deadline_type', () {
+      final doc = {
+        'name': 'a/b/tasks/id1',
+        'fields': {
+          'name': {'stringValue': 'Task'},
+          'created_at': {'integerValue': '0'},
+          'priority': {'integerValue': '0'},
+          'deadline_type': {'stringValue': 'on'},
+        },
+      };
+
+      final task = service.taskFromFirestoreDoc(doc);
+      expect(task!.deadlineType, 'on');
     });
 
     test('defaults deadline_type to due_by when absent', () {
@@ -887,6 +904,25 @@ void main() {
   }
 
   group('pullAllRelationships — tombstone filtering', () {
+    // [Regression — CR M-54] A 60-character sync id was cut to 50 characters
+    // and stored, so the relationship pointed at an id no task has.
+    test('skips a relationship whose sync id is longer than 50', () async {
+      final mockClient = MockClient((request) async {
+        final body = json.encode({
+          'documents': [
+            relDoc('p1', 'c1'),
+            relDoc('p2', 'c' * 60),
+          ],
+        });
+        return http.Response(body, 200);
+      });
+
+      final svc = FirestoreService(client: mockClient);
+      final results = await svc.pullAllRelationships('u', 'token');
+
+      expect(results.map((r) => r.childSyncId), ['c1']);
+    });
+
     test('skips documents with deleted_at set', () async {
       final mockClient = MockClient((request) async {
         final body = json.encode({
@@ -1523,17 +1559,18 @@ void main() {
   // pull deserialization site. sync_id fields cap at 50; type fields at 20.
   // A corrupted/hostile Firestore doc must not persist oversized junk locally.
   group('pull methods remote string caps (INFO-12)', () {
-    // sync_ids are ~36-char UUIDs; anything > 50 is truncated to 50.
+    // sync_ids are ~36-char UUIDs; anything > 50 is rejected (CR M-54: it used
+    // to be cut to 50, which matches no task).
     final over50 = 'x' * 60; // one clearly over the cap
     final at50 = 'x' * 50; // exactly at the cap — must be preserved as-is
-    final oneOver50 = 'x' * 51; // one over the cap — must truncate to 50
-    // type fields (schedule_type, deadline_type) cap at 20.
+    final oneOver50 = 'x' * 51; // one over the cap — must be rejected
+    // Type fields fall back to their default when oversized or unknown.
     final over20 = 'y' * 30;
     final at20 = 'y' * 20;
     final oneOver20 = 'y' * 21;
 
     group('pullAllRelationships', () {
-      test('truncates oversized parent_sync_id and child_sync_id to 50', () async {
+      test('skips a row whose parent/child sync_id is over 50', () async {
         final mockClient = MockClient((request) async {
           final body = json.encode({
             'documents': [
@@ -1552,9 +1589,7 @@ void main() {
         final svc = FirestoreService(client: mockClient);
         final results = await svc.pullAllRelationships('u', 'token');
 
-        expect(results.length, 1);
-        expect(results[0].parentSyncId.length, 50);
-        expect(results[0].childSyncId.length, 50);
+        expect(results, isEmpty);
       });
 
       test('preserves sync_id at exactly 50 chars', () async {
@@ -1580,7 +1615,7 @@ void main() {
         expect(results[0].parentSyncId.length, 50);
       });
 
-      test('truncates sync_id one char over the cap (51 → 50)', () async {
+      test('skips a sync_id one char over the cap (51)', () async {
         final mockClient = MockClient((request) async {
           final body = json.encode({
             'documents': [
@@ -1599,12 +1634,12 @@ void main() {
         final svc = FirestoreService(client: mockClient);
         final results = await svc.pullAllRelationships('u', 'token');
 
-        expect(results[0].parentSyncId.length, 50);
+        expect(results, isEmpty);
       });
     });
 
     group('pullRelationshipsSince', () {
-      test('truncates oversized parent/child sync_id to 50', () async {
+      test('skips a row whose parent/child sync_id is over 50', () async {
         final mockClient = MockClient((request) async {
           final body = json.encode([
             {
@@ -1624,14 +1659,12 @@ void main() {
         final svc = FirestoreService(client: mockClient);
         final results = await svc.pullRelationshipsSince('u', 'token', 1000);
 
-        expect(results.length, 1);
-        expect(results[0].parentSyncId.length, 50);
-        expect(results[0].childSyncId.length, 50);
+        expect(results, isEmpty);
       });
     });
 
     group('pullAllDependencies', () {
-      test('truncates oversized task_sync_id and depends_on_sync_id to 50', () async {
+      test('skips a row whose task/depends_on sync_id is over 50', () async {
         final mockClient = MockClient((request) async {
           final body = json.encode({
             'documents': [
@@ -1650,14 +1683,12 @@ void main() {
         final svc = FirestoreService(client: mockClient);
         final results = await svc.pullAllDependencies('u', 'token');
 
-        expect(results.length, 1);
-        expect(results[0].taskSyncId.length, 50);
-        expect(results[0].dependsOnSyncId.length, 50);
+        expect(results, isEmpty);
       });
     });
 
     group('pullDependenciesSince', () {
-      test('truncates oversized task/depends_on sync_id to 50', () async {
+      test('skips a row whose task/depends_on sync_id is over 50', () async {
         final mockClient = MockClient((request) async {
           final body = json.encode([
             {
@@ -1677,14 +1708,12 @@ void main() {
         final svc = FirestoreService(client: mockClient);
         final results = await svc.pullDependenciesSince('u', 'token', 2000);
 
-        expect(results.length, 1);
-        expect(results[0].taskSyncId.length, 50);
-        expect(results[0].dependsOnSyncId.length, 50);
+        expect(results, isEmpty);
       });
     });
 
     group('pullAllSchedules', () {
-      test('truncates oversized task_sync_id to 50', () async {
+      test('drops an oversized task_sync_id to empty', () async {
         final mockClient = MockClient((request) async {
           final body = json.encode({
             'documents': [
@@ -1704,10 +1733,10 @@ void main() {
         final results = await svc.pullAllSchedules('u', 'token');
 
         expect(results.length, 1);
-        expect((results[0]['task_sync_id'] as String).length, 50);
+        expect(results[0]['task_sync_id'], '');
       });
 
-      test('truncates oversized schedule_type to 20', () async {
+      test('falls back to weekly for an oversized schedule_type', () async {
         final mockClient = MockClient((request) async {
           final body = json.encode({
             'documents': [
@@ -1726,10 +1755,10 @@ void main() {
         final svc = FirestoreService(client: mockClient);
         final results = await svc.pullAllSchedules('u', 'token');
 
-        expect((results[0]['schedule_type'] as String).length, 20);
+        expect(results[0]['schedule_type'], 'weekly');
       });
 
-      test('preserves schedule_type at exactly 20 chars', () async {
+      test('falls back to weekly for an unknown schedule_type', () async {
         final mockClient = MockClient((request) async {
           final body = json.encode({
             'documents': [
@@ -1748,10 +1777,10 @@ void main() {
         final svc = FirestoreService(client: mockClient);
         final results = await svc.pullAllSchedules('u', 'token');
 
-        expect(results[0]['schedule_type'], at20);
+        expect(results[0]['schedule_type'], 'weekly');
       });
 
-      test('truncates schedule_type one char over the cap (21 → 20)', () async {
+      test('falls back to weekly one char over the cap (21)', () async {
         final mockClient = MockClient((request) async {
           final body = json.encode({
             'documents': [
@@ -1770,12 +1799,12 @@ void main() {
         final svc = FirestoreService(client: mockClient);
         final results = await svc.pullAllSchedules('u', 'token');
 
-        expect((results[0]['schedule_type'] as String).length, 20);
+        expect(results[0]['schedule_type'], 'weekly');
       });
     });
 
     group('pullSchedulesSince', () {
-      test('truncates oversized task_sync_id to 50', () async {
+      test('drops an oversized task_sync_id to empty', () async {
         final mockClient = MockClient((request) async {
           final body = json.encode([
             {
@@ -1796,10 +1825,10 @@ void main() {
         final results = await svc.pullSchedulesSince('u', 'token', 3000);
 
         expect(results.length, 1);
-        expect((results[0]['task_sync_id'] as String).length, 50);
+        expect(results[0]['task_sync_id'], '');
       });
 
-      test('truncates oversized schedule_type to 20', () async {
+      test('falls back to weekly for an oversized schedule_type', () async {
         final mockClient = MockClient((request) async {
           final body = json.encode([
             {
@@ -1819,12 +1848,12 @@ void main() {
         final svc = FirestoreService(client: mockClient);
         final results = await svc.pullSchedulesSince('u', 'token', 3000);
 
-        expect((results[0]['schedule_type'] as String).length, 20);
+        expect(results[0]['schedule_type'], 'weekly');
       });
     });
 
     group('pullTodaysFive', () {
-      test('truncates oversized entry task_sync_id to 50', () async {
+      test('drops an oversized entry task_sync_id to empty', () async {
         final mockClient = MockClient((request) async {
           final body = json.encode({
             'name': 'projects/test/documents/users/u/todays_five/2026-07-07',
@@ -1854,7 +1883,7 @@ void main() {
 
         expect(result, isNotNull);
         expect(result!.entries.length, 1);
-        expect((result.entries[0]['task_sync_id'] as String).length, 50);
+        expect(result.entries[0]['task_sync_id'], '');
       });
 
       test('preserves entry task_sync_id at exactly 50 chars', () async {

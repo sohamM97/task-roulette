@@ -19,9 +19,6 @@ const IconData deadlineIcon = Icons.schedule;
 /// Icon for "scheduled today" indicators on task cards.
 const IconData scheduledTodayIcon = Icons.event_available;
 
-/// Icon for roulette spin / random task selection actions.
-const IconData spinIcon = Icons.loop;
-
 /// Returns the deadline icon color based on days until deadline.
 /// Used by task cards, Today's 5, and schedule dialog.
 Color deadlineProximityColor(int daysUntil, ColorScheme colorScheme) {
@@ -68,6 +65,49 @@ Future<bool> confirmDependentUnblock(BuildContext context, String taskName, List
         FilledButton(
           onPressed: () => Navigator.pop(ctx, true),
           child: const Text('Complete'),
+        ),
+      ],
+    ),
+  );
+  return confirmed == true;
+}
+
+/// Asks before restoring [taskName] when some of its parents have since been
+/// completed. Restoring drops the links to those archived parents, because a
+/// task listed under an archived parent shows up nowhere. Returns true if the
+/// user taps Restore.
+///
+/// Example: "Buy milk" was under "Groceries", which is now done. With no other
+/// parent ([willBeRoot] true) the message says it goes back to the top level.
+/// Used by the Archive screen's restore and the "Done for good!" undo.
+Future<bool> confirmRestoreUnderArchivedParents(
+  BuildContext context, {
+  required String taskName,
+  required List<String> archivedParentNames,
+  required bool willBeRoot,
+}) async {
+  final parentNames = archivedParentNames.map((n) => '"$n"').join(' and ');
+  final several = archivedParentNames.length > 1;
+  final verb = several ? 'have' : 'has';
+  final message = willBeRoot
+      ? '"$taskName" was listed under $parentNames, which $verb since been '
+          'completed. It will be restored to the top level.'
+      : '"$taskName" was also listed under $parentNames, which $verb since '
+          'been completed. It will no longer show under '
+          '${several ? 'them' : 'it'}.';
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Restore task'),
+      content: Text(message),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Restore'),
         ),
       ],
     ),

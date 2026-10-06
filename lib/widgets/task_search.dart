@@ -50,7 +50,14 @@ Future<void> showTaskSearch(
 }
 
 /// Fetches the search pool (all tasks + parent names) behind a modal spinner.
-/// Returns null if the widget went away mid-fetch.
+/// Returns null if the widget went away mid-fetch or the read failed; a failed
+/// read also shows a snackbar.
+//
+// CR-fix M-61: barrierDismissible does not stop the Android Back button. Back
+// closed the spinner mid-fetch, and the `finally` pop then closed the route
+// under it, which is the app's home route. PopScope keeps the spinner up until
+// this function pops it. A database error also escaped every caller uncaught;
+// it is caught here now.
 Future<(List<Task>, Map<int, List<String>>)?> fetchSearchCandidates(
   BuildContext context,
 ) async {
@@ -59,16 +66,19 @@ Future<(List<Task>, Map<int, List<String>>)?> fetchSearchCandidates(
   showDialog(
     context: context,
     barrierDismissible: false,
-    builder: (_) => const Center(child: CircularProgressIndicator()),
+    builder: (_) => const PopScope(
+      canPop: false,
+      child: Center(child: CircularProgressIndicator()),
+    ),
   );
   try {
-    late List<Task> allTasks;
-    late Map<int, List<String>> parentNamesMap;
-    await Future.wait([
-      provider.getAllTasks().then((v) => allTasks = v),
-      provider.getParentNamesMap().then((v) => parentNamesMap = v),
-    ]);
-    return (allTasks, parentNamesMap);
+    return await provider.getAllTasksWithParentNames();
+  } catch (e) {
+    debugLog('fetchSearchCandidates failed: $e');
+    if (context.mounted) {
+      showInfoSnackBar(context, "Couldn't load tasks — please retry");
+    }
+    return null;
   } finally {
     if (navigator.mounted) navigator.pop();
   }
@@ -100,8 +110,7 @@ Future<void> showRootAddFromSearch(
   try {
     // For the "already exists" suggestion: creation is at root, so there is no
     // parent to file a match under — tapping a match just opens it.
-    final allTasks = await provider.getAllTasks();
-    final parentNames = await provider.getParentNamesMap();
+    final (allTasks, parentNames) = await provider.getAllTasksWithParentNames();
     if (!context.mounted) return;
     await AddTaskFlow(
       initialName: initialName,

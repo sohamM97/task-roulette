@@ -288,6 +288,8 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    // Scans the whole task list, so read it once per build.
+    final matches = _matches;
     return AlertDialog(
       title: const Text('Add Task'),
       content: Column(
@@ -309,8 +311,8 @@ class _AddTaskDialogState extends State<AddTaskDialog> {
               suffixIcon: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (_matches.isNotEmpty)
-                    _buildMatchIndicator(colorScheme, _matches),
+                  if (matches.isNotEmpty)
+                    _buildMatchIndicator(colorScheme, matches),
                   IconButton(
                     icon: Icon(
                       Icons.link,

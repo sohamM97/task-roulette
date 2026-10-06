@@ -23,8 +23,6 @@ class Task {
   final bool isStarred;
   final int? starOrder;
 
-  static const priorityLabels = ['Normal', 'High'];
-
   Task({
     this.id,
     required this.name,
@@ -55,11 +53,9 @@ class Task {
   bool get hasUrl => url != null && url!.isNotEmpty;
 
   bool get isHighPriority => priority >= 1;
-  String get priorityLabel => isHighPriority ? 'High' : 'Normal';
 
   bool get hasDeadline => deadline != null && deadline!.isNotEmpty;
   bool get isDeadlineDueBy => deadlineType != 'on';
-  bool get isDeadlineOn => deadlineType == 'on';
 
   DateTime? get deadlineDate {
     if (!hasDeadline) return null;

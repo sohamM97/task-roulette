@@ -169,8 +169,17 @@ class _TriageDialogState extends State<TriageDialog> {
   Future<void> _loadSearchData() async {
     if (_allTasks != null) return;
     try {
-      final allTasks = await widget.provider.getAllTasks();
-      _parentNamesMap ??= await widget.provider.getParentNamesMap();
+      // CR-fix M-73: the two reads ran one after the other; they now run in
+      // parallel when the parent names aren't cached yet.
+      final List<Task> allTasks;
+      if (_parentNamesMap == null) {
+        final (tasks, names) =
+            await widget.provider.getAllTasksWithParentNames();
+        allTasks = tasks;
+        _parentNamesMap = names;
+      } else {
+        allTasks = await widget.provider.getAllTasks();
+      }
       if (!mounted) return;
       setState(() {
         _allTasks = allTasks.where((t) => t.id != widget.task.id).toList();

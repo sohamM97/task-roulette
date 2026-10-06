@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show SocketException;
 import 'dart:ui' show VoidCallback;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/database_helper.dart';
 import '../providers/auth_provider.dart';
@@ -27,6 +28,23 @@ class SyncService {
   // on-open/on-resume full reconciliation silently didn't happen.
   bool _pendingPullFull = false;
   bool _skipNextPeriodicPull = false;
+
+  /// Goes up by one each time a pull writes remote changes into the local
+  /// database. A listener that sees [SyncStatus.synced] compares this with the
+  /// value it last saw to tell "a pull changed local data" from "a push
+  /// finished" or "a pull found nothing new".
+  //
+  // CR-fix I-54: the Today tab reloaded on every `synced`, including the one
+  // each push sets. The reload re-saved Today's 5, the save scheduled another
+  // push, and the device pushed about every 5 s for as long as the app was
+  // open. Now the tab reloads only when this number has changed.
+  int _dataChangeGeneration = 0;
+  int get dataChangeGeneration => _dataChangeGeneration;
+
+  /// Records a data-changing pull without running one, so widget tests can
+  /// simulate the `synced` that follows it.
+  @visibleForTesting
+  void debugNoteDataChanged() => _dataChangeGeneration++;
 
   /// Every Nth pull does a full reconciliation instead of delta, catching any
   /// updates that were missed due to lastSyncAt advancing past their updated_at.
@@ -347,6 +365,7 @@ class SyncService {
       await prefs.setBool(key, true);
       await prefs.setInt(_prefsKeyLastSyncAt, DateTime.now().millisecondsSinceEpoch);
 
+      _dataChangeGeneration++;
       _authProvider.setSyncStatus(SyncStatus.synced);
       _onDataChanged?.call();
     } catch (e) {
@@ -837,6 +856,7 @@ class SyncService {
             DateTime.now().millisecondsSinceEpoch);
       }
 
+      if (anyChange) _dataChangeGeneration++;
       _authProvider.setSyncStatus(SyncStatus.synced);
 
       // Notify if data changed so UI can refresh

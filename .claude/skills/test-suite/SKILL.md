@@ -29,6 +29,8 @@ Present the manual checklist **one section at a time** — never flatten all sec
 
 **Never name a task or row the user hasn't created yet.** Referring to a later step's fixture while they're still on an earlier step reads as an instruction for right now, and nothing on screen matches it.
 
+**Check each setup against the `/manual-test` rules before sending it — don't relay the agent's text as-is.** The agent's checklist can break its own rules, and you are the last check before the user. The rule most often broken is creating tasks with single adds instead of "Add multiple": tasks at the same level that share an Inbox state go in one batch, and two Inbox states mean two batches. Rewrite a setup that has two or more single adds of that kind before sending it.
+
 When the user reports a partial result, asks a question, or gets stuck mid-section, answer only that and re-send the single step they're on. Don't advance.
 
 When presenting auto-test results, include the test category labels (Regression, Mechanism, Baseline, Edge case) from the agent's report so the user can see at a glance which tests guard the bug vs test the fix mechanism.

@@ -37,6 +37,16 @@ Future<void> seedTodaysFive(
   );
 }
 
+/// Counts scheduled pushes and never starts a debounce timer.
+class _PushCountingSyncService extends SyncService {
+  _PushCountingSyncService(super.authProvider);
+
+  int pushes = 0;
+
+  @override
+  void schedulePush() => pushes++;
+}
+
 void main() {
   late DatabaseHelper db;
   late TaskProvider provider;
@@ -63,8 +73,11 @@ void main() {
     await db.reset();
   });
 
-  Widget buildTestWidget({void Function(Task)? onNavigateToTask}) {
-    final authProvider = AuthProvider();
+  Widget buildTestWidget({
+    void Function(Task)? onNavigateToTask,
+    AuthProvider? auth,
+  }) {
+    final authProvider = auth ?? AuthProvider();
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: provider),
@@ -678,13 +691,14 @@ void main() {
       });
 
       final authProvider = AuthProvider();
+      final syncService = SyncService(authProvider);
       final widget = MultiProvider(
         providers: [
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => ThemeProvider()),
           ChangeNotifierProvider.value(value: authProvider),
           Provider<SyncService>(
-            create: (_) => SyncService(authProvider),
+            create: (_) => syncService,
             dispose: (_, sync) => sync.dispose(),
           ),
         ],
@@ -708,7 +722,8 @@ void main() {
         ]);
       });
 
-      // Trigger _onSyncStatusChanged by setting syncStatus to synced
+      // Trigger _onSyncStatusChanged the way a data-changing pull does.
+      syncService.debugNoteDataChanged();
       authProvider.setSyncStatus(SyncStatus.synced);
 
       // Let the reload complete
@@ -737,13 +752,14 @@ void main() {
       });
 
       final authProvider = AuthProvider();
+      final syncService = SyncService(authProvider);
       final widget = MultiProvider(
         providers: [
           ChangeNotifierProvider.value(value: provider),
           ChangeNotifierProvider(create: (_) => ThemeProvider()),
           ChangeNotifierProvider.value(value: authProvider),
           Provider<SyncService>(
-            create: (_) => SyncService(authProvider),
+            create: (_) => syncService,
             dispose: (_, sync) => sync.dispose(),
           ),
         ],
@@ -769,7 +785,8 @@ void main() {
         ]);
       });
 
-      // Trigger reload via sync status change
+      // Trigger reload the way a data-changing pull does.
+      syncService.debugNoteDataChanged();
       authProvider.setSyncStatus(SyncStatus.synced);
       for (var i = 0; i < 20; i++) {
         await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 10)));
@@ -958,8 +975,9 @@ void main() {
       }
 
       await tester.tap(find.text('Done today'));
-      // Pump enough to see if dialog appears, but also advance the
+      // Let the task re-read in markTaskDoneToday finish, then advance the
       // completion animation timer (700ms) so it doesn't remain pending.
+      await pumpAsync(tester, rounds: 5);
       await tester.pump(const Duration(milliseconds: 800));
       await pumpAsync(tester, rounds: 40);
 
@@ -2652,6 +2670,273 @@ void main() {
       // Sheet header surfaces the full ancestor path (non-leaf parent isn't shown
       // anywhere else — it's excluded from suggestions).
       expect(find.text('Big Parent'), findsOneWidget);
+    });
+  });
+
+  group('Round 12 review fixes', () {
+    // [Regression — CR I-62] The I-54 save-skip also skipped the push after a
+    // pin: the pin saved first, the reload that followed found nothing to
+    // save, and no push was scheduled, so other devices never saw the pin.
+    testWidgets('accepting a suggestion schedules a push', (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Candidate task'));
+      });
+      final auth = AuthProvider();
+      final sync = _PushCountingSyncService(auth);
+      await pumpAndLoad(
+        tester,
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider(create: (_) => ThemeProvider()),
+            ChangeNotifierProvider.value(value: auth),
+            Provider<SyncService>.value(value: sync),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: TodaysFiveScreen()),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+      sync.pushes = 0;
+
+      await tester.tap(find.byIcon(Icons.add_circle));
+      await pumpAsync(tester);
+
+      expect(sync.pushes, greaterThan(0));
+    });
+
+    // [Regression — CR I-54] A sync that changed nothing set the status to
+    // `synced`, the screen reloaded and re-saved Today's 5, and the save
+    // scheduled another push: a push about every 5 s, each one re-stamping the
+    // last-write-wins time.
+    testWidgets('a sync that changed no data does not re-save Today\'s 5',
+        (tester) async {
+      await tester.runAsync(() async {
+        final id = await db.insertTask(Task(name: 'Pinned leaf'));
+        await seedTodaysFive(db, [id]);
+      });
+      final auth = AuthProvider();
+      await pumpAndLoad(tester, buildTestWidget(auth: auth));
+
+      await tester.runAsync(() async {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt(DatabaseHelper.prefsKeyTodaysFivePersistedAt, 1);
+      });
+      auth.setSyncStatus(SyncStatus.synced);
+      await pumpAsync(tester);
+
+      final stamp = await tester.runAsync(() async {
+        final prefs = await SharedPreferences.getInstance();
+        return prefs.getInt(DatabaseHelper.prefsKeyTodaysFivePersistedAt);
+      });
+      expect(stamp, 1);
+    });
+
+    // [Regression — CR I-60] Pinning another task reloaded the screen and
+    // threw away the "Done today" undo data, so restoring the first task left
+    // it started and set its last_worked_at to NULL.
+    testWidgets('restoring a "Done today" task after pinning another one '
+        'fully reverts it', (tester) async {
+      final threeDaysAgo = DateTime.now()
+          .subtract(const Duration(days: 3))
+          .millisecondsSinceEpoch;
+      late int id;
+      await tester.runAsync(() async {
+        id = await db.insertTask(
+            Task(name: 'Old task', lastWorkedAt: threeDaysAgo));
+        await db.insertTask(Task(name: 'Candidate task'));
+        await seedTodaysFive(db, [id]);
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Old task'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.tap(find.text('Done today'));
+      await pumpAsync(tester, rounds: 5);
+      await tester.pump(const Duration(milliseconds: 800));
+      await pumpAsync(tester, rounds: 40);
+      ScaffoldMessenger.of(tester.element(find.byType(TodaysFiveScreen)))
+          .clearSnackBars();
+      await tester.pump();
+
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+      await tester.tap(find.byIcon(Icons.add_circle));
+      await pumpAsync(tester, rounds: 40);
+
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Old task'));
+        await Future.delayed(const Duration(milliseconds: 300));
+      });
+      await pumpAsync(tester);
+
+      final task = await tester.runAsync(() => db.getTaskById(id));
+      expect(task!.isStarted, isFalse);
+      expect(task.lastWorkedAt, threeDaysAgo);
+    });
+
+    // [Regression — CR I-61] Restoring a "Done for good!" task by tapping its
+    // card did not put back the dependency links that completing it removed.
+    testWidgets('restoring a "Done for good!" card restores its dependents',
+        (tester) async {
+      late int blocker, waiting;
+      await tester.runAsync(() async {
+        blocker = await db.insertTask(Task(name: 'Blocker'));
+        waiting = await db.insertTask(Task(name: 'Waiting'));
+        await db.addDependency(waiting, blocker);
+        await seedTodaysFive(db, [blocker]);
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Blocker'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.tap(find.text('Done for good!'));
+      await pumpAsync(tester, rounds: 10);
+      await tester.tap(find.text('Complete'));
+      await pumpAsync(tester, rounds: 10);
+      await tester.pump(const Duration(milliseconds: 800));
+      await pumpAsync(tester, rounds: 40);
+      ScaffoldMessenger.of(tester.element(find.byType(TodaysFiveScreen)))
+          .clearSnackBars();
+      await tester.pump();
+
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Blocker'));
+        await Future.delayed(const Duration(milliseconds: 300));
+      });
+      await pumpAsync(tester);
+
+      final deps = await tester.runAsync(() => db.getDependencies(waiting));
+      expect(deps!.map((t) => t.id), contains(blocker));
+    });
+
+    // [Regression — CR I-54] Every load ended in a save, and every save
+    // re-stamped the last-write-wins time, so an idle device always looked
+    // newest. Opening the tab on an unchanged saved list must not save.
+    testWidgets('loading an unchanged Today\'s 5 does not re-stamp it',
+        (tester) async {
+      await tester.runAsync(() async {
+        final id = await db.insertTask(Task(name: 'Pinned leaf'));
+        await seedTodaysFive(db, [id]);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt(DatabaseHelper.prefsKeyTodaysFivePersistedAt, 1);
+      });
+
+      await pumpAndLoad(tester, buildTestWidget());
+      expect(find.text('Pinned leaf'), findsOneWidget);
+
+      final stamp = await tester.runAsync(() async {
+        final prefs = await SharedPreferences.getInstance();
+        return prefs.getInt(DatabaseHelper.prefsKeyTodaysFivePersistedAt);
+      });
+      expect(stamp, 1);
+    });
+
+    // [Mechanism — CR I-54] A `synced` after a pull that wrote remote changes
+    // still reloads the tab; one with the same generation does not.
+    testWidgets('a sync that changed data reloads Today\'s 5', (tester) async {
+      late int a, b;
+      await tester.runAsync(() async {
+        a = await db.insertTask(Task(name: 'Task A'));
+        b = await db.insertTask(Task(name: 'Task B'));
+        await seedTodaysFive(db, [a]);
+      });
+      final auth = AuthProvider();
+      await pumpAndLoad(tester, buildTestWidget(auth: auth));
+      expect(find.text('Task B'), findsNothing);
+
+      // Another device pinned Task B; the pull wrote it into the database.
+      await tester.runAsync(() => seedTodaysFive(db, [a, b]));
+
+      auth.setSyncStatus(SyncStatus.synced);
+      await pumpAsync(tester);
+      expect(find.text('Task B'), findsNothing,
+          reason: 'same generation: no reload');
+
+      tester
+          .element(find.byType(TodaysFiveScreen))
+          .read<SyncService>()
+          .debugNoteDataChanged();
+      auth.setSyncStatus(SyncStatus.syncing);
+      auth.setSyncStatus(SyncStatus.synced);
+      await pumpAsync(tester);
+      expect(find.text('Task B'), findsOneWidget);
+    });
+
+    // [Regression — CR M-58] Two quick "+" taps on different suggestion pills
+    // both read the same saved list, and the second save dropped the first
+    // task. Both must end up pinned.
+    testWidgets('two quick "+" taps on suggestions pin both tasks',
+        (tester) async {
+      late int a, b;
+      await tester.runAsync(() async {
+        a = await db.insertTask(Task(name: 'Suggest A'));
+        b = await db.insertTask(Task(name: 'Suggest B'));
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+      final plus = find.byIcon(Icons.add_circle);
+      expect(plus, findsNWidgets(2));
+      await tester.tap(plus.at(0));
+      await tester.tap(plus.at(1));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 30));
+        await pumpAsync(tester, rounds: 10);
+      }
+
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved!.taskIds.toSet(), {a, b});
+    });
+
+    // [Regression — CR M-59] Restoring a done card whose task gained subtasks
+    // took it off the screen but left it in the saved state, so the next push
+    // still listed it.
+    testWidgets('restoring a done task that gained a subtask drops it from '
+        'the saved state', (tester) async {
+      late int id;
+      await tester.runAsync(() async {
+        id = await db.insertTask(Task(name: 'Grows subtasks'));
+        await seedTodaysFive(db, [id]);
+      });
+      await pumpAndLoad(tester, buildTestWidget());
+
+      await tester.tap(find.text('Grows subtasks'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.tap(find.text('Done today'));
+      await pumpAsync(tester, rounds: 5);
+      await tester.pump(const Duration(milliseconds: 800));
+      await pumpAsync(tester, rounds: 40);
+      ScaffoldMessenger.of(tester.element(find.byType(TodaysFiveScreen)))
+          .clearSnackBars();
+      await tester.pump();
+
+      await tester.runAsync(() async {
+        final child = await db.insertTask(Task(name: 'New subtask'));
+        await db.addRelationship(id, child);
+      });
+
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Grows subtasks'));
+        await Future.delayed(const Duration(milliseconds: 300));
+      });
+      await pumpAsync(tester);
+
+      expect(find.text('Grows subtasks'), findsNothing);
+      // An empty Today's 5 has no saved row, so null also means "not listed".
+      final saved =
+          await tester.runAsync(() => db.loadTodaysFiveState(_todayKey()));
+      expect(saved?.taskIds ?? const <int>[], isNot(contains(id)));
     });
   });
 }

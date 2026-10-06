@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/database_helper.dart';
@@ -8,6 +9,7 @@ import '../providers/task_provider.dart';
 import '../utils/display_utils.dart';
 import '../widgets/add_task_flow.dart';
 import '../widgets/done_actions.dart';
+import '../widgets/link_existing_here.dart';
 import '../widgets/profile_icon.dart';
 import '../widgets/tab_app_bar_title.dart';
 import '../widgets/task_search.dart';
@@ -44,6 +46,8 @@ class StarredScreenState extends State<StarredScreen>
   /// childId → (blockerId, blockerName) for blocked children across all starred tasks
   Map<int, ({int blockerId, String blockerName})> _blockedInfo = {};
   bool _loading = true;
+  /// A provider change arrived while a load was running; load once more after.
+  bool _reloadPending = false;
   TaskProvider? _provider;
   Timer? _debounce;
 
@@ -93,8 +97,7 @@ class StarredScreenState extends State<StarredScreen>
     final showPin = todaysFive.pinnedIds.length < maxPins;
     // For the "already exists" suggestion: tapping a match stars the existing
     // task (so it shows on this page) instead of creating a duplicate.
-    final allTasks = await provider.getAllTasks();
-    final parentNames = await provider.getParentNamesMap();
+    final (allTasks, parentNames) = await provider.getAllTasksWithParentNames();
     if (!mounted) return;
     await AddTaskFlow(
       // Always root level on the Starred page, so the Inbox toggle is shown
@@ -160,8 +163,16 @@ class StarredScreenState extends State<StarredScreen>
         ),
       );
 
+  // CR-fix M-65: this returned early while a load was running, so a change
+  // that landed mid-load was never shown, and a load that threw left _loading
+  // set and every later change ignored. A change during a load now queues one
+  // more load, and _loading is reset in a `finally`.
   void _onProviderChanged() {
-    if (!mounted || _loading) return;
+    if (!mounted) return;
+    if (_loading) {
+      _reloadPending = true;
+      return;
+    }
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 100), () {
       if (mounted && !_loading) _loadStarredTasks();
@@ -170,78 +181,130 @@ class StarredScreenState extends State<StarredScreen>
 
   Future<void> _loadStarredTasks() async {
     _loading = true;
+    try {
+      await _loadStarredTasksInner();
+    } catch (e) {
+      debugLog('StarredScreen: _loadStarredTasks failed: $e');
+    } finally {
+      _loading = false;
+      if (mounted) {
+        setState(() {});
+        if (_reloadPending) {
+          _reloadPending = false;
+          _onProviderChanged();
+        }
+      }
+    }
+  }
+
+  // CR-fix M-62 / M-34: this ran getChildren once per starred task and once
+  // per shown child, about 5 queries per starred task, after every provider
+  // notification. The children and grandchildren now come from one query
+  // each; only the per-card dependency ordering is still one query per card.
+  Future<void> _loadStarredTasksInner() async {
     final provider = context.read<TaskProvider>();
-    final starred = await provider.getStarredTasks();
-
-    // Load tree preview data and blocked info for all starred tasks in parallel
-    final allChildIds = <int>[];
     final db = DatabaseHelper();
-    final treeEntries = await Future.wait(
-      starred.map((task) async {
-        final children = await provider.getChildren(task.id!);
-        var allActive = children
-            .where((c) => c.completedAt == null && c.skippedAt == null)
-            .toList();
-        // Reorder by dependency chains so blocked tasks appear after their blocker
-        final siblingDeps = await db.getSiblingDependencyPairs(
-          allActive.map((c) => c.id!).toList(),
-        );
-        allActive = reorderByDependencyChains(allActive, siblingDeps);
-        final shownChildren = allActive.take(3).toList();
-        allChildIds.addAll(allActive.map((c) => c.id!));
+    final starred = await provider.getStarredTasks();
+    final childrenOf =
+        await provider.getChildrenOfParents([for (final t in starred) t.id!]);
 
-        final childEntries = await Future.wait(
-          shownChildren.map((child) async {
-            final grandchildren = await provider.getChildren(child.id!);
-            final allActiveGc = grandchildren
-                .where((g) => g.completedAt == null && g.skippedAt == null)
-                .toList();
+    // Reorder each card's children by dependency chains so blocked tasks
+    // appear after their blocker.
+    final siblingDeps = await Future.wait(starred.map((task) =>
+        db.getSiblingDependencyPairs(
+            [for (final c in childrenOf[task.id] ?? const <Task>[]) c.id!])));
+    final orderedChildren = <int, List<Task>>{};
+    for (var i = 0; i < starred.length; i++) {
+      orderedChildren[starred[i].id!] = reorderByDependencyChains(
+          childrenOf[starred[i].id] ?? const <Task>[], siblingDeps[i]);
+    }
+
+    final shownChildIds = [
+      for (final children in orderedChildren.values)
+        for (final child in children.take(3)) child.id!,
+    ];
+    final grandchildrenOf = await provider.getChildrenOfParents(shownChildIds);
+
+    final allChildIds = <int>[];
+    final treeData = <int, ({
+      List<({Task child, List<Task> grandchildren, int totalGrandchildren})>
+          children,
+      int totalChildren,
+    })>{};
+    for (final task in starred) {
+      final allActive = orderedChildren[task.id!]!;
+      allChildIds.addAll(allActive.map((c) => c.id!));
+      final childEntries = [
+        for (final child in allActive.take(3))
+          () {
+            final allActiveGc = grandchildrenOf[child.id] ?? const <Task>[];
             final shownGc = allActiveGc.take(2).toList();
-            // CR-fix I-53: include shown grandchild ids so _blockedInfo covers them.
-            // Was: only direct-child ids fetched, so the card couldn't dim blocked
-            // grandchildren while the expanded dialog did — a DRY-rule violation.
+            // CR-fix I-53: include shown grandchild ids so _blockedInfo covers
+            // them, so the card dims blocked grandchildren as the dialog does.
             allChildIds.addAll(shownGc.map((g) => g.id!));
             return (
               child: child,
               grandchildren: shownGc,
               totalGrandchildren: allActiveGc.length,
             );
-          }),
-        );
-
-        return MapEntry(task.id!, (
-          children: childEntries,
-          totalChildren: allActive.length,
-        ));
-      }),
-    );
-    final treeData = Map.fromEntries(treeEntries);
+          }(),
+      ];
+      treeData[task.id!] = (
+        children: childEntries,
+        totalChildren: allActive.length,
+      );
+    }
 
     // Fetch blocked info for all children across all starred tasks
-    final blockedInfo = await DatabaseHelper().getBlockedTaskInfo(allChildIds);
+    final blockedInfo = await db.getBlockedTaskInfo(allChildIds);
 
     if (!mounted) return;
     setState(() {
       _starredTasks = starred;
       _treeData = treeData;
       _blockedInfo = blockedInfo;
-      _loading = false;
     });
   }
 
+  /// The expanded dialog's width when its tree is shallow, and its width on any
+  /// screen narrower than this plus the 24 px margins.
+  static const double _dialogMinWidth = 420;
+
   void _showExpandedView(Task task) {
     final accent = _accentColor(context, task.id ?? 0);
+    // The view reports its deepest visible row here. It needs no dispose: it
+    // holds no resources, and its only listener is removed with the dialog.
+    final deepestDepth = ValueNotifier<int>(0);
     showDialog(
       context: context,
       builder: (dialogContext) => Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
-          child: Material(
+          // The dialog is 420 px wide until the deepest expanded row needs
+          // more, then widens to fit it, up to the screen width. A shallow tree
+          // looks the same on every screen; a deep one keeps indenting
+          // wherever the screen has room (desktop, browser, phone in
+          // landscape). On a ~360 dp phone in portrait the screen is the limit,
+          // so rows stop indenting after 6 levels (see _ExpandedTreeRow).
+          // `_` for the builders' contexts: the callbacks below must keep using
+          // this screen's `context`.
+          child: LayoutBuilder(
+            builder: (_, constraints) => ValueListenableBuilder<int>(
+              valueListenable: deepestDepth,
+              builder: (_, depth, child) {
+                final wanted = _ExpandedTreeRow.rowWidthFor(depth) + 32;
+                return SizedBox(
+                  width: math.min(constraints.maxWidth,
+                      math.max(_dialogMinWidth, wanted)),
+                  child: child,
+                );
+              },
+              child: Material(
             color: Theme.of(context).colorScheme.surfaceContainerHigh,
             borderRadius: BorderRadius.circular(20),
             clipBehavior: Clip.antiAlias,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
+              constraints: const BoxConstraints(maxHeight: 520),
               // In-dialog ScaffoldMessenger so the subtask add/guard snackbars
               // render inside this dialog (foreground) rather than behind it on
               // the page. The transparent Scaffold anchors them; the dialog
@@ -285,9 +348,12 @@ class StarredScreenState extends State<StarredScreen>
                       Navigator.pop(dialogContext);
                       widget.onNavigateToTask?.call(t);
                     },
+                    deepestDepth: deepestDepth,
                   ),
                 ),
               ),
+            ),
+          ),
             ),
           ),
         ),
@@ -917,11 +983,16 @@ class _ExpandedStarredView extends StatefulWidget {
   final VoidCallback onUnstar;
   final void Function(Task task) onNavigateToTask;
 
+  /// Set to the depth of the deepest visible row each time the tree is
+  /// rebuilt. The dialog that hosts this view widens to fit that row.
+  final ValueNotifier<int> deepestDepth;
+
   const _ExpandedStarredView({
     required this.task,
     required this.accent,
     required this.onUnstar,
     required this.onNavigateToTask,
+    required this.deepestDepth,
   });
 
   @override
@@ -978,11 +1049,9 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     final provider = context.read<TaskProvider>();
     final nodes = await _fetchChildren(provider, widget.task.id!, 0);
     if (!mounted) return;
-    setState(() {
-      _childrenCache[widget.task.id!] = nodes;
-      _loading = false;
-    });
-    _rebuildFlatTree();
+    _childrenCache[widget.task.id!] = nodes;
+    _loading = false;
+    _rebuildFlatTree(); // calls setState
   }
 
   /// Fetches direct children with their own child counts (to know leaf vs not).
@@ -1010,21 +1079,18 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     // Reorder so blocked tasks appear after their blocker, matching All Tasks view
     active = reorderByDependencyChains(active, siblingDeps);
 
+    // CR-fix M-62: one query per child, awaited one after another, became
+    // one query for the whole level.
+    final childCounts = await provider.getActiveChildCounts(childIds);
     final nodes = <_TreeNode>[];
     for (var i = 0; i < active.length; i++) {
       final child = active[i];
-      final isLast = i == active.length - 1;
-      // Check if this child has its own children
-      final grandchildren = await provider.getChildren(child.id!);
-      final activeGcCount = grandchildren
-          .where((g) => g.completedAt == null && g.skippedAt == null)
-          .length;
       nodes.add(
         _TreeNode(
           task: child,
           depth: depth,
-          isLast: isLast,
-          childCount: activeGcCount,
+          isLast: i == active.length - 1,
+          childCount: childCounts[child.id] ?? 0,
         ),
       );
     }
@@ -1085,6 +1151,8 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     final nodes = <_TreeNode>[];
     _addVisibleNodes(nodes, widget.task.id!, 0);
     setState(() => _flatTree = nodes);
+    widget.deepestDepth.value =
+        nodes.fold(0, (deepest, node) => math.max(deepest, node.depth));
   }
 
   void _addVisibleNodes(List<_TreeNode> nodes, int parentId, int depth) {
@@ -1094,11 +1162,18 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
       final child = children[i];
       // Recompute isLast based on siblings at this level
       final isLast = i == children.length - 1;
+      // CR-fix I-59: childCount counts active children only, so a parent
+      // whose only child was done for good this session dropped to 0 on a
+      // reload and was drawn as a leaf, with a done circle and no chevron,
+      // while the done child was still listed under it. A node with rows in
+      // its cache entry stays a branch.
+      final cachedCount = _childrenCache[child.task.id!]?.length ?? 0;
       final node = _TreeNode(
         task: child.task,
         depth: depth,
         isLast: isLast,
-        childCount: child.childCount,
+        childCount:
+            child.childCount > 0 ? child.childCount : cachedCount,
       );
       nodes.add(node);
       if (_expanded.contains(child.task.id!)) {
@@ -1149,11 +1224,9 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     // For the "already exists" suggestion: tapping a match links the existing
     // task as a subtask of [parent] (multi-parent DAG) instead of creating a
     // duplicate.
-    final allTasks = await provider.getAllTasks();
-    final parentNames = await provider.getParentNamesMap();
+    final (allTasks, parentNames) = await provider.getAllTasksWithParentNames();
     if (!mounted) return;
     await AddTaskFlow(
-      parentId: parent.id,
       parentName: parent.name,
       parentIsPinned: parentIsPinned,
       showPinOption: showPin,
@@ -1162,37 +1235,18 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
       existingActionLabel: 'Add here',
       existingParentNames: parentNames,
       onUseExisting: (existing) async {
-        if (existing.id == parent.id) {
-          if (mounted) showInfoSnackBar(context, "That's this task");
-          return;
-        }
-        // Codex P2: if the match is ALREADY a subtask of [parent], linking is a
-        // no-op that addParentToTask still reports as ok — but the resulting
-        // Undo (removeParentFromTask) would delete the pre-existing edge and
-        // make the subtask vanish. Guard it: no link, no destructive undo.
-        final existingChildIds = await provider.getChildIds(parent.id!);
         if (!mounted) return;
-        if (existingChildIds.contains(existing.id)) {
-          showInfoSnackBar(context, '"${existing.name}" is already a subtask');
-          return;
-        }
-        final ok = await provider.addParentToTask(existing.id!, parent.id!);
-        if (!mounted) return;
-        if (ok) {
-          await _reloadAfterAdd(parent.id!);
-          if (mounted) {
-            showInfoSnackBar(
-              context,
-              'Added "${existing.name}" here',
-              onUndo: () async {
-                await provider.removeParentFromTask(existing.id!, parent.id!);
-                if (mounted) await _reloadAfterAdd(parent.id!);
-              },
-            );
-          }
-        } else {
-          showInfoSnackBar(context, "Couldn't add — it would create a loop");
-        }
+        await linkExistingHere(
+          context,
+          existing: existing,
+          parentId: parent.id!,
+          selfMessage: "That's this task",
+          alreadyLinkedMessage: '"${existing.name}" is already a subtask',
+          parentIsPinned: parentIsPinned,
+          onChanged: () async {
+            if (mounted) await _reloadAfterAdd(parent.id!);
+          },
+        );
       },
       addSingle:
           ({required name, url, required isInbox, required deferNotify}) =>
@@ -1237,12 +1291,16 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
   Future<void> _reloadAfterAdd(int addedUnderId) async {
     final provider = context.read<TaskProvider>();
     _expanded.add(addedUnderId);
-    for (final id in {widget.task.id!, ..._childrenCache.keys, ..._expanded}) {
-      // The depth passed here is discarded: _addVisibleNodes recomputes every
-      // node's depth from its position in the tree when it rebuilds.
-      final nodes = await _fetchChildren(provider, id, 0);
-      if (!mounted) return;
-      _childrenCache[id] = nodes;
+    // CR-fix M-62: the levels were fetched one after another; they are
+    // independent, so they now run in parallel.
+    final ids = {widget.task.id!, ..._childrenCache.keys, ..._expanded}.toList();
+    // The depth passed here is discarded: _addVisibleNodes recomputes every
+    // node's depth from its position in the tree when it rebuilds.
+    final levels =
+        await Future.wait(ids.map((id) => _fetchChildren(provider, id, 0)));
+    if (!mounted) return;
+    for (var i = 0; i < ids.length; i++) {
+      _childrenCache[ids[i]] = levels[i];
     }
     _rebuildFlatTree();
     // Refresh Today's 5 pin state: adding a subtask can drop the (now non-leaf)
@@ -1266,11 +1324,14 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
   Future<void> _onDoneTapped(Task task, DoneChoice? choice) async {
     final done = _doneOutcomes[task.id];
     if (done != null) {
-      await done.undo();
-      if (!mounted) return;
-      await _refreshBlockedIds();
-      if (!mounted) return;
+      // CR-fix M-63: the snackbars were cleared only after the undo finished,
+      // so the snackbar's Undo could reverse the action a second time
+      // meanwhile, and the blocked ids were refreshed twice (undo() already
+      // refreshes them through _onDoneChanged).
       ScaffoldMessenger.of(context).clearSnackBars();
+      final restored = await done.undo();
+      // False when the user cancelled the "Restore task" dialog.
+      if (!restored || !mounted) return;
       showInfoSnackBar(context, 'Restored "${task.name}"');
       return;
     }
@@ -1318,7 +1379,15 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     if (ids.isEmpty) return;
     final blockedInfo = await DatabaseHelper().getBlockedTaskInfo(ids);
     if (!mounted) return;
-    setState(() => _blockedIds = blockedInfo.keys.toSet());
+    // CR-fix M-64: this replaced the whole set. A level expanded while the
+    // query ran had added its blocked ids meanwhile, and those were dropped,
+    // so its blocked rows lost their dimming. Only the ids checked here are
+    // replaced now.
+    final checked = ids.toSet();
+    setState(() => _blockedIds = {
+          ..._blockedIds.where((id) => !checked.contains(id)),
+          ...blockedInfo.keys,
+        });
   }
 
   /// Keeps the struck-through / dimmed row in step when the action is reversed
@@ -1432,7 +1501,13 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                         ),
                       ),
                     )
-                  : ListView.builder(
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                    // The list pads 16 px each side, so a row gets the
+                    // list's width minus 32.
+                    final maxIndentLevels = _ExpandedTreeRow.indentLevelsFor(
+                        constraints.maxWidth - 32);
+                    return ListView.builder(
                       // Extra bottom padding so the floating "Add subtask"
                       // button never covers the last row when scrolled.
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
@@ -1466,9 +1541,11 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                               : () => _toggleExpand(node),
                           onDone: (choice) => _onDoneTapped(node.task, choice),
                           onAddSubtask: () => _addSubtask(node.task),
+                          maxIndentLevels: maxIndentLevels,
                         );
                       },
-                    ),
+                    );
+                  }),
             ),
           ],
         ),
@@ -1551,7 +1628,53 @@ class _ExpandedTreeRow extends StatelessWidget {
 
   final VoidCallback onAddSubtask;
 
+  /// Most ancestor columns this row draws; see [indentLevelsFor].
+  final int maxIndentLevels;
+
   static const double _indentWidth = 16.0;
+
+  /// Ancestor columns a row draws even when the name gets less than
+  /// [_nameRoom], as long as it keeps [_minNameRoom]. A ~360 dp phone fits
+  /// this many, so a phone indents 6 levels before rows line up.
+  static const int _minIndentLevels = 6;
+
+  /// Width a row keeps for the task name before its indent stops growing.
+  static const double _nameRoom = 160.0;
+
+  /// The least width the name keeps at any window size.
+  static const double _minNameRoom = 40.0;
+
+  /// A row's width outside its ancestor columns and its name: the connector,
+  /// the 4 px gap, the marker column, the name's padding, the child-count
+  /// badge (about 28 px) and the trailing "+".
+  static const double _fixedWidth =
+      _indentWidth + 4 + _markerWidth + 8 + 28 + _trailingWidth;
+
+  /// How many ancestor columns fit in a row [rowWidth] wide while the name
+  /// keeps [_nameRoom]. Narrower rows still get up to [_minIndentLevels], as
+  /// many as leave the name [_minNameRoom].
+  ///
+  /// Examples: a 388 px row (the 420 px dialog) fits 7. A 280 px row (a
+  /// 360 dp phone) fits none at 160 px but 8 at 40 px, so it gets 6. A 150 px
+  /// row (a 230 px window) fits none even at 40 px, so it gets 0.
+  //
+  // Bug fix (M-66 follow-up): the floor of 6 applied at every width, so a
+  // window narrower than a phone overflowed on deep rows. The floor now gives
+  // way once the name would get less than 40 px.
+  static int indentLevelsFor(double rowWidth) {
+    int fit(double nameRoom) =>
+        ((rowWidth - _fixedWidth - nameRoom) / _indentWidth).floor();
+    return math.max(
+      fit(_nameRoom),
+      math.min(_minIndentLevels, math.max(0, fit(_minNameRoom))),
+    );
+  }
+
+  /// The row width a node at [depth] needs to draw all of its ancestor
+  /// columns and still keep [_nameRoom] for its name.
+  static double rowWidthFor(int depth) =>
+      depth * _indentWidth + _fixedWidth + _nameRoom;
+
   static const double _rowHeight = 45.0;
 
   /// Width of the column holding either the expand chevron (branch rows) or the
@@ -1575,6 +1698,7 @@ class _ExpandedTreeRow extends StatelessWidget {
     this.onToggleExpand,
     required this.onDone,
     required this.onAddSubtask,
+    required this.maxIndentLevels,
   });
 
   /// The leaf row's done control: a chooser when the task is still open, a
@@ -1654,8 +1778,14 @@ class _ExpandedTreeRow extends StatelessWidget {
       height: _rowHeight,
       child: Row(
         children: [
-          // Vertical pass-through lines for each ancestor level
-          for (var d = 0; d < node.depth; d++)
+          // Vertical pass-through lines for each ancestor level, the deepest
+          // [maxIndentLevels] only.
+          // CR-fix M-66: every level added 16 px with no limit, so at phone
+          // width a row about 10 levels deep overflowed the dialog. Past the
+          // cap, rows stop moving right, and the outermost lines are not drawn.
+          for (var d = math.max(0, node.depth - maxIndentLevels);
+              d < node.depth;
+              d++)
             CustomPaint(
               size: const Size(_indentWidth, _rowHeight),
               painter: _VerticalLinePainter(
@@ -1702,14 +1832,20 @@ class _ExpandedTreeRow extends StatelessWidget {
           // "+" needs.
           Expanded(
             child: InkWell(
-              onTap: onToggleExpand ?? onNavigate,
+              // CR-fix I-57: a "Done for good!" leaf opened the archived task
+              // in All Tasks, where a subtask could be added under it and the
+              // row's undo was lost when the dialog closed. Its body does
+              // nothing now; the circle undoes it.
+              onTap: doneChoice == DoneChoice.forGood
+                  ? null
+                  : onToggleExpand ?? onNavigate,
               onLongPress: isLeaf ? null : onNavigate,
               borderRadius: BorderRadius.circular(8),
               child: Opacity(
                 // Dimmed once ticked off either way, matching how All Tasks
                 // renders a worked-on card (task_card.dart:204) — a handled row
                 // should recede whether it was done for today or for good. The
-                // strikethrough on the name is what still tells the two apart.
+                // circle (orange calendar or filled check) tells the two apart.
                 opacity: doneChoice == null ? 1.0 : 0.5,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(

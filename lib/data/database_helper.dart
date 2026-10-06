@@ -694,6 +694,49 @@ class DatabaseHelper {
     return _tasksFromMaps(maps);
   }
 
+  /// [getChildren] for every id in [parentIds] in one query, keyed by parent
+  /// id. Each list keeps [getChildren]'s order; a parent with no active child
+  /// is absent from the map.
+  Future<Map<int, List<Task>>> getChildrenOfParents(List<int> parentIds) async {
+    if (parentIds.isEmpty) return {};
+    final db = await database;
+    final placeholders = parentIds.map((_) => '?').join(',');
+    final maps = await db.rawQuery('''
+      SELECT t.*, tr.parent_id AS rel_parent_id FROM tasks t
+      INNER JOIN task_relationships tr ON t.id = tr.child_id
+      WHERE tr.parent_id IN ($placeholders)
+      AND t.completed_at IS NULL
+      AND t.skipped_at IS NULL
+      ORDER BY t.priority DESC, t.created_at ASC
+    ''', parentIds);
+    final result = <int, List<Task>>{};
+    for (final row in maps) {
+      result
+          .putIfAbsent(row['rel_parent_id'] as int, () => [])
+          .add(Task.fromMap(row));
+    }
+    return result;
+  }
+
+  /// Number of active (not completed, not skipped) children of each id in
+  /// [taskIds], in one query. An id with no active child is absent.
+  Future<Map<int, int>> getActiveChildCounts(List<int> taskIds) async {
+    if (taskIds.isEmpty) return {};
+    final db = await database;
+    final placeholders = taskIds.map((_) => '?').join(',');
+    final rows = await db.rawQuery('''
+      SELECT tr.parent_id, COUNT(*) AS n FROM task_relationships tr
+      INNER JOIN tasks t ON t.id = tr.child_id
+      WHERE tr.parent_id IN ($placeholders)
+      AND t.completed_at IS NULL
+      AND t.skipped_at IS NULL
+      GROUP BY tr.parent_id
+    ''', taskIds);
+    return {
+      for (final row in rows) row['parent_id'] as int: row['n'] as int,
+    };
+  }
+
   Future<List<Task>> getParents(int childId) async {
     final db = await database;
     final maps = await db.rawQuery('''
@@ -1382,11 +1425,6 @@ class DatabaseHelper {
     final db = await database;
     final result = await db.rawQuery('SELECT MAX(star_order) as max_order FROM tasks WHERE is_starred = 1');
     return (result.first['max_order'] as int?) ?? -1;
-  }
-
-  Future<void> updateStarOrder(int taskId, int starOrder) async {
-    final db = await database;
-    await db.update('tasks', {'star_order': starOrder, ..._dirtyFields()}, where: 'id = ?', whereArgs: [taskId]);
   }
 
   /// Batch-updates star_order for all given task IDs in a single transaction.
@@ -2121,17 +2159,17 @@ class DatabaseHelper {
       final dependedByIds = dependedByMaps.map((m) => m['task_id'] as int).toList();
 
       // Reparent: connect each child to each parent. Track which links are new.
+      // CR-fix M-32: each pair ran a SELECT and then an INSERT. An ignored
+      // insert returns 0, the same check addRelationship uses, so one
+      // statement per pair is enough.
       final addedLinks = <({int parentId, int childId})>[];
       for (final parentId in parentIds) {
         for (final childId in childIds) {
-          final existing = await txn.query('task_relationships',
-              where: 'parent_id = ? AND child_id = ?',
-              whereArgs: [parentId, childId]);
-          if (existing.isEmpty) {
-            await txn.insert('task_relationships', {
-              'parent_id': parentId,
-              'child_id': childId,
-            });
+          final inserted = await txn.insert('task_relationships', {
+            'parent_id': parentId,
+            'child_id': childId,
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+          if (inserted != 0) {
             addedLinks.add((parentId: parentId, childId: childId));
           }
         }
@@ -2713,58 +2751,6 @@ class DatabaseHelper {
     return _tasksFromMaps(maps);
   }
 
-  /// Returns all active leaf descendants of [taskId].
-  /// A leaf descendant is one with no active (non-completed, non-skipped) children.
-  Future<List<Task>> getLeafDescendants(int taskId) async {
-    final db = await database;
-    final maps = await db.rawQuery('''
-      WITH RECURSIVE descendants(id) AS (
-        SELECT child_id FROM task_relationships WHERE parent_id = ?
-        UNION
-        SELECT tr.child_id FROM task_relationships tr
-        INNER JOIN descendants d ON tr.parent_id = d.id
-      )
-      SELECT t.* FROM tasks t
-      INNER JOIN descendants d ON t.id = d.id
-      WHERE t.completed_at IS NULL
-      AND t.skipped_at IS NULL
-      AND t.id NOT IN (
-        SELECT DISTINCT tr2.parent_id FROM task_relationships tr2
-        INNER JOIN tasks c ON tr2.child_id = c.id
-        WHERE c.completed_at IS NULL AND c.skipped_at IS NULL
-      )
-    ''', [taskId]);
-    return _tasksFromMaps(maps);
-  }
-
-  /// Returns the set of task IDs (from the given list) that have at least one
-  /// descendant which is in progress (started_at IS NOT NULL AND completed_at IS NULL).
-  /// Uses a single query with a recursive CTE from all started tasks upward
-  /// to find which ancestors have started descendants.
-  Future<Set<int>> getTaskIdsWithStartedDescendants(List<int> taskIds) async {
-    if (taskIds.isEmpty) return {};
-    final db = await database;
-    // Walk upward from all started tasks to find their ancestors,
-    // then intersect with the requested taskIds.
-    final placeholders = taskIds.map((_) => '?').join(',');
-    final rows = await db.rawQuery('''
-      WITH RECURSIVE ancestors(id) AS (
-        -- Start from parents of all in-progress tasks
-        SELECT tr.parent_id FROM task_relationships tr
-        INNER JOIN tasks t ON tr.child_id = t.id
-        WHERE t.started_at IS NOT NULL AND t.completed_at IS NULL AND t.skipped_at IS NULL
-        UNION
-        -- Walk upward through parent relationships
-        SELECT tr.parent_id
-        FROM task_relationships tr
-        INNER JOIN ancestors a ON tr.child_id = a.id
-      )
-      SELECT DISTINCT id FROM ancestors
-      WHERE id IN ($placeholders)
-    ''', taskIds);
-    return rows.map((r) => r['id'] as int).toSet();
-  }
-
   // --- Today's 5 state methods ---
 
   /// SharedPreferences key holding the epoch-ms of the last LOCAL Today's 5
@@ -2847,18 +2833,6 @@ class DatabaseHelper {
       workedOnIds: workedOnIds,
       pinnedIds: pinnedIds,
     );
-  }
-
-  /// Returns just the task IDs for today's five (for indicator on task cards).
-  Future<Set<int>> getTodaysFiveTaskIds(String date) async {
-    final db = await database;
-    final rows = await db.query(
-      'todays_five_state',
-      columns: ['task_id'],
-      where: 'date = ?',
-      whereArgs: [date],
-    );
-    return rows.map((r) => r['task_id'] as int).toSet();
   }
 
   /// Returns task IDs and pinned IDs for today's five.

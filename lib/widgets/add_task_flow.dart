@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../data/database_helper.dart';
 import '../data/todays_five_pin_helper.dart';
 import '../models/task.dart';
 import '../utils/display_utils.dart';
@@ -30,7 +29,6 @@ class AddTaskFlow {
   const AddTaskFlow({
     required this.addSingle,
     required this.addBatch,
-    this.parentId,
     this.parentName,
     this.parentIsPinned = false,
     this.showPinOption = false,
@@ -60,11 +58,6 @@ class AddTaskFlow {
   /// Creates many tasks at once and returns their ids in input order.
   final Future<List<int>> Function(List<String> names, {required bool isInbox})
       addBatch;
-
-  /// Parent task id this flow adds under, when known. Parenting itself is
-  /// handled by the caller's [addSingle]/[addBatch] closures; this is kept as
-  /// context for callers and potential future use.
-  final int? parentId;
 
   /// Parent task name, used only in the pinned-warning text.
   final String? parentName;
@@ -239,33 +232,11 @@ class AddTaskFlow {
   /// Returns false if it couldn't be pinned (all slots full) so the caller can
   /// surface the message without holding a [BuildContext] across the await.
   Future<bool> _pinNewTask(int taskId) async {
-    final db = DatabaseHelper();
-    final today = todayDateKey();
-    // Bug fix: Today's 5 is empty-by-default each day (no saved row until the
-    // first pin), and the Add dialog shows the Pin toggle even when Today's 5 is
-    // empty. Before: `saved == null` returned `true` (reporting success) WITHOUT
-    // pinning, so "Pin for today" on a fresh day silently created the task
-    // unpinned. After: bootstrap an empty state and pin into it, matching the
-    // sibling paths (_togglePinInTodays5 / _pinTaskInTodaysFive).
-    final saved = await db.loadTodaysFiveState(today) ??
-        TodaysFiveData(
-          date: today,
-          taskIds: const [],
-          completedIds: const {},
-          workedOnIds: const {},
-          pinnedIds: const {},
-        );
-
-    final result = TodaysFivePinHelper.pinNewTask(saved, taskId);
+    // pinIntoTodaysFive treats a day with no saved row as an empty list, so
+    // "Pin for today" on a fresh day pins the task instead of reporting
+    // success without pinning.
+    final result = await pinIntoTodaysFive(taskId);
     if (result == null) return false;
-
-    await db.saveTodaysFiveState(
-      date: today,
-      taskIds: result.taskIds,
-      completedIds: saved.completedIds,
-      workedOnIds: saved.workedOnIds,
-      pinnedIds: result.pinnedIds,
-    );
     onTodaysFiveChanged?.call(result);
     return true;
   }

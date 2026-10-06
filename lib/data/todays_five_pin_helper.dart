@@ -1,3 +1,4 @@
+import '../utils/display_utils.dart' show todayDateKey;
 import 'database_helper.dart';
 
 /// Max number of pinned tasks allowed in Today's 5.
@@ -100,56 +101,6 @@ class TodaysFivePinHelper {
     return PinResult(taskIds: taskIds, pinnedIds: pinnedIds);
   }
 
-  // Pin auto-transfer was removed with the manual Today's 5 model: adding a
-  // subtask to a pinned task now just drops the (now non-leaf) parent instead
-  // of moving its pin to a child. transferPin is no longer wired into any flow
-  // — kept commented out (with its tests) rather than deleted so it's trivial
-  // to restore if transfer-on-subtask is ever reintroduced.
-  /*
-  /// Transfers a parent's Today's 5 slot to a newly-created child.
-  ///
-  /// When a pinned (or merely present) parent gains its first subtask it
-  /// becomes non-leaf, so its slot should follow the work down to the child:
-  /// the parent's entry is replaced by [childId] in-place, and if the parent
-  /// was pinned the pin moves to the child too.
-  ///
-  /// Returns a [PinResult] with the mutated state, or `null` if the parent
-  /// isn't in Today's 5 (nothing to transfer).
-  static PinResult? transferPin(TodaysFiveData saved, int parentId, int childId) {
-    final taskIds = List<int>.from(saved.taskIds);
-    final pinnedIds = Set<int>.from(saved.pinnedIds);
-
-    final index = taskIds.indexOf(parentId);
-    if (index < 0) return null;
-
-    taskIds[index] = childId;
-    if (pinnedIds.remove(parentId)) {
-      pinnedIds.add(childId);
-    }
-    return PinResult(taskIds: taskIds, pinnedIds: pinnedIds);
-  }
-  */
-
-  // Commented out (with its tests) like transferPin above: the manual model
-  // replaced the Today's 5 bottom-sheet pin/unpin tile with the Remove flow,
-  // removing all callers of togglePinInPlace. Kept rather than deleted so it's
-  // easy to restore if an in-place pin/unpin toggle is reintroduced.
-  /*
-  /// Simple pin/unpin for a task that is already in Today's 5.
-  ///
-  /// Returns the new pinnedIds set, or `null` if blocked (max pins).
-  static Set<int>? togglePinInPlace(Set<int> currentPins, int taskId) {
-    final pinnedIds = Set<int>.from(currentPins);
-    if (pinnedIds.contains(taskId)) {
-      pinnedIds.remove(taskId);
-      return pinnedIds;
-    }
-    if (pinnedIds.length >= maxPins) return null;
-    pinnedIds.add(taskId);
-    return pinnedIds;
-  }
-  */
-
   /// Removes unpinned undone tasks from the end of the list until the list
   /// has at most 5 items (or only pinned/completed tasks remain).
   ///
@@ -189,4 +140,36 @@ class TodaysFivePinHelper {
     }
     return null;
   }
+}
+
+/// Pins [taskId] into today's Today's 5 and saves the result.
+///
+/// Returns the saved [PinResult], or null when Today's 5 is full. A task that
+/// is already in the list is left alone and its current state is returned.
+/// Today's 5 has no saved row until the first pin of the day, so a missing row
+/// is treated as an empty list.
+Future<PinResult?> pinIntoTodaysFive(int taskId) async {
+  final db = DatabaseHelper();
+  final today = todayDateKey();
+  final saved = await db.loadTodaysFiveState(today) ??
+      TodaysFiveData(
+        date: today,
+        taskIds: const [],
+        completedIds: const {},
+        workedOnIds: const {},
+        pinnedIds: const {},
+      );
+  if (saved.taskIds.contains(taskId)) {
+    return PinResult(taskIds: saved.taskIds, pinnedIds: saved.pinnedIds);
+  }
+  final result = TodaysFivePinHelper.pinNewTask(saved, taskId);
+  if (result == null) return null;
+  await db.saveTodaysFiveState(
+    date: today,
+    taskIds: result.taskIds,
+    completedIds: saved.completedIds,
+    workedOnIds: saved.workedOnIds,
+    pinnedIds: result.pinnedIds,
+  );
+  return result;
 }
