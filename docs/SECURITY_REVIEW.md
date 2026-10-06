@@ -1434,3 +1434,71 @@ For sync_id fields, add a 50-char cap or UUID format validation.
 | **MEDIUM** | MED-8 / LOW-15: Version-control + test Firestore Security Rules (per-uid isolation) | Low–Medium | **Fixed in Round 7 fix** (rules version-controlled) — deploy + rules-unit-test still deferred to LOW-15 |
 | **LOW** | LOW-23: Remove notification-only permissions (`USE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`, `POST_NOTIFICATIONS`) + boot receiver while notifications are disabled | Trivial | **Fully resolved** — manifest edit + dropped unused notification packages from pubspec; built APK requests only `INTERNET` (verified on-device via `dumpsys`) |
 | **INFO** | INFO-12: Length-cap remaining remote strings (`deadline_type`, `schedule_type`, `*_sync_id`) | Trivial | **Fixed in Round 7 fix** |
+
+---
+
+## Round 8 (2026-10-06)
+
+**Scope:** Full review of `lib/`, `android/` and `pubspec.yaml`, with focus on what changed since the Round 7 fix (`111c962`, 2026-07-07): the sectioned Today tab with its Suggested section, the manual Today's 5, the Starred tab redesign, global task search (`task_search.dart`), "Done for good!" actions (`done_actions.dart`), "link existing task here" (`link_existing_here.dart`), the duplicate-task suggestion in the add dialog, and the Round 12 code-review fixes. `android/` and `pubspec.lock` have no changes in this period; `pubspec.yaml` only changed its version string (1.3.9 → 1.4.5).
+
+### Previous Round Verification
+
+- [x] **MED-8** (Firestore rules not version-controlled): verified. `firestore.rules` is at the repo root and limits every `users/{uid}/{document=**}` document to `request.auth.uid == uid`. A catch-all `match /{document=**}` denies everything else.
+- [x] **LOW-23** (notification-only Android permissions): verified. `AndroidManifest.xml` declares only `INTERNET`. No `<receiver>` is left, and the notification packages are absent from `pubspec.yaml`.
+- [x] **INFO-12** (remote string length caps): verified, and made stricter since Round 7. `_stringField` (`firestore_service.dart:885`) now returns `null` for an oversized value. In Round 7 it cut the value to `maxLength`, and a cut sync id pointed at no task (CR-fix M-54). Every caller checks for `null`, so the row is skipped or falls back to its default. `deadline_type` and `schedule_type` now go through a new `_enumField`, which accepts only `{'due_by', 'on'}` and `{'weekly'}` respectively. Those are the only values the app writes (`task.dart:152`, `task_schedule.dart:22`).
+- [ ] **LOW-15** (deploy rules with the Firebase CLI, add a rules unit test): still open. Nothing in the repo shows the deployed rules match `firestore.rules`.
+- **LOW-6 / LOW-7** (database and backup export not encrypted on disk): unchanged. Still accepted for the single-user, single-device threat model.
+
+### Findings
+
+#### INFO-13: Several direct dependencies are a major version behind, and the lockfile has not moved since Round 6 [FIXED in Round 8 fix — in-range part only]
+
+- **Severity:** Informational
+- **File:** `pubspec.yaml:45-48`, `pubspec.lock`
+- **Description:** `pubspec.lock` has not changed since March 2026. `flutter pub get` reports no security advisories for the locked versions. `flutter pub outdated` lists these behind their latest release:
+
+  | Package | Locked | Latest | Note |
+  |---------|--------|--------|------|
+  | `google_sign_in` | 6.3.0 | 7.2.0 | Major. 7.x replaced the sign-in API. Handles auth tokens. |
+  | `googleapis_auth` | 1.6.0 | 2.3.4 | Major. Runs the Linux browser OAuth flow. |
+  | `flutter_secure_storage` | 10.0.0 | 11.2.0 | 10.3.4 can be installed under the current `^10.0.0` constraint. Holds the refresh token. |
+  | `file_picker` | 10.3.10 | 13.1.0 | Major. Picks the backup file to import. |
+  | `url_launcher` | 6.3.2 | 6.3.3 | Patch, within the current constraint. |
+
+  No known CVE affects these versions. However, the three packages that handle credentials or the backup file are the ones furthest behind. A future advisory is likely to be fixed only on the newer major, which would turn a routine bump into a migration done in a hurry.
+- **Recommended Fix:** Run `flutter pub upgrade` to take the in-range updates (`flutter_secure_storage` 10.3.4, `url_launcher` 6.3.3, `shared_preferences`, `path_provider`, `uuid`). Plan the `google_sign_in` 7 and `googleapis_auth` 2 migration as its own branch, because it changes the sign-in code in `auth_service.dart`.
+- **Fix note (Round 8 fix):** `flutter pub upgrade` changed 56 locked packages, with no change to `pubspec.yaml`. Now locked: `flutter_secure_storage` 10.3.4, `url_launcher` 6.3.3, `shared_preferences` 2.5.6, `uuid` 4.6.0, `sqlite3` 3.5.2. `path_provider_android` 2.3.1 now calls Android through the `jni` package, which adds `jni` to `linux/flutter/generated_plugins.cmake`. `flutter analyze` is clean, all 1617 tests pass and `flutter build linux` succeeds. The major upgrades are not done: `google_sign_in` (6.3.0), `googleapis_auth` (1.6.0) and `file_picker` (10.3.10) stay where they were and remain open for their own branch.
+
+### Positive Security Findings
+
+1. **SQL stays parameterized.** The new queries `getChildrenOfParents` and `getActiveChildCounts` (`database_helper.dart:700-738`) build their `IN (...)` lists from the number of ids and bind the ids as arguments. The reparenting loop in `deleteTaskAndReparentChildren` now uses `insert` with `ConflictAlgorithm.ignore`, with no SELECT before it. No user or remote value is joined into SQL text anywhere in `lib/`.
+2. **Every text field has a length limit.** The add-task dialog name field has `maxLength: 500`, and its URL field and the leaf-detail URL editor use `UrlTextField` (2048). Global search goes through `TaskPickerDialog`, whose field also has a limit. Search and the duplicate-task suggestion match names in Dart on lowercased strings (the duplicate check in `add_task_dialog.dart:141` is an exact `==` match). They send no SQL `LIKE` and build no `RegExp` from user text, so no wildcard or regex can be injected.
+3. **Every URL is opened through one function.** `launchUrl` is called only in `launchSafeUrl` (`display_utils.dart:223`), which checks the http/https allowlist. A URL pulled from Firestore passes the same check before it opens.
+4. **Logging stays debug-only.** No raw `print` or `debugPrint` exists outside the `debugLog` helper. The one new `kDebugMode` block (`todays_five_screen.dart:1188`) shows the "simulate midnight rollover" button, which is compiled out of release builds.
+5. **Remote enum fields accept only known values.** `_enumField` maps any unknown `deadline_type` or `schedule_type` to its default before it reaches the local database.
+6. **The new sync counter carries no data.** `SyncService._dataChangeGeneration` is a local integer that tells the Today tab whether a pull changed data. It is never synced or persisted.
+7. **The new widgets add no attack surface.** `task_search.dart`, `done_actions.dart`, `link_existing_here.dart`, `inbox_toggle_chip.dart` and `tab_app_bar_title.dart` read and write only through `TaskProvider`/`DatabaseHelper`. They make no network calls, open no files and register no intents.
+8. **Backup import checks are unchanged.** `_validateBackup` still enforces the 100 MB cap, the required tables, the `PRAGMA user_version` range, and the rejection of triggers and views.
+9. **Android configuration is unchanged.** `allowBackup="false"`, only `INTERNET` is requested, no cleartext-traffic setting exists, and the one exported component is `MainActivity`, the launcher activity.
+
+### OWASP Mobile Top 10 Assessment (Round 8 Update)
+
+| Category | Status | Notes |
+|----------|--------|-------|
+| M1: Improper Credential Usage | **Pass** | Refresh token in secure storage |
+| M2: Inadequate Supply Chain Security | **Pass (watch)** | No advisories. The auth and storage packages are a major version behind (INFO-13). |
+| M3: Insecure Authentication/Authorization | **Minor** | Rules are version-controlled, but nothing confirms the deployed rules match them (LOW-15) |
+| M4: Insufficient Input/Output Validation | **Pass** | Every input has a limit. Remote strings are length-capped, and remote enum fields are checked against known values. |
+| M5: Insecure Communication | **Pass** | HTTPS only, 30 s timeout on every call |
+| M6: Inadequate Privacy Controls | **Pass** | No PII beyond task names and the Google profile |
+| M7: Insufficient Binary Protections | **Pass** | R8/ProGuard enabled |
+| M8: Security Misconfiguration | **Pass** | APK requests only `INTERNET` |
+| M9: Insecure Data Storage | **Pass** | Tokens in secure storage. Database sandboxed (LOW-6/7 accepted). |
+| M10: Insufficient Cryptography | N/A | App does not use custom cryptography |
+
+### Remaining Priority Action Items
+
+| Priority | Finding | Effort | Status |
+|----------|---------|--------|--------|
+| **LOW** | LOW-15: Deploy `firestore.rules` with the Firebase CLI and add a cross-uid rules unit test | Low–Medium | Open (deferred) |
+| **INFO** | INFO-13: Take in-range dependency updates; plan the `google_sign_in` 7 / `googleapis_auth` 2 migration | Low (bump) / Medium (migration) | Bump done (Round 8 fix); migration open |
