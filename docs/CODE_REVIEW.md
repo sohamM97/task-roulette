@@ -3943,3 +3943,80 @@ All 8 Important findings, 16 of the 18 Minor findings, R-13 to R-17, and the old
 | M-60 | Landscape overflow of the Today tab's bottom sections | Estimated, not observed. Check with `/debug-build` in landscape before changing the layout. |
 | M-70 | Starred "Done today" row looks untouched on reopen | Design question for the user. |
 | R-11, R-12 | Deferred refactors from Round 11 | Unchanged; see Round 11 Fix. |
+
+---
+
+## Round 12 Fix Verification (2026-10-06)
+
+Independent verify pass over `c912fe8` and `b715fe0`. Each fix was read against the current code and checked for root cause and regressions. `flutter analyze` reports no issues. `flutter test` passes: 1614 tests, 1 skipped.
+
+### Verified
+
+- **Important:** I-55 (the "Add here" and "Also show under" paths; see I-63 for the path left out), I-56, I-57, I-58, I-59, I-60, I-61. **I-54** fixes the loop itself, but introduced I-62.
+- **Minor:** M-32, M-34/M-62, M-53, M-54, M-55, M-56, M-57, M-58, M-59, M-61, M-63, M-64, M-65, M-66, M-68, M-69.
+- **Refactoring:** R-13, R-14, R-16. R-15 and R-17 are verified for what the Fix table claims; the leftovers are in M-73.
+- **M-67** is partly done; the leftovers are in M-72.
+
+Notes:
+- **I-54:** `dataChangeGeneration` goes up only when a pull changed data (`sync_service.dart:859`) or after `replaceLocalWithCloud` (`:368`). The skip check in `_persist` compares the ordered ids, the completed set, the worked-on set and the pinned set.
+- **I-59, design consequence:** the "Done for good!" undo drops links to archived parents without asking. Complete child B, then its parent A. Undo B first, and A→B is dropped. Undoing A afterwards does not bring B back under it. This matches the documented choice (an undo has no dialog step), but the user may not expect it.
+- **M-53:** if Today's 5 filled up between the link and the Undo, the re-pin is skipped without a message. This is a small edge case.
+- **M-62:** `getChildrenOfParents`/`getActiveChildCounts` are not split into chunks for SQLite's 999-parameter limit. The id lists are starred tasks or one parent's children, so this is not a realistic failure.
+
+### New Findings
+
+#### I-62. Pins made on the Today tab are no longer pushed to Firestore (regression from I-54)
+**File:** `lib/screens/todays_five_screen.dart:1111-1145` (`_pinTaskInTodaysFiveInner`), `:444-467` (`_persist`)
+
+`_pinTaskInTodaysFiveInner` saves through `db.saveTodaysFiveState` directly, then calls `_reloadPreservingUndoState()`. That reload ends in `_persist()`. Before I-54, `_persist()` always called `onTodaysFivePersisted()` → `schedulePush()`. Now the database already holds exactly the reloaded state, so `_persist` returns early and schedules no push. `onTodaysFivePersisted` has no other caller (`grep` over `lib/`).
+
+These paths make no other change that would push: accepting a suggestion ("+" on a pill or "Add to Today's 5"), "Pick existing task", and "Pin instead" in the create dialog. Creating a new task still pushes, because `addTask` fires `onMutation`. `flushPush` on going to the background does nothing, since no debounce timer is running. The deadline suppression that `unsuppressDeadlineAutoPin` clears is not pushed either.
+
+**Scenario:** signed in, open the Today tab and accept a suggestion. Nothing is pushed. Other devices do not see the pin until some unrelated change triggers a push.
+
+**Fix:** call `context.read<SyncService>().onTodaysFivePersisted()` right after the save in `_pinTaskInTodaysFiveInner`. Add a test that a pin from the Today tab schedules a push; the I-54 test checks only that an unchanged sync does not save again.
+
+#### I-63. "Link existing task" leaves an Inbox task in the Inbox (I-55 path left out)
+**Files:** `lib/screens/task_list_screen.dart:465-507` (`_linkExistingTask`), `lib/providers/task_provider.dart:680-691` (`linkChildToCurrent`)
+
+The "Link existing task" button shown when drilled into a task (`playlist_add`, `task_list_screen.dart:1452`) calls `linkChildToCurrent`, which only calls `addRelationship` and never clears `is_inbox`.
+
+**Scenario:** brain-dump "Buy milk" into the Inbox, drill into Groceries, tap "Link existing task" and pick "Buy milk". It is listed under Groceries and is still in the root Inbox.
+
+**Fix:** clear the flag when an Inbox task is linked under a parent. Doing it in the provider covers every linking path at once; the undo then needs to restore the flag, as `unfileTask` does.
+
+#### M-71. Today's 5: a card tap and the done snackbar's Undo can both run the same undo
+**File:** `lib/screens/todays_five_screen.dart:861-874` (`_handleUncomplete`)
+
+`_handleUncomplete` awaits `outcome.undo()` and `_removeIfNoLongerLeaf` before `_showRestoredSnackBar` clears the snackbars. Within that window, the done snackbar's Undo still calls the same `outcome.undo`. The database result is the same, because every write repeats the same values or inserts with ignore-on-conflict. The cost is a second `_unmarkDone` and a second refresh. **Fix:** clear the snackbars before running the undo, as M-63 did in Starred.
+
+#### M-72. M-67/R-16 docs and comment leftovers
+- `docs/UI_VIEWS.md:76` still calls "Add multiple" a "toggle". It is a `TextButton`.
+- `starred_screen.dart:1846-1847` still says the strikethrough tells "Done today" and "Done for good!" apart. `:1869-1870` and `UI_VIEWS.md` say the circle does.
+- `docs/TEST_COVERAGE.md:16` lists `isDeadlineOn`, and `:22` lists `togglePinInPlace`. Both were deleted in R-16.
+
+#### M-73. R-15/R-17 leftovers (performance only)
+- `triage_dialog.dart:172-173` still awaits `getAllTasks()` and then `getParentNamesMap()` one after the other. Use `getAllTasksWithParentNames()`.
+- `_refreshSuggestions` (`todays_five_screen.dart:551`) still fetches `getAllLeafTasks()` itself, where R-17 asked to pass the list in.
+
+### Merge Verdict
+
+**Do NOT merge — fix these first:**
+1. **I-62**: a sync regression that the fix round introduced. Pins from the Today tab no longer reach other devices.
+2. **I-63**: the same Inbox bug as I-55, on the "Link existing task" path. It is cheap to fix together with I-62.
+
+M-71 to M-73 are minor and can be done in the same pass or carried forward. M-60, M-70, R-11 and R-12 stay open as before.
+
+### Items Still Open From All Rounds
+
+| Item | Title | Round | Status |
+|------|-------|-------|--------|
+| I-62 | Today tab pins not pushed to Firestore | 12 verify | Open — blocks merge |
+| I-63 | "Link existing task" leaves an Inbox task in the Inbox | 12 verify | Open — blocks merge |
+| M-71 | Today's 5 card tap and snackbar Undo can both run | 12 verify | Open |
+| M-72 | Docs and comment leftovers from M-67/R-16 | 12 verify | Open |
+| M-73 | R-15/R-17 performance leftovers | 12 verify | Open |
+| M-60 | Today tab bottom sections may overflow in landscape | 12 | Deferred — check with `/debug-build` in landscape first |
+| M-70 | Starred "Done today" row looks untouched on reopen | 12 | Open — design question for the user |
+| R-11 | Dedup sync query/reconcile | 11 | Deferred (high-risk refactor; do as its own PR) |
+| R-12 | Dedup picker browse-tree | 11 | Deferred (pickers behave differently, low value) |
