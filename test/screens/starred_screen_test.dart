@@ -1558,6 +1558,80 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // [Regression — M-66 follow-up] The indent never dropped below 6 levels, so
+  // a window narrower than a phone (about 230 px) overflowed on deep rows.
+  testWidgets('a window narrower than a phone does not overflow deep rows',
+      (tester) async {
+    tester.view.physicalSize = const Size(230, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.runAsync(() async {
+      var parentId = await createStarredTask('Project');
+      for (var i = 1; i <= 9; i++) {
+        final id = await db.insertTask(Task(name: 'L$i'));
+        await db.addRelationship(parentId, id);
+        parentId = id;
+      }
+    });
+
+    await pumpAndLoad(tester, buildTestWidget());
+    await tester.tap(find.text('Project'));
+    await pumpAsync(tester);
+    final tree = find.byType(Scrollable).last;
+    for (var i = 1; i < 9; i++) {
+      final row = find.byWidgetPredicate(
+          (w) => w is Text && w.data == 'L$i' && w.style?.fontSize == 17);
+      await tester.scrollUntilVisible(row, 40, scrollable: tree);
+      await tester.tap(row);
+      await pumpAsync(tester, rounds: 5);
+    }
+    final deepest = find.byWidgetPredicate(
+        (w) => w is Text && w.data == 'L9' && w.style?.fontSize == 17);
+    await tester.scrollUntilVisible(deepest, 40, scrollable: tree);
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+  });
+
+  // [Mechanism — M-66 follow-up, user's choice] On a wide window the dialog
+  // grows to fit the deepest expanded row, so every level keeps indenting.
+  // At phone width the indent still stops after 6 levels (test above).
+  testWidgets('on a wide window, deep rows keep indenting', (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.runAsync(() async {
+      var parentId = await createStarredTask('Project');
+      for (var i = 1; i <= 12; i++) {
+        final id = await db.insertTask(Task(name: 'L$i'));
+        await db.addRelationship(parentId, id);
+        parentId = id;
+      }
+    });
+
+    await pumpAndLoad(tester, buildTestWidget());
+    await tester.tap(find.text('Project'));
+    await pumpAsync(tester);
+    final tree = find.byType(Scrollable).last;
+    Finder row(int i) => find.byWidgetPredicate(
+        (w) => w is Text && w.data == 'L$i' && w.style?.fontSize == 17);
+    for (var i = 1; i < 12; i++) {
+      await tester.scrollUntilVisible(row(i), 40, scrollable: tree);
+      await tester.tap(row(i));
+      await pumpAsync(tester, rounds: 5);
+    }
+    await tester.scrollUntilVisible(row(12), 40, scrollable: tree);
+    await tester.pump();
+    final deepX = tester.getTopLeft(row(12)).dx;
+    await tester.scrollUntilVisible(row(9), -40, scrollable: tree);
+    await tester.pump();
+    final shallowerX = tester.getTopLeft(row(9)).dx;
+
+    expect(deepX - shallowerX, 3 * 16.0,
+        reason: 'each level past 6 still indents 16 px on a wide window');
+    expect(tester.takeException(), isNull);
+  });
+
   group('StarredScreen - add a subtask at any level', () {
     // [Regression] Codex P2. _reloadAfterAdd refreshed only the expanded levels.
     // In a multi-parent DAG the same task sits under two branches; if the second

@@ -266,19 +266,45 @@ class StarredScreenState extends State<StarredScreen>
     });
   }
 
+  /// The expanded dialog's width when its tree is shallow, and its width on any
+  /// screen narrower than this plus the 24 px margins.
+  static const double _dialogMinWidth = 420;
+
   void _showExpandedView(Task task) {
     final accent = _accentColor(context, task.id ?? 0);
+    // The view reports its deepest visible row here. It needs no dispose: it
+    // holds no resources, and its only listener is removed with the dialog.
+    final deepestDepth = ValueNotifier<int>(0);
     showDialog(
       context: context,
       builder: (dialogContext) => Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
-          child: Material(
+          // The dialog is 420 px wide until the deepest expanded row needs
+          // more, then widens to fit it, up to the screen width. A shallow tree
+          // looks the same on every screen; a deep one keeps indenting
+          // wherever the screen has room (desktop, browser, phone in
+          // landscape). On a ~360 dp phone in portrait the screen is the limit,
+          // so rows stop indenting after 6 levels (see _ExpandedTreeRow).
+          // `_` for the builders' contexts: the callbacks below must keep using
+          // this screen's `context`.
+          child: LayoutBuilder(
+            builder: (_, constraints) => ValueListenableBuilder<int>(
+              valueListenable: deepestDepth,
+              builder: (_, depth, child) {
+                final wanted = _ExpandedTreeRow.rowWidthFor(depth) + 32;
+                return SizedBox(
+                  width: math.min(constraints.maxWidth,
+                      math.max(_dialogMinWidth, wanted)),
+                  child: child,
+                );
+              },
+              child: Material(
             color: Theme.of(context).colorScheme.surfaceContainerHigh,
             borderRadius: BorderRadius.circular(20),
             clipBehavior: Clip.antiAlias,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
+              constraints: const BoxConstraints(maxHeight: 520),
               // In-dialog ScaffoldMessenger so the subtask add/guard snackbars
               // render inside this dialog (foreground) rather than behind it on
               // the page. The transparent Scaffold anchors them; the dialog
@@ -322,9 +348,12 @@ class StarredScreenState extends State<StarredScreen>
                       Navigator.pop(dialogContext);
                       widget.onNavigateToTask?.call(t);
                     },
+                    deepestDepth: deepestDepth,
                   ),
                 ),
               ),
+            ),
+          ),
             ),
           ),
         ),
@@ -954,11 +983,16 @@ class _ExpandedStarredView extends StatefulWidget {
   final VoidCallback onUnstar;
   final void Function(Task task) onNavigateToTask;
 
+  /// Set to the depth of the deepest visible row each time the tree is
+  /// rebuilt. The dialog that hosts this view widens to fit that row.
+  final ValueNotifier<int> deepestDepth;
+
   const _ExpandedStarredView({
     required this.task,
     required this.accent,
     required this.onUnstar,
     required this.onNavigateToTask,
+    required this.deepestDepth,
   });
 
   @override
@@ -1117,6 +1151,8 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
     final nodes = <_TreeNode>[];
     _addVisibleNodes(nodes, widget.task.id!, 0);
     setState(() => _flatTree = nodes);
+    widget.deepestDepth.value =
+        nodes.fold(0, (deepest, node) => math.max(deepest, node.depth));
   }
 
   void _addVisibleNodes(List<_TreeNode> nodes, int parentId, int depth) {
@@ -1464,7 +1500,13 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                         ),
                       ),
                     )
-                  : ListView.builder(
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                    // The list pads 16 px each side, so a row gets the
+                    // list's width minus 32.
+                    final maxIndentLevels = _ExpandedTreeRow.indentLevelsFor(
+                        constraints.maxWidth - 32);
+                    return ListView.builder(
                       // Extra bottom padding so the floating "Add subtask"
                       // button never covers the last row when scrolled.
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
@@ -1498,9 +1540,11 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
                               : () => _toggleExpand(node),
                           onDone: (choice) => _onDoneTapped(node.task, choice),
                           onAddSubtask: () => _addSubtask(node.task),
+                          maxIndentLevels: maxIndentLevels,
                         );
                       },
-                    ),
+                    );
+                  }),
             ),
           ],
         ),
@@ -1583,11 +1627,53 @@ class _ExpandedTreeRow extends StatelessWidget {
 
   final VoidCallback onAddSubtask;
 
+  /// Most ancestor columns this row draws; see [indentLevelsFor].
+  final int maxIndentLevels;
+
   static const double _indentWidth = 16.0;
 
-  /// Most ancestor columns a row draws, so deep rows still fit a phone-width
-  /// dialog.
-  static const int _maxIndentLevels = 6;
+  /// Ancestor columns a row draws even when the name gets less than
+  /// [_nameRoom], as long as it keeps [_minNameRoom]. A ~360 dp phone fits
+  /// this many, so a phone indents 6 levels before rows line up.
+  static const int _minIndentLevels = 6;
+
+  /// Width a row keeps for the task name before its indent stops growing.
+  static const double _nameRoom = 160.0;
+
+  /// The least width the name keeps at any window size.
+  static const double _minNameRoom = 40.0;
+
+  /// A row's width outside its ancestor columns and its name: the connector,
+  /// the 4 px gap, the marker column, the name's padding, the child-count
+  /// badge (about 28 px) and the trailing "+".
+  static const double _fixedWidth =
+      _indentWidth + 4 + _markerWidth + 8 + 28 + _trailingWidth;
+
+  /// How many ancestor columns fit in a row [rowWidth] wide while the name
+  /// keeps [_nameRoom]. Narrower rows still get up to [_minIndentLevels], as
+  /// many as leave the name [_minNameRoom].
+  ///
+  /// Examples: a 388 px row (the 420 px dialog) fits 7. A 280 px row (a
+  /// 360 dp phone) fits none at 160 px but 8 at 40 px, so it gets 6. A 150 px
+  /// row (a 230 px window) fits none even at 40 px, so it gets 0.
+  //
+  // Bug fix (M-66 follow-up): the floor of 6 applied at every width, so a
+  // window narrower than a phone overflowed on deep rows. The floor now gives
+  // way once the name would get less than 40 px.
+  static int indentLevelsFor(double rowWidth) {
+    int fit(double nameRoom) =>
+        ((rowWidth - _fixedWidth - nameRoom) / _indentWidth).floor();
+    return math.max(
+      fit(_nameRoom),
+      math.min(_minIndentLevels, math.max(0, fit(_minNameRoom))),
+    );
+  }
+
+  /// The row width a node at [depth] needs to draw all of its ancestor
+  /// columns and still keep [_nameRoom] for its name.
+  static double rowWidthFor(int depth) =>
+      depth * _indentWidth + _fixedWidth + _nameRoom;
+
   static const double _rowHeight = 45.0;
 
   /// Width of the column holding either the expand chevron (branch rows) or the
@@ -1611,6 +1697,7 @@ class _ExpandedTreeRow extends StatelessWidget {
     this.onToggleExpand,
     required this.onDone,
     required this.onAddSubtask,
+    required this.maxIndentLevels,
   });
 
   /// The leaf row's done control: a chooser when the task is still open, a
@@ -1691,11 +1778,11 @@ class _ExpandedTreeRow extends StatelessWidget {
       child: Row(
         children: [
           // Vertical pass-through lines for each ancestor level, the deepest
-          // [_maxIndentLevels] only.
+          // [maxIndentLevels] only.
           // CR-fix M-66: every level added 16 px with no limit, so at phone
           // width a row about 10 levels deep overflowed the dialog. Past the
           // cap, rows stop moving right, and the outermost lines are not drawn.
-          for (var d = math.max(0, node.depth - _maxIndentLevels);
+          for (var d = math.max(0, node.depth - maxIndentLevels);
               d < node.depth;
               d++)
             CustomPaint(

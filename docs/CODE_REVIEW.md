@@ -3926,7 +3926,7 @@ All 8 Important findings, 16 of the 18 Minor findings, R-13 to R-17, and the old
 | M-63 | Circle undo double-refresh | The snackbars are cleared before the undo runs, and the second `_refreshBlockedIds` call is gone. |
 | M-64 | `_refreshBlockedIds` replaces the whole set | It now replaces only the ids it checked. |
 | M-65 | Starred drops changes during a load | A change during a load queues one more load, and `_loading` is reset in a `finally`. |
-| M-66 | Deep rows overflow | At most 6 ancestor columns are drawn. A widget test builds 15 levels at 360 px. |
+| M-66 | Deep rows overflow | **Changed after manual testing (user's choice):** the dialog is 420 px wide until the deepest expanded row needs more, then widens to fit, up to the screen width. Rows keep 160 px for the name and draw as many ancestor columns as fit, never fewer than 6 unless the name would get under 40 px. Widget tests cover 15 levels at 360 px, 12 levels at 1400 px, and 9 levels at 230 px. |
 | M-67 | `UI_VIEWS.md` drift | All listed points fixed. The behaviour changes from this round are documented too. |
 | M-68 | CLAUDE.md drift | Tab order, no pin transfer, and the weighted-selection rule now names `_refreshSuggestions`. |
 | M-69 | Stale comments | All listed comments fixed. |
