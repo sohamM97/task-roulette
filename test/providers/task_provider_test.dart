@@ -1744,6 +1744,21 @@ void main() {
       expect(provider.tasks.any((t) => t.id == childId), isTrue);
     });
 
+    // [Regression — CR I-63] "Link existing task" linked an Inbox task under
+    // the open task but left its Inbox flag set, so it showed in both places.
+    test('linkChildToCurrent files an Inbox task out of the Inbox', () async {
+      final parentId = await db.insertTask(Task(name: 'Groceries'));
+      final inboxId =
+          await db.insertTask(Task(name: 'Buy milk', isInbox: true));
+
+      await provider.loadRootTasks();
+      await navInto(provider, parentId);
+      expect(await provider.linkChildToCurrent(inboxId), isTrue);
+
+      expect((await db.getTaskById(inboxId))!.isInbox, isFalse);
+      expect(await db.getInboxCount(), 0);
+    });
+
     test('linkChildToCurrent prevents cycle', () async {
       final a = await db.insertTask(Task(name: 'A'));
       final b = await db.insertTask(Task(name: 'B'));

@@ -3910,7 +3910,7 @@ All 8 Important findings, 16 of the 18 Minor findings, R-13 to R-17, and the old
 | I-56 | Flare at root does nothing on an Inbox pick | `pickRandom` skips Inbox tasks at root. **User's choice:** `RandomResultDialog`, `spinIcon` and their tests are deleted, and so is the "Lucky Pick" line in `UI_VIEWS.md`. |
 | I-57 | Done-for-good Starred row still opens | **User's choice:** tapping the row body does nothing while the row is done for good. The circle still undoes it. |
 | I-58 | Second "Done today" works from the cached task | `markTaskDoneToday` reads the task from the database before recording the undo values (new `TaskProvider.getTaskById`). |
-| I-59 | Parent turns into a leaf; child left under an archived parent | `_addVisibleNodes` keeps a node a branch while its cache entry has rows. The "Done for good!" undo in `done_actions.dart` drops links to archived parents, as the Completed screen does, but without a confirm dialog, since an undo has no dialog step. |
+| I-59 | Parent turns into a leaf; child left under an archived parent | `_addVisibleNodes` keeps a node a branch while its cache entry has rows. The "Done for good!" undo in `done_actions.dart` drops links to archived parents, as the Completed screen does. **Changed after verify (user's choice):** it now asks first with the Archive screen's "Restore task" dialog (shared `confirmRestoreUnderArchivedParents`); Cancel leaves the task done. |
 | I-60 | `_reloadFromDb` discards undo state | Fixed through R-13. The pin and sync paths call `_reloadPreservingUndoState`, which now also keeps `_explicitlyUncompletedIds`. |
 | I-61 | Card restore drops dependency links | Fixed through R-13: tapping a done card calls the task's `DoneOutcome.undo()`. |
 | M-32 | N+1 in `deleteTaskAndReparentChildren` | One `INSERT … OR IGNORE` per pair; a return value of 0 means the link already existed. |
@@ -3965,7 +3965,7 @@ Notes:
 
 ### New Findings
 
-#### I-62. Pins made on the Today tab are no longer pushed to Firestore (regression from I-54)
+#### I-62. Pins made on the Today tab are no longer pushed to Firestore (regression from I-54) [FIXED in Round 12 verify fix]
 **File:** `lib/screens/todays_five_screen.dart:1111-1145` (`_pinTaskInTodaysFiveInner`), `:444-467` (`_persist`)
 
 `_pinTaskInTodaysFiveInner` saves through `db.saveTodaysFiveState` directly, then calls `_reloadPreservingUndoState()`. That reload ends in `_persist()`. Before I-54, `_persist()` always called `onTodaysFivePersisted()` → `schedulePush()`. Now the database already holds exactly the reloaded state, so `_persist` returns early and schedules no push. `onTodaysFivePersisted` has no other caller (`grep` over `lib/`).
@@ -3976,7 +3976,7 @@ These paths make no other change that would push: accepting a suggestion ("+" on
 
 **Fix:** call `context.read<SyncService>().onTodaysFivePersisted()` right after the save in `_pinTaskInTodaysFiveInner`. Add a test that a pin from the Today tab schedules a push; the I-54 test checks only that an unchanged sync does not save again.
 
-#### I-63. "Link existing task" leaves an Inbox task in the Inbox (I-55 path left out)
+#### I-63. "Link existing task" leaves an Inbox task in the Inbox (I-55 path left out) [FIXED in Round 12 verify fix]
 **Files:** `lib/screens/task_list_screen.dart:465-507` (`_linkExistingTask`), `lib/providers/task_provider.dart:680-691` (`linkChildToCurrent`)
 
 The "Link existing task" button shown when drilled into a task (`playlist_add`, `task_list_screen.dart:1452`) calls `linkChildToCurrent`, which only calls `addRelationship` and never clears `is_inbox`.
@@ -3985,17 +3985,17 @@ The "Link existing task" button shown when drilled into a task (`playlist_add`, 
 
 **Fix:** clear the flag when an Inbox task is linked under a parent. Doing it in the provider covers every linking path at once; the undo then needs to restore the flag, as `unfileTask` does.
 
-#### M-71. Today's 5: a card tap and the done snackbar's Undo can both run the same undo
+#### M-71. Today's 5: a card tap and the done snackbar's Undo can both run the same undo [FIXED in Round 12 verify fix]
 **File:** `lib/screens/todays_five_screen.dart:861-874` (`_handleUncomplete`)
 
 `_handleUncomplete` awaits `outcome.undo()` and `_removeIfNoLongerLeaf` before `_showRestoredSnackBar` clears the snackbars. Within that window, the done snackbar's Undo still calls the same `outcome.undo`. The database result is the same, because every write repeats the same values or inserts with ignore-on-conflict. The cost is a second `_unmarkDone` and a second refresh. **Fix:** clear the snackbars before running the undo, as M-63 did in Starred.
 
-#### M-72. M-67/R-16 docs and comment leftovers
+#### M-72. M-67/R-16 docs and comment leftovers [FIXED in Round 12 verify fix]
 - `docs/UI_VIEWS.md:76` still calls "Add multiple" a "toggle". It is a `TextButton`.
 - `starred_screen.dart:1846-1847` still says the strikethrough tells "Done today" and "Done for good!" apart. `:1869-1870` and `UI_VIEWS.md` say the circle does.
 - `docs/TEST_COVERAGE.md:16` lists `isDeadlineOn`, and `:22` lists `togglePinInPlace`. Both were deleted in R-16.
 
-#### M-73. R-15/R-17 leftovers (performance only)
+#### M-73. R-15/R-17 leftovers (performance only) [FIXED in Round 12 verify fix]
 - `triage_dialog.dart:172-173` still awaits `getAllTasks()` and then `getParentNamesMap()` one after the other. Use `getAllTasksWithParentNames()`.
 - `_refreshSuggestions` (`todays_five_screen.dart:551`) still fetches `getAllLeafTasks()` itself, where R-17 asked to pass the list in.
 
@@ -4011,12 +4011,27 @@ M-71 to M-73 are minor and can be done in the same pass or carried forward. M-60
 
 | Item | Title | Round | Status |
 |------|-------|-------|--------|
-| I-62 | Today tab pins not pushed to Firestore | 12 verify | Open — blocks merge |
-| I-63 | "Link existing task" leaves an Inbox task in the Inbox | 12 verify | Open — blocks merge |
-| M-71 | Today's 5 card tap and snackbar Undo can both run | 12 verify | Open |
-| M-72 | Docs and comment leftovers from M-67/R-16 | 12 verify | Open |
-| M-73 | R-15/R-17 performance leftovers | 12 verify | Open |
 | M-60 | Today tab bottom sections may overflow in landscape | 12 | Deferred — check with `/debug-build` in landscape first |
 | M-70 | Starred "Done today" row looks untouched on reopen | 12 | Open — design question for the user |
 | R-11 | Dedup sync query/reconcile | 11 | Deferred (high-risk refactor; do as its own PR) |
 | R-12 | Dedup picker browse-tree | 11 | Deferred (pickers behave differently, low value) |
+
+I-62, I-63 and M-71 to M-73 were fixed in the Round 12 Verify Fix below.
+
+---
+
+## Round 12 Verify Fix (2026-10-06)
+
+Both merge blockers and all three Minor verify findings are fixed. Each bug fix has a regression test that was run and seen to fail first. `flutter analyze` reports no issues, the full `flutter test` run passes (1616 tests, 1 skipped), and `flutter build linux` succeeds.
+
+| ID | Title | Notes |
+|----|-------|-------|
+| I-62 | Today tab pins not pushed | `_pinTaskInTodaysFiveInner` calls `onTodaysFivePersisted()` right after its save. Widget test: accepting a suggestion schedules a push. |
+| I-63 | "Link existing task" leaves the Inbox flag | `linkChildToCurrent` clears the flag when the linked task is in the Inbox. The flow has no Undo, so nothing needs restoring. Provider test added. |
+| M-71 | Card tap and snackbar Undo both run | `_handleUncomplete` clears the snackbars before running the undo. |
+| M-72 | Docs and comment leftovers | `UI_VIEWS.md` calls "Add multiple" a button; the Starred comment names the circle; `TEST_COVERAGE.md` drops `isDeadlineOn`, `togglePinInPlace` and `transferPin`. The commented-out "pin transfer" DB test is deleted too. |
+| M-73 | Performance leftovers | The triage dialog reads tasks and parent names in parallel when the names aren't cached. `_refreshSuggestions` takes the leaf list from the two refresh paths that already read it. |
+
+**I-59 verify note, changed (user's choice):** the "Done for good!" undo no longer drops links to archived parents without asking. It shows the Archive screen's "Restore task" dialog, now the shared `confirmRestoreUnderArchivedParents` in `display_utils.dart`. Restore drops the links; Cancel leaves the task done. `DoneOutcome.undo` returns false on Cancel, so the Starred and Today's 5 callers show no "Restored" snackbar. Widget tests cover Restore and Cancel. A Today's 5 card for a task completed elsewhere (no `DoneOutcome`) still restores without asking, as on `main`.
+
+**Not changed:** the verify notes on M-53 (re-pin skipped without a message when Today's 5 filled up meanwhile) and M-62 (no chunking for SQLite's 999-parameter limit). These are minor or not realistic.

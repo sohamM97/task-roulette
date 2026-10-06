@@ -687,6 +687,11 @@ class TaskProvider extends ChangeNotifier {
     if (wouldCycle) return false;
 
     await _db.addRelationship(parentId, childId);
+    // CR-fix I-63: an Inbox task linked here ("Link existing task") kept its
+    // Inbox flag, so it showed under this task and in the root Inbox. Linking
+    // files it, as fileTask does for the other paths.
+    final child = await _db.getTaskById(childId);
+    if (child != null && child.isInbox) await _db.clearInboxFlag(childId);
     await _refreshAfterMutation();
     return true;
   }

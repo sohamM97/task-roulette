@@ -37,6 +37,16 @@ Future<void> seedTodaysFive(
   );
 }
 
+/// Counts scheduled pushes and never starts a debounce timer.
+class _PushCountingSyncService extends SyncService {
+  _PushCountingSyncService(super.authProvider);
+
+  int pushes = 0;
+
+  @override
+  void schedulePush() => pushes++;
+}
+
 void main() {
   late DatabaseHelper db;
   late TaskProvider provider;
@@ -2664,6 +2674,39 @@ void main() {
   });
 
   group('Round 12 review fixes', () {
+    // [Regression — CR I-62] The I-54 save-skip also skipped the push after a
+    // pin: the pin saved first, the reload that followed found nothing to
+    // save, and no push was scheduled, so other devices never saw the pin.
+    testWidgets('accepting a suggestion schedules a push', (tester) async {
+      await tester.runAsync(() async {
+        await db.insertTask(Task(name: 'Candidate task'));
+      });
+      final auth = AuthProvider();
+      final sync = _PushCountingSyncService(auth);
+      await pumpAndLoad(
+        tester,
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider(create: (_) => ThemeProvider()),
+            ChangeNotifierProvider.value(value: auth),
+            Provider<SyncService>.value(value: sync),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: TodaysFiveScreen()),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Show suggestions'));
+      await pumpAsync(tester);
+      sync.pushes = 0;
+
+      await tester.tap(find.byIcon(Icons.add_circle));
+      await pumpAsync(tester);
+
+      expect(sync.pushes, greaterThan(0));
+    });
+
     // [Regression — CR I-54] A sync that changed nothing set the status to
     // `synced`, the screen reloaded and re-saved Today's 5, and the save
     // scheduled another push: a push about every 5 s, each one re-stamping the

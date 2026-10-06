@@ -274,7 +274,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     if (!mounted) return;
     _todaysTasks = tasks;
     await _loadOtherDoneToday();
-    await _refreshSuggestions();
+    await _refreshSuggestions(leaves: allLeaves);
     await _loadTaskPaths();
     if (!mounted) return;
     setState(() {
@@ -409,7 +409,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     if (!mounted) return;
     _todaysTasks = refreshed;
     await _loadOtherDoneToday();
-    await _refreshSuggestions();
+    await _refreshSuggestions(leaves: allLeaves);
     await _loadTaskPaths();
     if (!mounted) return;
     setState(() {});
@@ -534,7 +534,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
   // result afterwards, so the next expand showed those old picks instead of a
   // fresh set. A pick now applies its result only if it is the latest request
   // and the section is still expanded.
-  Future<void> _refreshSuggestions() async {
+  //
+  // [leaves] is every leaf task, for a caller that has just read them; without
+  // it the list is read here. CR-fix M-73: both refresh paths read the list
+  // twice.
+  Future<void> _refreshSuggestions({List<Task>? leaves}) async {
     final request = ++_suggestionRequest;
     if (!_suggestionsExpanded || _todaysTasks.length >= maxPins) {
       if (_suggestions.isNotEmpty) _suggestions = [];
@@ -548,7 +552,7 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
 
     final inTodaysFive = _todaysTasks.map((t) => t.id).toSet();
     final doneToday = _otherDoneToday.map((t) => t.id).toSet();
-    final allLeaves = await provider.getAllLeafTasks();
+    final allLeaves = leaves ?? await provider.getAllLeafTasks();
     final leafIds = allLeaves.map((t) => t.id!).toList();
     final leafIdSet = leafIds.toSet();
     final blockedIds = await provider.getBlockedChildIds(leafIds);
@@ -864,9 +868,14 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
             ? task.isCompleted
             : !task.isCompleted && task.isWorkedOnToday);
     if (outcomeMatches) {
-      // undo() calls _unmarkDone through the onChanged callback.
-      await outcome.undo();
-      if (!mounted) return;
+      // CR-fix M-71: the snackbars were cleared only after the undo finished,
+      // so the done snackbar's Undo could run the same undo a second time
+      // meanwhile.
+      ScaffoldMessenger.of(context).clearSnackBars();
+      // undo() calls _unmarkDone through the onChanged callback. It returns
+      // false when the user cancelled the "Restore task" dialog.
+      final restored = await outcome.undo();
+      if (!restored || !mounted) return;
       await _removeIfNoLongerLeaf(task);
       if (!mounted) return;
       _showRestoredSnackBar(task);
@@ -1136,6 +1145,11 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
     // removed-then-re-added deadline-today task is treated as an intentional
     // member again (and a later removal can re-suppress it).
     await db.unsuppressDeadlineAutoPin(today, taskId);
+    // CR-fix I-62: the reload below ends in _persist(), which skips both the
+    // save and the push when the database already holds the reloaded state
+    // (I-54). This pin had saved that state itself, so no push was scheduled
+    // and other devices never saw the pin. Schedule it here.
+    if (mounted) context.read<SyncService>().onTodaysFivePersisted();
     // Reload from DB so the new task's snapshot, paths, and deadline/schedule
     // metadata are populated for the card.
     // CR-fix I-60: this called _reloadFromDb, which threw away the undo data

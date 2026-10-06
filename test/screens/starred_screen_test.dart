@@ -2718,8 +2718,10 @@ void main() {
     // [Regression — CR I-59] Undoing "Done for good!" on a task whose parent
     // was archived meanwhile left it active under the archived parent, where
     // no screen shows it.
-    testWidgets('undoing "Done for good!" under an archived parent drops '
-        'that link', (tester) async {
+    /// Marks "Only child" (under "Parent") done for good in the dialog, then
+    /// completes "Parent" outside the dialog, and taps the child's undo.
+    /// Returns (parentId, childId).
+    Future<(int, int)> undoUnderArchivedParent(WidgetTester tester) async {
       late int parentId, childId;
       await tester.runAsync(() async {
         final starredId = await createStarredTask('Project');
@@ -2744,9 +2746,42 @@ void main() {
       await tester.runAsync(() => db.completeTask(parentId));
       await tester.tap(find.byTooltip('Undo done'));
       await pumpAsync(tester);
+      await tester.pump(const Duration(milliseconds: 300));
+      return (parentId, childId);
+    }
 
+    // [Regression — CR I-59, user's choice] Undoing "Done for good!" on a task
+    // whose parent was completed meanwhile asks first, as the Archive screen's
+    // restore does. Restore drops the link to the archived parent.
+    testWidgets('undo under an archived parent asks, and Restore drops '
+        'that link', (tester) async {
+      final (parentId, childId) = await undoUnderArchivedParent(tester);
+
+      expect(find.text('Restore task'), findsOneWidget);
+      await tester.tap(find.text('Restore'));
+      await pumpAsync(tester);
+
+      final child = await tester.runAsync(() => db.getTaskById(childId));
+      expect(child!.isCompleted, isFalse);
       final parents = await tester.runAsync(() => db.getParentIds(childId));
       expect(parents, isNot(contains(parentId)));
+    });
+
+    // [Mechanism — user's choice] Cancel on that dialog changes nothing: the
+    // task stays done for good and keeps its link to the parent.
+    testWidgets('undo under an archived parent: Cancel leaves the task done',
+        (tester) async {
+      final (parentId, childId) = await undoUnderArchivedParent(tester);
+
+      await tester.tap(find.text('Cancel'));
+      await pumpAsync(tester);
+
+      final child = await tester.runAsync(() => db.getTaskById(childId));
+      expect(child!.isCompleted, isTrue);
+      final parents = await tester.runAsync(() => db.getParentIds(childId));
+      expect(parents, contains(parentId));
+      expect(find.byTooltip('Undo done'), findsOneWidget,
+          reason: 'the row is still ticked off');
     });
   });
 }

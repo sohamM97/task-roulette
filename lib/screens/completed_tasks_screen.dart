@@ -3,7 +3,8 @@ import 'package:provider/provider.dart';
 import '../models/task.dart';
 import '../providers/task_provider.dart';
 import '../theme/app_colors.dart';
-import '../utils/display_utils.dart' show showInfoSnackBar;
+import '../utils/display_utils.dart'
+    show confirmRestoreUnderArchivedParents, showInfoSnackBar;
 
 class CompletedTasksScreen extends StatefulWidget {
   const CompletedTasksScreen({super.key});
@@ -118,37 +119,15 @@ class _CompletedTasksScreenState extends State<CompletedTasksScreen> {
     final archivedParents = await provider.getArchivedParents(task.id!);
 
     if (archivedParents.isNotEmpty && mounted) {
-      final parentNames = archivedParents.map((p) => '"${p.name}"').join(' and ');
       final activeParents = await provider.getParents(task.id!);
       if (!mounted) return;
-      final willBeRoot = activeParents.isEmpty;
-      final verb = archivedParents.length > 1 ? 'have' : 'has';
-
-      final message = willBeRoot
-          ? '"${task.name}" was listed under $parentNames, which $verb since been completed. '
-              'It will be restored to the top level.'
-          : '"${task.name}" was also listed under $parentNames, which $verb since been completed. '
-              'It will no longer show under ${archivedParents.length > 1 ? 'them' : 'it'}.';
-
-      final confirm = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Restore task'),
-          content: Text(message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Restore'),
-            ),
-          ],
-        ),
+      final confirm = await confirmRestoreUnderArchivedParents(
+        context,
+        taskName: task.name,
+        archivedParentNames: [for (final p in archivedParents) p.name],
+        willBeRoot: activeParents.isEmpty,
       );
-
-      if (confirm != true || !mounted) return;
+      if (!confirm || !mounted) return;
     }
 
     if (task.isSkipped) {

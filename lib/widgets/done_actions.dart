@@ -31,9 +31,11 @@ class DoneOutcome {
 
   final DoneChoice choice;
 
-  /// Reverses the action. Safe to call once; calling it again is a no-op at the
-  /// database level but will re-fire the caller's `onChanged`.
-  final Future<void> Function() undo;
+  /// Reverses the action and returns true, or returns false when the user
+  /// cancels (a "Done for good!" undo asks first if a parent of the task has
+  /// since been completed). Safe to call once; calling it again is a no-op at
+  /// the database level but will re-fire the caller's `onChanged`.
+  final Future<bool> Function() undo;
 }
 
 /// Marks [cachedTask] as worked on today, with the deadline prompt, the
@@ -110,6 +112,7 @@ Future<DoneOutcome?> markTaskDoneToday(
         );
       }
       await onChanged?.call(false);
+      return true;
     },
   );
 
@@ -161,17 +164,30 @@ Future<DoneOutcome?> completeTaskForGood(
   final outcome = DoneOutcome(
     choice: DoneChoice.forGood,
     undo: () async {
-      await provider.uncompleteTask(task.id!, restoredDeps: removedDeps);
       // CR-fix I-59: a parent completed while this task was done stays
       // archived, and the restored task stayed listed under it, where no
-      // screen shows it. Drop those links, as restoring from the Completed
-      // screen does; with no active parent left, the task returns to the top
-      // level.
+      // screen shows it. The undo now asks first with the Archive screen's
+      // "Restore task" dialog (user's choice), and on Restore drops the links
+      // to archived parents; with no active parent left, the task returns to
+      // the top level. Cancel leaves the task done.
       final archivedParents = await provider.getArchivedParents(task.id!);
+      if (archivedParents.isNotEmpty) {
+        final activeParents = await provider.getParents(task.id!);
+        if (!context.mounted) return false;
+        final confirmed = await confirmRestoreUnderArchivedParents(
+          context,
+          taskName: task.name,
+          archivedParentNames: [for (final p in archivedParents) p.name],
+          willBeRoot: activeParents.isEmpty,
+        );
+        if (!confirmed) return false;
+      }
+      await provider.uncompleteTask(task.id!, restoredDeps: removedDeps);
       if (archivedParents.isNotEmpty) {
         await provider.removeArchivedParentLinks(task.id!, archivedParents);
       }
       await onChanged?.call(false);
+      return true;
     },
   );
 

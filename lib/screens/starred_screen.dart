@@ -1329,8 +1329,9 @@ class _ExpandedStarredViewState extends State<_ExpandedStarredView> {
       // meanwhile, and the blocked ids were refreshed twice (undo() already
       // refreshes them through _onDoneChanged).
       ScaffoldMessenger.of(context).clearSnackBars();
-      await done.undo();
-      if (!mounted) return;
+      final restored = await done.undo();
+      // False when the user cancelled the "Restore task" dialog.
+      if (!restored || !mounted) return;
       showInfoSnackBar(context, 'Restored "${task.name}"');
       return;
     }
@@ -1844,7 +1845,7 @@ class _ExpandedTreeRow extends StatelessWidget {
                 // Dimmed once ticked off either way, matching how All Tasks
                 // renders a worked-on card (task_card.dart:204) — a handled row
                 // should recede whether it was done for today or for good. The
-                // strikethrough on the name is what still tells the two apart.
+                // circle (orange calendar or filled check) tells the two apart.
                 opacity: doneChoice == null ? 1.0 : 0.5,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
