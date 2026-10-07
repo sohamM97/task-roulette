@@ -94,3 +94,4 @@ When mutating a task that is `_currentParent` (e.g. rename, start, unstart), the
 - **Before opening a PR (`/pr`), do two project pre-checks** (the user-level `/pr` skill doesn't):
   1. **Test coverage:** read `docs/TEST_COVERAGE.md` and the changeset; if tests are missing for new/changed behavior, ask "Add tests before raising the PR, or go ahead without?" and run `/add-auto-tests` if they want them.
   2. **Phone test:** ask via **`AskUserQuestion`** (not plain text) whether to run `/debug-build` to test on-device first. Only open the PR after they confirm ("deploy first" or "go ahead").
+- **After `/pr` opens a PR, immediately ask via `AskUserQuestion` whether to run `/merge-check` now.** Don't end the reply with the PR URL alone. `/merge-check` waits for CI and the Codex review, then merges. Past `/pr` replies left this step out.
