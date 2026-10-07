@@ -3,6 +3,9 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Run by hand from the Actions tab to redeploy only the web app from the
+  # chosen branch. The APK and GitHub release are built on tag pushes only.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -19,6 +22,7 @@ jobs:
 
   build-apk:
     needs: [ci]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -110,7 +114,9 @@ jobs:
 
       - run: flutter pub get
 
-      - run: dart run sqflite_common_ffi_web:setup
+      # --verbose prints the output of the webdev build this step runs.
+      # Without it, a failed build shows only "exitCode 255".
+      - run: dart run sqflite_common_ffi_web:setup --verbose
 
       - name: Build web
         run: |
