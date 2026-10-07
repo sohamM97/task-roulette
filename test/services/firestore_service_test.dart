@@ -1918,4 +1918,1037 @@ void main() {
       });
     });
   });
+
+  // --- HTTP-mocked coverage for push/pull endpoints and non-200 error paths ---
+
+  /// A MockClient that records every request and answers with [respond].
+  ({MockClient client, List<http.Request> requests}) recordingClient(
+    http.Response Function(http.Request request) respond,
+  ) {
+    final requests = <http.Request>[];
+    final client = MockClient((request) async {
+      requests.add(request);
+      return respond(request);
+    });
+    return (client: client, requests: requests);
+  }
+
+  /// A task document as Firestore returns it from a list or runQuery call.
+  Map<String, dynamic> taskDoc(String syncId, String name,
+          {int? deletedAt}) =>
+      {
+        'name': 'projects/p/databases/(default)/documents/users/u/tasks/$syncId',
+        'fields': {
+          'name': {'stringValue': name},
+          'created_at': {'integerValue': '100'},
+          'priority': {'integerValue': '1'},
+          'updated_at': {'integerValue': '200'},
+          if (deletedAt != null) 'deleted_at': {'integerValue': '$deletedAt'},
+        },
+      };
+
+  group('pushTasks', () {
+    test('sends no request for an empty list', () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      await FirestoreService(client: rec.client).pushTasks('u', 'tok', []);
+      expect(rec.requests, isEmpty);
+    });
+
+    test('POSTs a commit with one update write per task, named by sync_id',
+        () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      final svc = FirestoreService(client: rec.client);
+      await svc.pushTasks('u', 'tok', [
+        Task(name: 'A', createdAt: 1, syncId: 's1', updatedAt: 10),
+        Task(name: 'B', createdAt: 2, syncId: 's2', updatedAt: 20),
+      ]);
+
+      expect(rec.requests.length, 1);
+      final req = rec.requests.single;
+      expect(req.method, 'POST');
+      expect(req.url.path, endsWith('/documents:commit'));
+      expect(req.headers['Authorization'], 'Bearer tok');
+      expect(req.headers['Content-Type'], startsWith('application/json'));
+      final writes = (json.decode(req.body) as Map<String, dynamic>)['writes']
+          as List<dynamic>;
+      expect(writes.length, 2);
+      final first = writes[0]['update'] as Map<String, dynamic>;
+      expect(first['name'], endsWith('/documents/users/u/tasks/s1'));
+      expect(first['fields']['name'], {'stringValue': 'A'});
+      expect(first['fields']['updated_at'], {'integerValue': '10'});
+      expect(writes[1]['update']['name'], endsWith('/users/u/tasks/s2'));
+    });
+
+    test('splits more than 500 tasks into batches of 500', () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      final tasks = List.generate(
+          501, (i) => Task(name: 't$i', createdAt: 0, syncId: 'id$i'));
+      await FirestoreService(client: rec.client).pushTasks('u', 'tok', tasks);
+
+      expect(rec.requests.length, 2);
+      final sizes = rec.requests
+          .map((r) => ((json.decode(r.body) as Map)['writes'] as List).length)
+          .toList();
+      expect(sizes, [500, 1]);
+      final lastWrite =
+          ((json.decode(rec.requests[1].body) as Map)['writes'] as List).single;
+      expect(lastWrite['update']['name'], endsWith('/tasks/id500'));
+    });
+
+    test('throws FirestoreException with status and body on non-200',
+        () async {
+      final rec = recordingClient((_) => http.Response('quota', 429));
+      final svc = FirestoreService(client: rec.client);
+      await expectLater(
+        svc.pushTasks('u', 'tok', [Task(name: 'A', syncId: 's1')]),
+        throwsA(isA<FirestoreException>()
+            .having((e) => e.message, 'message', contains('Push tasks failed'))
+            .having((e) => e.message, 'message', contains('429 quota'))),
+      );
+    });
+
+    test('stops after the first failing batch', () async {
+      final rec = recordingClient((_) => http.Response('err', 500));
+      final tasks = List.generate(
+          600, (i) => Task(name: 't$i', createdAt: 0, syncId: 'id$i'));
+      await expectLater(
+        FirestoreService(client: rec.client).pushTasks('u', 'tok', tasks),
+        throwsA(isA<FirestoreException>()),
+      );
+      expect(rec.requests.length, 1);
+    });
+  });
+
+  group('push/pull relationships and dependencies — error paths', () {
+    test('pushRelationships throws FirestoreException on non-200', () async {
+      final rec = recordingClient((_) => http.Response('denied', 403));
+      await expectLater(
+        FirestoreService(client: rec.client).pushRelationships(
+            'u', 'tok', [(parentSyncId: 'p', childSyncId: 'c')]),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Push relationships failed: 403 denied')),
+      );
+    });
+
+    test('pushDependencies throws FirestoreException on non-200', () async {
+      final rec = recordingClient((_) => http.Response('denied', 403));
+      await expectLater(
+        FirestoreService(client: rec.client).pushDependencies(
+            'u', 'tok', [(taskSyncId: 't', dependsOnSyncId: 'd')]),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Push dependencies failed: 403 denied')),
+      );
+    });
+
+    test('pullAllRelationships throws FirestoreException on non-200',
+        () async {
+      final rec = recordingClient((_) => http.Response('x', 500));
+      await expectLater(
+        FirestoreService(client: rec.client).pullAllRelationships('u', 'tok'),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Pull relationships failed: 500')),
+      );
+    });
+
+    test('pullAllDependencies throws FirestoreException on non-200', () async {
+      final rec = recordingClient((_) => http.Response('x', 500));
+      await expectLater(
+        FirestoreService(client: rec.client).pullAllDependencies('u', 'tok'),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Pull dependencies failed: 500')),
+      );
+    });
+
+    test('pullRelationshipsSince throws FirestoreException on non-200',
+        () async {
+      final rec = recordingClient((_) => http.Response('x', 400));
+      await expectLater(
+        FirestoreService(client: rec.client)
+            .pullRelationshipsSince('u', 'tok', 5),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Query relationships failed: 400')),
+      );
+    });
+
+    test('pullDependenciesSince throws FirestoreException on non-200',
+        () async {
+      final rec = recordingClient((_) => http.Response('x', 400));
+      await expectLater(
+        FirestoreService(client: rec.client)
+            .pullDependenciesSince('u', 'tok', 5),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Query dependencies failed: 400')),
+      );
+    });
+  });
+
+  group('full-pull pagination (nextPageToken)', () {
+    test('pullAllRelationships follows nextPageToken until absent', () async {
+      final rec = recordingClient((req) {
+        final token = req.url.queryParameters['pageToken'];
+        Map<String, dynamic> rel(String p, String c) => {
+              'name': 'projects/p/databases/(default)/documents/users/u/relationships/${p}_$c',
+              'fields': {
+                'parent_sync_id': {'stringValue': p},
+                'child_sync_id': {'stringValue': c},
+              },
+            };
+        if (token == null) {
+          return http.Response(
+              json.encode({
+                'documents': [rel('p1', 'c1')],
+                'nextPageToken': 'page2',
+              }),
+              200);
+        }
+        return http.Response(
+            json.encode({
+              'documents': [rel('p2', 'c2')],
+            }),
+            200);
+      });
+
+      final result = await FirestoreService(client: rec.client)
+          .pullAllRelationships('u', 'tok');
+
+      expect(rec.requests.length, 2);
+      expect(rec.requests[0].method, 'GET');
+      expect(rec.requests[0].url.path, endsWith('/users/u/relationships'));
+      expect(rec.requests[0].url.queryParameters,
+          {'pageSize': '300'});
+      expect(rec.requests[1].url.queryParameters,
+          {'pageSize': '300', 'pageToken': 'page2'});
+      expect(result.map((r) => r.parentSyncId), ['p1', 'p2']);
+    });
+
+    test('pullAllDependencies follows nextPageToken until absent', () async {
+      final rec = recordingClient((req) {
+        final token = req.url.queryParameters['pageToken'];
+        Map<String, dynamic> dep(String t, String d) => {
+              'fields': {
+                'task_sync_id': {'stringValue': t},
+                'depends_on_sync_id': {'stringValue': d},
+              },
+            };
+        return http.Response(
+            json.encode(token == null
+                ? {
+                    'documents': [dep('t1', 'd1')],
+                    'nextPageToken': 'next',
+                  }
+                : {
+                    'documents': [dep('t2', 'd2')],
+                  }),
+            200);
+      });
+
+      final result = await FirestoreService(client: rec.client)
+          .pullAllDependencies('u', 'tok');
+
+      expect(rec.requests.length, 2);
+      expect(rec.requests[0].url.path, endsWith('/users/u/dependencies'));
+      expect(rec.requests[1].url.queryParameters['pageToken'], 'next');
+      expect(result.map((d) => d.taskSyncId), ['t1', 't2']);
+    });
+
+    test('pullAllSchedules follows nextPageToken until absent', () async {
+      final rec = recordingClient((req) {
+        final token = req.url.queryParameters['pageToken'];
+        Map<String, dynamic> sched(String id) => {
+              'name': 'projects/p/databases/(default)/documents/users/u/schedules/$id',
+              'fields': {
+                'task_sync_id': {'stringValue': 'task-$id'},
+                'schedule_type': {'stringValue': 'weekly'},
+                'day_of_week': {'integerValue': '3'},
+              },
+            };
+        return http.Response(
+            json.encode(token == null
+                ? {
+                    'documents': [sched('a')],
+                    'nextPageToken': 'tok2',
+                  }
+                : {
+                    'documents': [sched('b')],
+                  }),
+            200);
+      });
+
+      final result = await FirestoreService(client: rec.client)
+          .pullAllSchedules('u', 'tok');
+
+      expect(rec.requests.length, 2);
+      expect(rec.requests[0].url.path, endsWith('/users/u/schedules'));
+      expect(rec.requests[1].url.queryParameters['pageToken'], 'tok2');
+      expect(result.map((s) => s['sync_id']), ['a', 'b']);
+      expect(result[0]['day_of_week'], 3);
+    });
+
+    test('pullAllSchedules throws FirestoreException on non-200', () async {
+      final rec = recordingClient((_) => http.Response('x', 503));
+      await expectLater(
+        FirestoreService(client: rec.client).pullAllSchedules('u', 'tok'),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Pull schedules failed: 503')),
+      );
+    });
+
+    test('page token is appended to the URL without percent-encoding',
+        () async {
+      // Documents current behaviour: a token containing '+' reaches the
+      // server as a space, because the query string is built by string
+      // concatenation and '+' means space in a query string.
+      final rec = recordingClient((req) {
+        final token = req.url.queryParameters['pageToken'];
+        return http.Response(
+            json.encode(token == null
+                ? {'documents': [], 'nextPageToken': 'a+b'}
+                : {'documents': []}),
+            200);
+      });
+
+      await FirestoreService(client: rec.client)
+          .pullAllRelationships('u', 'tok');
+
+      expect(rec.requests[1].url.query, 'pageSize=300&pageToken=a+b');
+      expect(rec.requests[1].url.queryParameters['pageToken'], 'a b');
+    });
+  });
+
+  group('deleteTask — soft-delete via commit API', () {
+    test('sends a tombstone write with sync_id, deleted_at and updated_at',
+        () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      await FirestoreService(client: rec.client)
+          .deleteTask('u', 'tok', 'task-1');
+
+      expect(rec.requests.length, 1);
+      final req = rec.requests.single;
+      expect(req.method, 'POST');
+      expect(req.url.path, endsWith('/documents:commit'));
+      final update = ((json.decode(req.body) as Map)['writes'] as List)
+          .single['update'] as Map<String, dynamic>;
+      expect(update['name'], isNot(contains('https://')));
+      expect(update['name'], endsWith('/documents/users/u/tasks/task-1'));
+      final fields = update['fields'] as Map<String, dynamic>;
+      expect(fields['sync_id'], {'stringValue': 'task-1'});
+      expect(fields['deleted_at'], fields['updated_at']);
+      expect(int.parse(fields['deleted_at']['integerValue'] as String),
+          greaterThan(0));
+      // The tombstone does not carry the task's name or other fields.
+      expect(fields.containsKey('name'), isFalse);
+    });
+
+    test('throws FirestoreException naming the document path on non-200',
+        () async {
+      final rec = recordingClient((_) => http.Response('nope', 500));
+      await expectLater(
+        FirestoreService(client: rec.client).deleteTask('u', 'tok', 'task-1'),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Soft-delete failed (users/u/tasks/task-1): 500 nope')),
+      );
+    });
+  });
+
+  group('hasRemoteData', () {
+    test('GETs the tasks collection with pageSize=1', () async {
+      final rec =
+          recordingClient((_) => http.Response(json.encode({}), 200));
+      await FirestoreService(client: rec.client).hasRemoteData('u', 'tok');
+
+      final req = rec.requests.single;
+      expect(req.method, 'GET');
+      expect(req.url.path, endsWith('/users/u/tasks'));
+      expect(req.url.queryParameters, {'pageSize': '1'});
+      expect(req.headers['Authorization'], 'Bearer tok');
+    });
+
+    test('returns true when at least one document exists', () async {
+      final rec = recordingClient((_) => http.Response(
+          json.encode({
+            'documents': [taskDoc('s1', 'A')],
+          }),
+          200));
+      expect(
+          await FirestoreService(client: rec.client).hasRemoteData('u', 'tok'),
+          isTrue);
+    });
+
+    test('returns false when the response has no documents key', () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      expect(
+          await FirestoreService(client: rec.client).hasRemoteData('u', 'tok'),
+          isFalse);
+    });
+
+    test('returns false for an empty documents list', () async {
+      final rec = recordingClient(
+          (_) => http.Response(json.encode({'documents': []}), 200));
+      expect(
+          await FirestoreService(client: rec.client).hasRemoteData('u', 'tok'),
+          isFalse);
+    });
+
+    test('throws FirestoreException on non-200', () async {
+      final rec = recordingClient((_) => http.Response('x', 401));
+      await expectLater(
+        FirestoreService(client: rec.client).hasRemoteData('u', 'tok'),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Check remote data failed: 401')),
+      );
+    });
+  });
+
+  group('pullTasksSince — full list (lastSyncAt null)', () {
+    test('lists tasks with GET and follows nextPageToken', () async {
+      final rec = recordingClient((req) {
+        final token = req.url.queryParameters['pageToken'];
+        return http.Response(
+            json.encode(token == null
+                ? {
+                    'documents': [taskDoc('s1', 'First')],
+                    'nextPageToken': 'p2',
+                  }
+                : {
+                    'documents': [taskDoc('s2', 'Second')],
+                  }),
+            200);
+      });
+
+      final tasks =
+          await FirestoreService(client: rec.client).pullTasksSince('u', 'tok');
+
+      expect(rec.requests.length, 2);
+      expect(rec.requests.every((r) => r.method == 'GET'), isTrue);
+      expect(rec.requests[0].url.path, endsWith('/users/u/tasks'));
+      expect(rec.requests[0].url.queryParameters, {'pageSize': '300'});
+      expect(rec.requests[1].url.queryParameters,
+          {'pageSize': '300', 'pageToken': 'p2'});
+      expect(tasks.map((t) => t.syncId), ['s1', 's2']);
+      expect(tasks.map((t) => t.name), ['First', 'Second']);
+      expect(tasks.every((t) => t.syncStatus == 'synced'), isTrue);
+    });
+
+    test('skips tombstoned tasks and documents without fields', () async {
+      final rec = recordingClient((_) => http.Response(
+          json.encode({
+            'documents': [
+              taskDoc('live', 'Live'),
+              taskDoc('dead', 'Dead', deletedAt: 999),
+              {
+                'name':
+                    'projects/p/databases/(default)/documents/users/u/tasks/nofields',
+              },
+            ],
+          }),
+          200));
+
+      final tasks =
+          await FirestoreService(client: rec.client).pullTasksSince('u', 'tok');
+
+      expect(tasks.map((t) => t.syncId), ['live']);
+    });
+
+    test('returns an empty list when the collection is empty', () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      final tasks =
+          await FirestoreService(client: rec.client).pullTasksSince('u', 'tok');
+      expect(tasks, isEmpty);
+      expect(rec.requests.length, 1);
+    });
+
+    test('throws FirestoreException on non-200', () async {
+      final rec = recordingClient((_) => http.Response('x', 500));
+      await expectLater(
+        FirestoreService(client: rec.client).pullTasksSince('u', 'tok'),
+        throwsA(isA<FirestoreException>()
+            .having((e) => e.message, 'message', 'List tasks failed: 500')),
+      );
+    });
+  });
+
+  group('pullTasksSince — delta query (lastSyncAt set)', () {
+    test('POSTs a runQuery on tasks filtered by updated_at > lastSyncAt',
+        () async {
+      final rec = recordingClient((_) => http.Response('[]', 200));
+      await FirestoreService(client: rec.client)
+          .pullTasksSince('u', 'tok', lastSyncAt: 12345);
+
+      final req = rec.requests.single;
+      expect(req.method, 'POST');
+      expect(req.url.path, endsWith('/documents/users/u:runQuery'));
+      final query = (json.decode(req.body) as Map)['structuredQuery'] as Map;
+      expect(query['from'], [
+        {'collectionId': 'tasks'},
+      ]);
+      expect(query['where'], {
+        'fieldFilter': {
+          'field': {'fieldPath': 'updated_at'},
+          'op': 'GREATER_THAN',
+          'value': {'integerValue': '12345'},
+        },
+      });
+    });
+
+    test('parses documents and skips results without a document', () async {
+      final rec = recordingClient((_) => http.Response(
+          json.encode([
+            {'document': taskDoc('s1', 'Changed')},
+            {'readTime': '2026-10-06T00:00:00Z'},
+            {
+              'document': {
+                'name':
+                    'projects/p/databases/(default)/documents/users/u/tasks/nofields',
+              },
+            },
+          ]),
+          200));
+
+      final tasks = await FirestoreService(client: rec.client)
+          .pullTasksSince('u', 'tok', lastSyncAt: 1);
+
+      expect(tasks.length, 1);
+      expect(tasks.single.syncId, 's1');
+      expect(tasks.single.name, 'Changed');
+    });
+
+    test('returns a tombstone as an empty-named task (no deleted_at check)',
+        () async {
+      // Documents current behaviour: this path does not look at deleted_at,
+      // so a tombstone comes back as a Task. SyncService uses
+      // pullTaskDeltasSince for delta pulls, which reports it as deleted.
+      final rec = recordingClient((_) => http.Response(
+          json.encode([
+            {
+              'document': {
+                'name':
+                    'projects/p/databases/(default)/documents/users/u/tasks/gone',
+                'fields': {
+                  'sync_id': {'stringValue': 'gone'},
+                  'updated_at': {'integerValue': '50'},
+                  'deleted_at': {'integerValue': '50'},
+                },
+              },
+            },
+          ]),
+          200));
+
+      final tasks = await FirestoreService(client: rec.client)
+          .pullTasksSince('u', 'tok', lastSyncAt: 1);
+
+      expect(tasks.single.syncId, 'gone');
+      expect(tasks.single.name, '');
+    });
+
+    test('throws FirestoreException when the response is not a list',
+        () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      await expectLater(
+        FirestoreService(client: rec.client)
+            .pullTasksSince('u', 'tok', lastSyncAt: 1),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Unexpected query response format')),
+      );
+    });
+
+    test('throws FirestoreException on non-200', () async {
+      final rec = recordingClient((_) => http.Response('x', 400));
+      await expectLater(
+        FirestoreService(client: rec.client)
+            .pullTasksSince('u', 'tok', lastSyncAt: 1),
+        throwsA(isA<FirestoreException>()
+            .having((e) => e.message, 'message', 'Query tasks failed: 400')),
+      );
+    });
+  });
+
+  group('pullTaskDeltasSince', () {
+    test('POSTs a runQuery on tasks filtered by updated_at > lastSyncAt',
+        () async {
+      final rec = recordingClient((_) => http.Response('[]', 200));
+      await FirestoreService(client: rec.client)
+          .pullTaskDeltasSince('u', 'tok', 777);
+
+      final req = rec.requests.single;
+      expect(req.method, 'POST');
+      expect(req.url.path, endsWith('/documents/users/u:runQuery'));
+      final query = (json.decode(req.body) as Map)['structuredQuery'] as Map;
+      expect(query['from'], [
+        {'collectionId': 'tasks'},
+      ]);
+      final filter = query['where']['fieldFilter'] as Map;
+      expect(filter['field'], {'fieldPath': 'updated_at'});
+      expect(filter['op'], 'GREATER_THAN');
+      expect(filter['value'], {'integerValue': '777'});
+    });
+
+    test('returns live tasks with deleted=false and tombstones with '
+        'task=null, deleted=true', () async {
+      final rec = recordingClient((_) => http.Response(
+          json.encode([
+            {'document': taskDoc('live', 'Live task')},
+            {'document': taskDoc('dead', 'Dead task', deletedAt: 300)},
+          ]),
+          200));
+
+      final deltas = await FirestoreService(client: rec.client)
+          .pullTaskDeltasSince('u', 'tok', 1);
+
+      expect(deltas.length, 2);
+      expect(deltas[0].syncId, 'live');
+      expect(deltas[0].deleted, isFalse);
+      expect(deltas[0].task!.name, 'Live task');
+      expect(deltas[1].syncId, 'dead');
+      expect(deltas[1].deleted, isTrue);
+      expect(deltas[1].task, isNull);
+    });
+
+    test('skips results without a document, without fields, or with no '
+        'document name', () async {
+      final rec = recordingClient((_) => http.Response(
+          json.encode([
+            {'readTime': '2026-10-06T00:00:00Z'},
+            {
+              'document': {
+                'name':
+                    'projects/p/databases/(default)/documents/users/u/tasks/nofields',
+              },
+            },
+            {
+              'document': {
+                'fields': {
+                  'deleted_at': {'integerValue': '5'},
+                },
+              },
+            },
+            {'document': taskDoc('ok', 'Ok')},
+          ]),
+          200));
+
+      final deltas = await FirestoreService(client: rec.client)
+          .pullTaskDeltasSince('u', 'tok', 1);
+
+      expect(deltas.map((d) => d.syncId), ['ok']);
+    });
+
+    test('returns an empty list when the response is not a list', () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      final deltas = await FirestoreService(client: rec.client)
+          .pullTaskDeltasSince('u', 'tok', 1);
+      expect(deltas, isEmpty);
+    });
+
+    test('throws FirestoreException on non-200', () async {
+      final rec = recordingClient((_) => http.Response('x', 500));
+      await expectLater(
+        FirestoreService(client: rec.client).pullTaskDeltasSince('u', 'tok', 1),
+        throwsA(isA<FirestoreException>()
+            .having((e) => e.message, 'message', 'Query tasks failed: 500')),
+      );
+    });
+  });
+
+  group('pushSchedules', () {
+    test('sends no request for an empty list', () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      await FirestoreService(client: rec.client).pushSchedules('u', 'tok', []);
+      expect(rec.requests, isEmpty);
+    });
+
+    test('writes each schedule under its sync_id with all fields', () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      await FirestoreService(client: rec.client).pushSchedules('u', 'tok', [
+        {
+          'sync_id': 'sch1',
+          'task_sync_id': 'task1',
+          'schedule_type': 'weekly',
+          'day_of_week': 2,
+          'updated_at': 4000,
+        },
+      ]);
+
+      final req = rec.requests.single;
+      expect(req.method, 'POST');
+      expect(req.url.path, endsWith('/documents:commit'));
+      final update = ((json.decode(req.body) as Map)['writes'] as List)
+          .single['update'] as Map<String, dynamic>;
+      expect(update['name'], endsWith('/documents/users/u/schedules/sch1'));
+      expect(update['fields'], {
+        'task_sync_id': {'stringValue': 'task1'},
+        'schedule_type': {'stringValue': 'weekly'},
+        'day_of_week': {'integerValue': '2'},
+        'updated_at': {'integerValue': '4000'},
+      });
+    });
+
+    test('omits day_of_week and updated_at when null', () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      await FirestoreService(client: rec.client).pushSchedules('u', 'tok', [
+        {
+          'sync_id': 'sch1',
+          'task_sync_id': 'task1',
+          'schedule_type': 'weekly',
+          'day_of_week': null,
+          'updated_at': null,
+        },
+      ]);
+
+      final fields = ((json.decode(rec.requests.single.body) as Map)['writes']
+          as List).single['update']['fields'] as Map<String, dynamic>;
+      expect(fields.keys, unorderedEquals(['task_sync_id', 'schedule_type']));
+    });
+
+    test('splits more than 500 schedules into batches of 500', () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      final schedules = List.generate(
+          1001,
+          (i) => <String, dynamic>{
+                'sync_id': 's$i',
+                'task_sync_id': 't$i',
+                'schedule_type': 'weekly',
+              });
+      await FirestoreService(client: rec.client)
+          .pushSchedules('u', 'tok', schedules);
+
+      final sizes = rec.requests
+          .map((r) => ((json.decode(r.body) as Map)['writes'] as List).length)
+          .toList();
+      expect(sizes, [500, 500, 1]);
+    });
+
+    test('throws FirestoreException on non-200', () async {
+      final rec = recordingClient((_) => http.Response('bad', 400));
+      await expectLater(
+        FirestoreService(client: rec.client).pushSchedules('u', 'tok', [
+          {'sync_id': 's', 'task_sync_id': 't', 'schedule_type': 'weekly'},
+        ]),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Push schedules failed: 400 bad')),
+      );
+    });
+
+    test('pullSchedulesSince throws FirestoreException on non-200', () async {
+      final rec = recordingClient((_) => http.Response('x', 400));
+      await expectLater(
+        FirestoreService(client: rec.client).pullSchedulesSince('u', 'tok', 1),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Query schedules failed: 400')),
+      );
+    });
+  });
+
+  group('pushTodaysFive', () {
+    test('writes one document per date with entries, suppressions and '
+        'the given updated_at', () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      await FirestoreService(client: rec.client).pushTodaysFive(
+        'u',
+        'tok',
+        '2026-10-06',
+        [
+          {
+            'task_sync_id': 'a',
+            'is_completed': true,
+            'is_worked_on': false,
+            'is_pinned': true,
+            'sort_order': 0,
+          },
+          {
+            'task_sync_id': 'b',
+            'is_completed': false,
+            'is_worked_on': true,
+            'is_pinned': false,
+            'sort_order': 1,
+          },
+        ],
+        ['x', 'y'],
+        987654,
+      );
+
+      final req = rec.requests.single;
+      expect(req.method, 'POST');
+      expect(req.url.path, endsWith('/documents:commit'));
+      expect(req.headers['Authorization'], 'Bearer tok');
+      final update = ((json.decode(req.body) as Map)['writes'] as List)
+          .single['update'] as Map<String, dynamic>;
+      expect(update['name'], endsWith('/documents/users/u/todays_five/2026-10-06'));
+      final fields = update['fields'] as Map<String, dynamic>;
+      // updated_at is the caller's edit-time stamp, not the push time.
+      expect(fields['updated_at'], {'integerValue': '987654'});
+      expect(fields['deadline_suppressed_sync_ids'], {
+        'arrayValue': {
+          'values': [
+            {'stringValue': 'x'},
+            {'stringValue': 'y'},
+          ],
+        },
+      });
+      final values = fields['entries']['arrayValue']['values'] as List;
+      expect(values.length, 2);
+      expect(values[0], {
+        'mapValue': {
+          'fields': {
+            'task_sync_id': {'stringValue': 'a'},
+            'is_completed': {'booleanValue': true},
+            'is_worked_on': {'booleanValue': false},
+            'is_pinned': {'booleanValue': true},
+            'sort_order': {'integerValue': '0'},
+          },
+        },
+      });
+      expect(values[1]['mapValue']['fields']['sort_order'],
+          {'integerValue': '1'});
+    });
+
+    test('sends empty arrays when there are no entries or suppressions',
+        () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      await FirestoreService(client: rec.client)
+          .pushTodaysFive('u', 'tok', '2026-10-06', [], [], 1);
+
+      final fields = ((json.decode(rec.requests.single.body) as Map)['writes']
+          as List).single['update']['fields'] as Map<String, dynamic>;
+      expect(fields['entries'], {
+        'arrayValue': {'values': []},
+      });
+      expect(fields['deadline_suppressed_sync_ids'], {
+        'arrayValue': {'values': []},
+      });
+    });
+
+    test('throws FirestoreException on non-200', () async {
+      final rec = recordingClient((_) => http.Response('denied', 403));
+      await expectLater(
+        FirestoreService(client: rec.client)
+            .pushTodaysFive('u', 'tok', '2026-10-06', [], [], 1),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Push todays_five failed: 403 denied')),
+      );
+    });
+
+    test('round-trips through pullTodaysFive', () async {
+      String? stored;
+      final client = MockClient((req) async {
+        if (req.method == 'POST') {
+          final update = ((json.decode(req.body) as Map)['writes'] as List)
+              .single['update'] as Map<String, dynamic>;
+          stored = json.encode(update);
+          return http.Response('{}', 200);
+        }
+        return http.Response(stored!, 200);
+      });
+      final svc = FirestoreService(client: client);
+      await svc.pushTodaysFive(
+        'u',
+        'tok',
+        '2026-10-06',
+        [
+          {
+            'task_sync_id': 'a',
+            'is_completed': true,
+            'is_worked_on': true,
+            'is_pinned': false,
+            'sort_order': 4,
+          },
+        ],
+        ['sup'],
+        42,
+      );
+      final pulled = await svc.pullTodaysFive('u', 'tok', '2026-10-06');
+
+      expect(pulled, isNotNull);
+      expect(pulled!.updatedAt, 42);
+      expect(pulled.suppressedSyncIds, ['sup']);
+      expect(pulled.entries, [
+        {
+          'task_sync_id': 'a',
+          'is_completed': true,
+          'is_worked_on': true,
+          'is_pinned': false,
+          'sort_order': 4,
+        },
+      ]);
+    });
+  });
+
+  group('pullTodaysFive', () {
+    test('GETs the document for the given date', () async {
+      final rec = recordingClient((_) => http.Response('', 404));
+      await FirestoreService(client: rec.client)
+          .pullTodaysFive('u', 'tok', '2026-10-06');
+
+      final req = rec.requests.single;
+      expect(req.method, 'GET');
+      expect(req.url.path, endsWith('/users/u/todays_five/2026-10-06'));
+    });
+
+    test('returns null on 404', () async {
+      final rec = recordingClient((_) => http.Response('not found', 404));
+      expect(
+          await FirestoreService(client: rec.client)
+              .pullTodaysFive('u', 'tok', '2026-10-06'),
+          isNull);
+    });
+
+    test('throws FirestoreException on other non-200 statuses', () async {
+      final rec = recordingClient((_) => http.Response('boom', 500));
+      await expectLater(
+        FirestoreService(client: rec.client)
+            .pullTodaysFive('u', 'tok', '2026-10-06'),
+        throwsA(isA<FirestoreException>().having((e) => e.message, 'message',
+            'Pull todays_five failed: 500 boom')),
+      );
+    });
+
+    test('parses suppressions, skipping values that are not strings',
+        () async {
+      final rec = recordingClient((_) => http.Response(
+          json.encode({
+            'fields': {
+              'updated_at': {'integerValue': '10'},
+              'deadline_suppressed_sync_ids': {
+                'arrayValue': {
+                  'values': [
+                    {'stringValue': 's1'},
+                    {'integerValue': '7'},
+                    {'stringValue': 's2'},
+                  ],
+                },
+              },
+              'entries': {
+                'arrayValue': {'values': []},
+              },
+            },
+          }),
+          200));
+
+      final result = await FirestoreService(client: rec.client)
+          .pullTodaysFive('u', 'tok', '2026-10-06');
+
+      expect(result!.suppressedSyncIds, ['s1', 's2']);
+      expect(result.entries, isEmpty);
+      expect(result.updatedAt, 10);
+    });
+
+    test('returns empty entries and suppressions when both fields are absent',
+        () async {
+      // Docs written before deadline_suppressed_sync_ids existed, or with an
+      // empty array (Firestore omits 'values' for an empty arrayValue).
+      final rec = recordingClient((_) => http.Response(
+          json.encode({
+            'fields': {
+              'updated_at': {'integerValue': '10'},
+              'entries': {'arrayValue': {}},
+            },
+          }),
+          200));
+
+      final result = await FirestoreService(client: rec.client)
+          .pullTodaysFive('u', 'tok', '2026-10-06');
+
+      expect(result, isNotNull);
+      expect(result!.entries, isEmpty);
+      expect(result.suppressedSyncIds, isEmpty);
+      expect(result.updatedAt, 10);
+    });
+
+    test('skips entries without a mapValue and defaults missing entry fields',
+        () async {
+      final rec = recordingClient((_) => http.Response(
+          json.encode({
+            'fields': {
+              'entries': {
+                'arrayValue': {
+                  'values': [
+                    {'stringValue': 'not-a-map'},
+                    {
+                      'mapValue': {
+                        'fields': {
+                          'task_sync_id': {'stringValue': 'only-id'},
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          }),
+          200));
+
+      final result = await FirestoreService(client: rec.client)
+          .pullTodaysFive('u', 'tok', '2026-10-06');
+
+      expect(result!.updatedAt, 0);
+      expect(result.entries, [
+        {
+          'task_sync_id': 'only-id',
+          'is_completed': false,
+          'is_worked_on': false,
+          'is_pinned': false,
+          'sort_order': 0,
+        },
+      ]);
+    });
+  });
+
+  group('cleanupTombstones — batching and failed deletes', () {
+    test('deletes more than 500 tombstones in batches of 500', () async {
+      final rec = recordingClient((req) {
+        if (req.url.path.endsWith(':runQuery')) {
+          return http.Response(
+              json.encode([
+                for (var i = 0; i < 501; i++)
+                  {
+                    'document': {'name': 'doc$i'},
+                  },
+                {
+                  'document': {'fields': {}},
+                },
+              ]),
+              200);
+        }
+        return http.Response('{}', 200);
+      });
+
+      await FirestoreService(client: rec.client)
+          .cleanupTombstones('u', 'tok', 'tasks', const Duration(days: 30));
+
+      final commits =
+          rec.requests.where((r) => r.url.path.endsWith(':commit')).toList();
+      final sizes = commits
+          .map((r) => ((json.decode(r.body) as Map)['writes'] as List).length)
+          .toList();
+      // The document without a name is skipped.
+      expect(sizes, [500, 1]);
+    });
+
+    test('does not throw and continues when a batch delete fails', () async {
+      final rec = recordingClient((req) {
+        if (req.url.path.endsWith(':runQuery')) {
+          return http.Response(
+              json.encode([
+                for (var i = 0; i < 600; i++)
+                  {
+                    'document': {'name': 'doc$i'},
+                  },
+              ]),
+              200);
+        }
+        return http.Response('fail', 500);
+      });
+
+      await FirestoreService(client: rec.client)
+          .cleanupTombstones('u', 'tok', 'tasks', const Duration(days: 30));
+
+      // Query + both commit batches: a failed batch does not stop the next.
+      expect(rec.requests.length, 3);
+    });
+
+    test('does nothing when the query response is not a list', () async {
+      final rec = recordingClient((_) => http.Response('{}', 200));
+      await FirestoreService(client: rec.client)
+          .cleanupTombstones('u', 'tok', 'tasks', const Duration(days: 30));
+      expect(rec.requests.length, 1);
+    });
+  });
 }

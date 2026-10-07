@@ -22,3 +22,10 @@ jobs:
 
       - name: Test
         run: flutter test
+
+      # Seven AuthService tests skip unless a Firebase API key is defined at
+      # build time. Any value works: the HTTP calls go to a MockClient. The key
+      # is set for this file only, because other tests expect sign-in to be
+      # unconfigured.
+      - name: Test AuthService with a Firebase key
+        run: flutter test --dart-define=FIREBASE_API_KEY=test-key test/services/auth_service_test.dart
