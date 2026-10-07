@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.5.0 — Suggestions, search everywhere & an editable Starred tree (2026-10-07)
+
+### Today's 5
+- **Suggestions, when you want them** — tap "Show suggestions" to see tasks the app would pick for you, best first, as pills in a sideways-scrolling band. Tap one to add it to Today's 5, go to it, or dismiss it for the session. Hidden by default, so the focus screen stays uncluttered.
+- **"Also done today" is always there** — a single scrolling row of what you've finished, shown even when nothing is pinned. Its right edge only fades when there's more to scroll to.
+- **"Go to task"** in a pinned task's options, so you no longer have to aim for the small icon beside the remove (X) button.
+
+### Starred
+- **Add a subtask at any level** — every row in a starred task's tree has its own "+", so you can add three levels down without leaving for All Tasks.
+- **Mark tasks done from the tree** — leaf rows have a done circle offering "Done today" or "Done for good!". Ticked rows stay visible, struck through, and tapping the circle again undoes it.
+- **The tree widens to fit** deep branches instead of squeezing them.
+
+### Finding and adding tasks
+- **Search from every tab** — Starred and Today's 5 now have the same search as All Tasks. Picking a result opens it in All Tasks.
+- **"Did you mean…?"** — typing the name of a task that already exists shows a small ⓘ in the name field. Tap it to use the existing task instead of creating a duplicate: open it, link it here, pin it, or star it, depending on where you are, with Undo.
+- **The Inbox toggle carries over** to "Add multiple", so turning Inbox off no longer gets silently switched back on.
+
+### Fixes
+- Inbox tasks linked with "Add here", "Also show under…" or "Link existing task" now leave the Inbox.
+- The Flare spin at the top level no longer lands on Inbox tasks.
+- Restoring a done Today's 5 card fully reverses it, including its dependency links.
+- Undoing "Done for good!" on a task whose parent has since been completed asks first, as the Archive screen does.
+- A signed-in device no longer re-syncs Today's 5 every few seconds.
+- The app bar title steps down a size on phones instead of being cut off.
+
+### Quality
+- **1867 automated tests** (1856 run, 11 skipped) — up from 1488. Line coverage is now 88.9%, with sync, cloud storage, backup and sign-in all under test.
+- **Code review Round 12** — findings fixed and verified. **Security review Round 8** — no new issues above informational; dependencies updated to their latest compatible versions.
+
+---
+
 ## v1.4.0 — Manual Today's 5, Starred home & sync reliability (2026-07-08)
 
 ### Today's 5 is now yours to curate
