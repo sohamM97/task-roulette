@@ -17,6 +17,19 @@ jobs:
 
       - run: flutter pub get
 
+      # web/sqflite_sw.js and web/sqlite3.wasm are built from one version of
+      # sqflite_common_ffi_web, recorded in .github/sqflite_web_worker_version.
+      # After a package upgrade the web app would talk to a worker built for
+      # the old version, so fail until the files are rebuilt.
+      - name: Check sqflite web worker version
+        run: |
+          LOCKED=$(awk '/^  sqflite_common_ffi_web:/{f=1} f && /^    version:/{gsub(/"/,"",$2); print $2; exit}' pubspec.lock)
+          BUILT=$(cat .github/sqflite_web_worker_version)
+          if [ "$LOCKED" != "$BUILT" ]; then
+            echo "::error::pubspec.lock has sqflite_common_ffi_web $LOCKED, but web/sqflite_sw.js and web/sqlite3.wasm were built from $BUILT. Run 'dart run sqflite_common_ffi_web:setup --force', write $LOCKED to .github/sqflite_web_worker_version, and commit all three files."
+            exit 1
+          fi
+
       - name: Analyze
         run: flutter analyze
 
