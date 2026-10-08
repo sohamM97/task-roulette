@@ -275,14 +275,31 @@ class _FakeFirestoreService extends FirestoreService {
   /// What [pullAllXpEvents] reads from "the cloud".
   List<Map<String, dynamic>> allXpEvents = const [];
 
+  /// Number of times [pullAllXpEvents] was called.
+  int xpFullPulls = 0;
+
+  /// XP events the delta pull should return (defaults to none).
+  List<Map<String, dynamic>> xpSince = const [];
+
+  @override
+  Future<List<Map<String, dynamic>>> pullXpEventsSince(
+      String uid, String idToken, int lastSyncAt) async => xpSince;
+
+  /// Sync ids of every XP event passed to [pushXpEvents].
+  final List<String> pushedXpSyncIds = [];
+
   @override
   Future<List<Map<String, dynamic>>> pullAllXpEvents(
-      String uid, String idToken) async => allXpEvents;
+      String uid, String idToken) async {
+    xpFullPulls++;
+    return allXpEvents;
+  }
 
   @override
   Future<void> pushXpEvents(String uid, String idToken,
       List<Map<String, dynamic>> xpEvents) async {
     _record('pushXpEvents', [xpEvents.length.toString()]);
+    pushedXpSyncIds.addAll(xpEvents.map((e) => e['sync_id'] as String));
   }
 
   @override
@@ -1624,7 +1641,7 @@ void main() {
           [(taskSyncId: 'a', dependsOnSyncId: 'b')]);
     });
 
-    test('a full pull cleans up tombstones in all four collections, and a '
+    test('a full pull cleans up tombstones in all five collections, and a '
         'cleanup failure does not fail the pull', () async {
       SharedPreferences.setMockInitialValues({});
       final auth = _FakeAuthProvider();
@@ -1636,7 +1653,7 @@ void main() {
       await Future.delayed(Duration.zero);
 
       expect(fakeFs.cleanedCollections,
-          ['tasks', 'relationships', 'dependencies', 'schedules']);
+          ['tasks', 'relationships', 'dependencies', 'schedules', 'xp_events']);
       expect(auth.syncStatus, SyncStatus.synced);
     });
   });
@@ -1947,6 +1964,186 @@ void main() {
         SyncStatus.idle, // bulk op
         SyncStatus.idle, // push
       ]);
+    });
+  });
+
+  // The xp_events sync was written before the July sync fixes (delta pulls,
+  // tombstones, pending-add guards). Each test below pins one bug it had.
+  group('xp_events sync', () {
+    Future<String> onlyXpSyncId() async =>
+        (await db.getAllXpEventSyncIds()).single;
+
+    test('revoking XP pushes a tombstone so other devices drop it', () async {
+      // Bug: revoking deleted the row locally but queued nothing, so the cloud
+      // copy lived on and the next pull brought the XP back.
+      SharedPreferences.setMockInitialValues({});
+      final taskId = await db.insertTask(Task(name: 'T', syncId: 't1'));
+      await db.insertXpEvent(
+          eventType: 'worked_on', xpAmount: 10, taskId: taskId, date: '2026-10-07');
+      final syncId = await onlyXpSyncId();
+      final fakeFs = _FakeFirestoreService();
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+      await sync.push();
+
+      await db.deleteXpEventsForTask(taskId, 'worked_on', '2026-10-07');
+      await sync.push();
+
+      expect(fakeFs.calls, contains('deleteXpEvent:$syncId'));
+    });
+
+    test('a push sends only XP events not yet pushed', () async {
+      // Bug: every push re-sent the whole xp_events table, one Firestore
+      // write per event per push.
+      SharedPreferences.setMockInitialValues({});
+      await db.insertXpEvent(
+          eventType: 'streak_bonus', xpAmount: 5, date: '2026-10-06');
+      final fakeFs = _FakeFirestoreService();
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.push();
+      expect(fakeFs.pushedXpSyncIds, hasLength(1));
+
+      await sync.push();
+      expect(fakeFs.pushedXpSyncIds, hasLength(1));
+    });
+
+    test('a pull before the push keeps a freshly earned XP event', () async {
+      // Bug: the pull deleted every local event missing from the cloud, and
+      // nothing marked a new event as pending, so XP earned in the 5 s before
+      // the debounced push was wiped.
+      SharedPreferences.setMockInitialValues({'sync_last_sync_at': 1000});
+      await db.insertXpEvent(
+          eventType: 'streak_bonus', xpAmount: 5, date: '2026-10-06');
+      final sync = SyncService(_FakeAuthProvider(),
+          firestore: _FakeFirestoreService());
+
+      await sync.pull();
+
+      expect(await db.getTotalXp(), 5);
+    });
+
+    test('a delta pull removes a local XP event tombstoned in the cloud',
+        () async {
+      SharedPreferences.setMockInitialValues({'sync_last_sync_at': 1000});
+      await db.upsertXpEventFromRemote(
+        syncId: 'gone',
+        eventType: 'streak_bonus',
+        xpAmount: 5,
+        date: '2026-10-06',
+        createdAt: 1,
+      );
+      final fakeFs = _FakeFirestoreService()
+        ..xpSince = [
+          {'sync_id': 'gone', 'deleted': true},
+        ];
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.pull();
+
+      expect(await db.getTotalXp(), 0);
+    });
+
+    test('undo then redo before a push leaves the event live in the cloud',
+        () async {
+      // Undo and redo reuse one sync id. The queue must end with the add, or
+      // the push would tombstone XP the user still has.
+      SharedPreferences.setMockInitialValues({});
+      final taskId = await db.insertTask(Task(name: 'T', syncId: 't1'));
+      await db.insertXpEvent(
+          eventType: 'worked_on', xpAmount: 10, taskId: taskId, date: '2026-10-07');
+      await db.deleteXpEventsForTask(taskId, 'worked_on', '2026-10-07');
+      await db.insertXpEvent(
+          eventType: 'worked_on', xpAmount: 10, taskId: taskId, date: '2026-10-07');
+      final syncId = await onlyXpSyncId();
+      final fakeFs = _FakeFirestoreService();
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.push();
+
+      expect(fakeFs.calls.where((c) => c.contains('XpEvent')),
+          ['pushXpEvents:1']);
+      expect(fakeFs.pushedXpSyncIds, [syncId]);
+    });
+
+    test('a delta pull does not download the whole xp_events collection',
+        () async {
+      // Bug: every 5-minute pull read every XP event, which eats the
+      // Firestore free-tier read quota that delta pulls exist to protect.
+      SharedPreferences.setMockInitialValues({'sync_last_sync_at': 1000});
+      final fakeFs = _FakeFirestoreService();
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.pull();
+
+      expect(fakeFs.xpFullPulls, 0);
+    });
+
+    test('a full pull removes a local XP event tombstoned in the cloud',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      await db.upsertXpEventFromRemote(
+        syncId: 'gone',
+        eventType: 'streak_bonus',
+        xpAmount: 5,
+        date: '2026-10-06',
+        createdAt: 1,
+      );
+      final fakeFs = _FakeFirestoreService()
+        ..allXpEvents = [
+          {
+            'sync_id': 'gone',
+            'event_type': 'streak_bonus',
+            'xp_amount': 5,
+            'task_sync_id': null,
+            'date': '2026-10-06',
+            'created_at': 1,
+            'deleted': true,
+          },
+        ];
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.pull();
+
+      expect(await db.getTotalXp(), 0);
+    });
+
+    test('replaceLocalWithCloud drops local XP events that are not in the cloud',
+        () async {
+      // Bug: deleteAllLocalData skipped xp_events, so "replace local with
+      // cloud" kept local XP and the next push merged it into the cloud.
+      SharedPreferences.setMockInitialValues({});
+      await db.insertXpEvent(
+          eventType: 'streak_bonus', xpAmount: 5, date: '2026-10-06');
+      final sync = SyncService(_FakeAuthProvider(),
+          firestore: _FakeFirestoreService());
+
+      await sync.replaceLocalWithCloud();
+
+      expect(await db.getTotalXp(), 0);
+    });
+
+    test('an XP event pulled from the cloud links to the local task', () async {
+      // Bug: pulled events always stored task_id = null, so undoing on this
+      // device could not find XP that another device had awarded.
+      SharedPreferences.setMockInitialValues({});
+      final taskId = await _syncedTask(db, 't1');
+      final fakeFs = _FakeFirestoreService()
+        ..remoteTasks = [Task(name: 'T-t1', syncId: 't1')]
+        ..allXpEvents = [
+          {
+            'sync_id': 'remote-xp',
+            'event_type': 'worked_on',
+            'xp_amount': 10,
+            'task_sync_id': 't1',
+            'date': '2026-10-07',
+            'created_at': 1,
+          },
+        ];
+      final sync = SyncService(_FakeAuthProvider(), firestore: fakeFs);
+
+      await sync.pull();
+
+      expect(await db.deleteXpEventsForTask(taskId, 'worked_on', '2026-10-07'), 1);
     });
   });
 }

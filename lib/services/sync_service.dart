@@ -352,17 +352,10 @@ class SyncService {
         await _db.upsertScheduleFromRemote(schedule);
       }
 
-      // Pull all xp_events
+      // Pull all xp_events (after tasks, so their task links resolve)
       final remoteXpEventsReplace = await _firestore.pullAllXpEvents(uid, idToken);
       for (final xpEvent in remoteXpEventsReplace) {
-        await _db.upsertXpEventFromRemote(
-          syncId: xpEvent['sync_id'] as String,
-          eventType: xpEvent['event_type'] as String,
-          xpAmount: xpEvent['xp_amount'] as int,
-          taskId: null,
-          date: xpEvent['date'] as String,
-          createdAt: xpEvent['created_at'] as int,
-        );
+        await _upsertRemoteXpEvent(xpEvent);
       }
 
       // Pull Today's 5 state (+ deadline suppressions). Bug fix: this restore
@@ -430,8 +423,8 @@ class SyncService {
       }
       final remoteXpEventsCloud = await _firestore.pullAllXpEvents(uid, idToken);
       for (final xpEvent in remoteXpEventsCloud) {
-        final syncId = xpEvent['sync_id'] as String;
-        await _firestore.deleteXpEvent(uid, idToken, syncId);
+        await _firestore.deleteXpEvent(
+            uid, idToken, xpEvent['sync_id'] as String);
       }
 
       // Now push all local data to cloud
@@ -566,12 +559,6 @@ class SyncService {
             }
         }
         await _db.deleteSyncQueueEntry(entryId);
-      }
-
-      // Push all xp_events (bulk push like tasks — not queue-based)
-      final xpEvents = await _db.getXpEventsForSync();
-      if (xpEvents.isNotEmpty) {
-        await _firestore.pushXpEvents(uid, idToken, xpEvents);
       }
 
       // Push Today's 5 state (+ deadline suppressions so cross-device removals stick)
@@ -865,31 +852,45 @@ class SyncService {
             (e) => debugLog('Tombstone cleanup (dependencies) failed: $e'));
         _firestore.cleanupTombstones(uid, idToken, 'schedules', tombstoneMaxAge).catchError(
             (e) => debugLog('Tombstone cleanup (schedules) failed: $e'));
+        _firestore.cleanupTombstones(uid, idToken, 'xp_events', tombstoneMaxAge).catchError(
+            (e) => debugLog('Tombstone cleanup (xp_events) failed: $e'));
       }
 
-      // Pull xp_events
-      final remoteXpEvents = await _firestore.pullAllXpEvents(uid, idToken);
-      for (final xpEvent in remoteXpEvents) {
-        await _db.upsertXpEventFromRemote(
-          syncId: xpEvent['sync_id'] as String,
-          eventType: xpEvent['event_type'] as String,
-          xpAmount: xpEvent['xp_amount'] as int,
-          taskId: null, // task_id resolved locally via task_sync_id if needed
-          date: xpEvent['date'] as String,
-          createdAt: xpEvent['created_at'] as int,
-        );
-      }
-      // Remove local xp_events not in remote (skip pending push)
-      final remoteXpEventIds = remoteXpEvents
-          .map((e) => e['sync_id'] as String)
-          .toSet();
+      // Pull xp_events: delta when possible, full on first sync. Same pattern
+      // as schedules — a removal is skipped while a local add is still queued,
+      // so XP earned since the last push isn't wiped by a pull that beats it.
       final pendingXpEventKeys = await _db.getPendingSyncAddKeys('xp_event');
-      final localXpEventIds = await _db.getAllXpEventSyncIds();
-      for (final localSyncId in localXpEventIds) {
-        if (!remoteXpEventIds.contains(localSyncId) &&
-            !pendingXpEventKeys.contains(localSyncId)) {
-          await _db.deleteXpEventBySyncId(localSyncId);
-          anyChange = true;
+      if (lastSyncAt != null) {
+        final recentXpEvents =
+            await _firestore.pullXpEventsSince(uid, idToken, lastSyncAt);
+        for (final xpEvent in recentXpEvents) {
+          final syncId = xpEvent['sync_id'] as String;
+          if (xpEvent['deleted'] == true) {
+            if (!pendingXpEventKeys.contains(syncId)) {
+              final removed = await _db.deleteXpEventBySyncId(syncId);
+              if (removed) anyChange = true;
+            }
+          } else if (await _upsertRemoteXpEvent(xpEvent)) {
+            anyChange = true;
+          }
+        }
+      } else {
+        final remoteXpEvents = (await _firestore.pullAllXpEvents(uid, idToken))
+            .where((e) => e['deleted'] != true)
+            .toList();
+        for (final xpEvent in remoteXpEvents) {
+          if (await _upsertRemoteXpEvent(xpEvent)) anyChange = true;
+        }
+        // Remove local xp_events not in remote (skip pending push)
+        final remoteXpEventIds =
+            remoteXpEvents.map((e) => e['sync_id'] as String).toSet();
+        final localXpEventIds = await _db.getAllXpEventSyncIds();
+        for (final localSyncId in localXpEventIds) {
+          if (!remoteXpEventIds.contains(localSyncId) &&
+              !pendingXpEventKeys.contains(localSyncId)) {
+            await _db.deleteXpEventBySyncId(localSyncId);
+            anyChange = true;
+          }
         }
       }
 
@@ -966,6 +967,19 @@ class SyncService {
     if (e is FirestoreException) return 'Sync failed — please try again';
     if (e is TimeoutException) return 'Sync timed out — try again later';
     return 'Sync error — try again later';
+  }
+
+  /// Inserts an XP event read from Firestore, if it is new here.
+  /// Returns true if a row was inserted.
+  Future<bool> _upsertRemoteXpEvent(Map<String, dynamic> xpEvent) {
+    return _db.upsertXpEventFromRemote(
+      syncId: xpEvent['sync_id'] as String,
+      eventType: xpEvent['event_type'] as String,
+      xpAmount: xpEvent['xp_amount'] as int,
+      taskSyncId: xpEvent['task_sync_id'] as String?,
+      date: xpEvent['date'] as String,
+      createdAt: xpEvent['created_at'] as int,
+    );
   }
 
   /// Get a valid token, refreshing if expired or missing.

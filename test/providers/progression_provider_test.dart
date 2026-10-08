@@ -81,10 +81,9 @@ void main() {
 
     // Mechanism: rank updates when XP crosses threshold
     test('rank updates when crossing threshold', () async {
-      // Award enough XP to reach tier 1 (100 XP) using null taskId (special events)
-      for (var i = 0; i < 5; i++) {
-        await provider.awardXp(XpEventType.todaysFiveComplete, 20);
-      }
+      // Award enough XP to reach tier 1 (100 XP) using null taskId (special
+      // events). One event: repeats of the same event on one day count once.
+      await provider.awardXp(XpEventType.todaysFiveComplete, 100);
       expect(provider.totalXp, 100);
       expect(provider.tierIndex, 1);
     });
@@ -106,7 +105,6 @@ void main() {
         taskId: taskId,
         isInTodaysFive: false,
         isHighPriority: false,
-        isPinned: false,
       );
       expect(provider.totalXp, XpAmounts.taskComplete);
     });
@@ -120,7 +118,6 @@ void main() {
         taskId: taskId,
         isInTodaysFive: true,
         isHighPriority: false,
-        isPinned: false,
       );
       expect(provider.totalXp, XpAmounts.taskComplete + XpAmounts.todaysFiveBonus);
     });
@@ -134,12 +131,10 @@ void main() {
         taskId: taskId,
         isInTodaysFive: true,
         isHighPriority: true,
-        isPinned: true,
       );
       final expected = XpAmounts.taskComplete +
           XpAmounts.todaysFiveBonus +
-          XpAmounts.highPriorityBonus +
-          XpAmounts.pinnedBonus;
+          XpAmounts.highPriorityBonus;
       expect(provider.totalXp, expected);
     });
 
@@ -152,7 +147,6 @@ void main() {
         taskId: taskId,
         isInTodaysFive: false,
         isHighPriority: true,
-        isPinned: false,
       );
       expect(provider.totalXp, XpAmounts.taskStarted + XpAmounts.highPriorityBonus);
     });
@@ -168,7 +162,6 @@ void main() {
         taskId: taskId,
         isInTodaysFive: true,
         isHighPriority: true,
-        isPinned: true,
       );
       final before = provider.totalXp;
       expect(before, greaterThan(0));

@@ -2519,6 +2519,7 @@ class DatabaseHelper {
     final db = await database;
     await db.transaction((txn) async {
       await txn.delete('sync_queue');
+      await txn.delete('xp_events');
       await txn.delete('todays_five_state');
       await txn.delete('todays_five_deadline_suppressed');
       await txn.delete('task_schedules');
@@ -2582,13 +2583,14 @@ class DatabaseHelper {
   /// - 'relationship': 'parentSyncId:childSyncId' (key1:key2)
   /// - 'dependency': 'taskSyncId:dependsOnSyncId' (key1:key2)
   /// - 'schedule': 'scheduleSyncId' (key1 only)
+  /// - 'xp_event': 'xpEventSyncId' (key1 only)
   Future<Set<String>> getPendingSyncAddKeys(String entityType) async {
     final db = await database;
     final rows = await db.query('sync_queue',
       columns: ['key1', 'key2'],
       where: "entity_type = ? AND action = 'add'",
       whereArgs: [entityType]);
-    if (entityType == 'schedule') {
+    if (entityType == 'schedule' || entityType == 'xp_event') {
       return rows.map((r) => r['key1'] as String).toSet();
     }
     return rows.map((r) => '${r['key1']}:${r['key2']}').toSet();
@@ -3620,7 +3622,11 @@ class DatabaseHelper {
 
   // --- XP / Progression methods ---
 
-  /// Inserts an XP event. Returns the inserted row ID.
+  /// Inserts an XP event and queues it for sync. Returns the row ID.
+  ///
+  /// There is at most one event per event type, task and date: an event that
+  /// already exists is left alone and its row ID is returned. So the "all
+  /// Today's 5 complete" bonus counts once a day however often it is awarded.
   Future<int> insertXpEvent({
     required String eventType,
     required int xpAmount,
@@ -3628,36 +3634,95 @@ class DatabaseHelper {
     required String date,
   }) async {
     final db = await database;
-    return db.insert('xp_events', {
+    return db.transaction(
+        (txn) => _insertXpEventTxn(txn, eventType, xpAmount, taskId, date));
+  }
+
+  Future<int> _insertXpEventTxn(Transaction txn, String eventType, int xpAmount,
+      int? taskId, String date) async {
+    final syncId = await _xpEventSyncId(txn, eventType, taskId, date);
+    final existing = await txn.query('xp_events',
+        columns: ['id'], where: 'sync_id = ?', whereArgs: [syncId]);
+    if (existing.isNotEmpty) return existing.first['id'] as int;
+    final rowId = await txn.insert('xp_events', {
       'event_type': eventType,
       'xp_amount': xpAmount,
       'task_id': taskId,
       'date': date,
       'created_at': DateTime.now().millisecondsSinceEpoch,
-      'sync_id': _uuid.v4(),
+      'sync_id': syncId,
     });
+    // An undo followed by a redo reuses the sync id, so drop the pending
+    // removal from the undo before queueing the add.
+    await txn.delete('sync_queue',
+        where: "entity_type = 'xp_event' AND action = 'remove' AND key1 = ?",
+        whereArgs: [syncId]);
+    await txn.insert('sync_queue', {
+      'entity_type': 'xp_event', 'action': 'add', 'key1': syncId, 'key2': '',
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    return rowId;
+  }
+
+  /// Sync id for the XP event of [eventType] on [taskId] and [date], e.g. a
+  /// task with sync id `abc` marked "Done today" on 2026-10-07 always gets
+  /// `uuidv5("worked_on|abc|2026-10-07")`.
+  ///
+  /// Every device derives the same id for the same event, so two devices that
+  /// backfill the same history, or award the same action, write one Firestore
+  /// document instead of two.
+  Future<String> _xpEventSyncId(
+      DatabaseExecutor ex, String eventType, int? taskId, String date) async {
+    var taskKey = '';
+    if (taskId != null) {
+      final rows = await ex.query('tasks',
+          columns: ['sync_id'], where: 'id = ?', whereArgs: [taskId]);
+      taskKey = (rows.isEmpty ? null : rows.first['sync_id'] as String?) ??
+          'local-$taskId';
+    }
+    return _uuid.v5(Namespace.url.value, '$eventType|$taskKey|$date');
   }
 
   /// Deletes XP event(s) for a specific task, event type, and date.
   /// Used for undo (e.g. uncompleting a task revokes the XP).
-  Future<int> deleteXpEventsForTask(int taskId, String eventType, String date) async {
-    final db = await database;
-    return db.delete('xp_events',
-      where: 'task_id = ? AND event_type = ? AND date = ?',
-      whereArgs: [taskId, eventType, date]);
+  Future<int> deleteXpEventsForTask(int taskId, String eventType, String date) {
+    return _deleteXpEventsAndQueue(
+        'task_id = ? AND event_type = ? AND date = ?',
+        [taskId, eventType, date]);
   }
 
   /// Deletes all XP bonus events for a task on a given date (all bonus types).
-  Future<int> deleteXpBonusesForTask(int taskId, String date) async {
+  Future<int> deleteXpBonusesForTask(int taskId, String date) {
+    return _deleteXpEventsAndQueue(
+        'task_id = ? AND date = ? AND event_type IN (?, ?)', [
+      taskId, date,
+      XpEventType.todaysFiveBonus,
+      XpEventType.highPriorityBonus,
+    ]);
+  }
+
+  /// Deletes the XP events matching [where] and queues a removal for each, so
+  /// the push tombstones them in Firestore and other devices drop them too.
+  Future<int> _deleteXpEventsAndQueue(String where, List<Object?> args) async {
     final db = await database;
-    return db.delete('xp_events',
-      where: 'task_id = ? AND date = ? AND event_type IN (?, ?, ?)',
-      whereArgs: [
-        taskId, date,
-        XpEventType.todaysFiveBonus,
-        XpEventType.highPriorityBonus,
-        XpEventType.pinnedBonus,
-      ]);
+    return db.transaction((txn) async {
+      final rows = await txn.query('xp_events',
+          columns: ['sync_id'], where: where, whereArgs: args);
+      final deleted = await txn.delete('xp_events', where: where, whereArgs: args);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final row in rows) {
+        final syncId = row['sync_id'] as String?;
+        if (syncId == null) continue;
+        await txn.delete('sync_queue',
+            where: "entity_type = 'xp_event' AND action = 'add' AND key1 = ?",
+            whereArgs: [syncId]);
+        await txn.insert('sync_queue', {
+          'entity_type': 'xp_event', 'action': 'remove', 'key1': syncId,
+          'key2': '', 'created_at': now,
+        });
+      }
+      return deleted;
+    });
   }
 
   /// Returns total XP earned (all time).
@@ -3800,18 +3865,16 @@ class DatabaseHelper {
   }
 
   /// Backfills XP events from historical task and Today's 5 data.
-  /// Idempotent: clears all existing xp_events first, then re-inserts.
-  /// Should be called inside a transaction or guarded by a SharedPreferences flag.
+  ///
+  /// Safe to run more than once and on more than one device: every event gets
+  /// the same sync id that [insertXpEvent] would give it (see [_xpEventSyncId]),
+  /// so an event that already exists — earned live, pulled from another
+  /// device, or backfilled before — is skipped instead of duplicated.
   Future<void> backfillXpEvents() async {
     final db = await database;
     await db.transaction((txn) async {
-      // Clear any partial backfill
-      await txn.delete('xp_events');
-
-      final now = DateTime.now().millisecondsSinceEpoch;
-
       // 1. Task completions → task_complete (20 XP each)
-      //    Cross-reference todays_five_state to award Today's 5 and pinned bonuses.
+      //    Cross-reference todays_five_state to award the Today's 5 bonus.
       final completedTasks = await txn.rawQuery('''
         SELECT id, completed_at, priority FROM tasks WHERE completed_at IS NOT NULL
       ''');
@@ -3821,55 +3884,25 @@ class DatabaseHelper {
         final date = _dateKeyFromEpoch(completedAt);
         final priority = (task['priority'] as int?) ?? 0;
 
-        await txn.insert('xp_events', {
-          'event_type': XpEventType.taskComplete,
-          'xp_amount': XpAmounts.taskComplete,
-          'task_id': taskId,
-          'date': date,
-          'created_at': now,
-          'sync_id': _uuid.v4(),
-        });
+        await _insertXpEventTxn(txn, XpEventType.taskComplete,
+            XpAmounts.taskComplete, taskId, date);
 
         // High priority bonus
         if (priority == 1) {
-          await txn.insert('xp_events', {
-            'event_type': XpEventType.highPriorityBonus,
-            'xp_amount': XpAmounts.highPriorityBonus,
-            'task_id': taskId,
-            'date': date,
-            'created_at': now,
-            'sync_id': _uuid.v4(),
-          });
+          await _insertXpEventTxn(txn, XpEventType.highPriorityBonus,
+              XpAmounts.highPriorityBonus, taskId, date);
         }
 
         // Check if this task was in Today's 5 on its completion date
         // Bug fix: previously completions from Today's 5 didn't get bonus XP
         // during backfill. Now we cross-reference todays_five_state for accuracy.
         final todaysFiveCheck = await txn.rawQuery('''
-          SELECT is_pinned FROM todays_five_state
+          SELECT 1 FROM todays_five_state
           WHERE task_id = ? AND date = ?
         ''', [taskId, date]);
         if (todaysFiveCheck.isNotEmpty) {
-          await txn.insert('xp_events', {
-            'event_type': XpEventType.todaysFiveBonus,
-            'xp_amount': XpAmounts.todaysFiveBonus,
-            'task_id': taskId,
-            'date': date,
-            'created_at': now,
-            'sync_id': _uuid.v4(),
-          });
-          // Pinned bonus
-          final wasPinned = (todaysFiveCheck.first['is_pinned'] as int?) == 1;
-          if (wasPinned) {
-            await txn.insert('xp_events', {
-              'event_type': XpEventType.pinnedBonus,
-              'xp_amount': XpAmounts.pinnedBonus,
-              'task_id': taskId,
-              'date': date,
-              'created_at': now,
-              'sync_id': _uuid.v4(),
-            });
-          }
+          await _insertXpEventTxn(txn, XpEventType.todaysFiveBonus,
+              XpAmounts.todaysFiveBonus, taskId, date);
         }
       }
 
@@ -3880,16 +3913,9 @@ class DatabaseHelper {
       ''');
       for (final task in startedTasks) {
         final startedAt = task['started_at'] as int;
-        final date = _dateKeyFromEpoch(startedAt);
-
-        await txn.insert('xp_events', {
-          'event_type': XpEventType.taskStarted,
-          'xp_amount': XpAmounts.taskStarted,
-          'task_id': task['id'] as int,
-          'date': date,
-          'created_at': now,
-          'sync_id': _uuid.v4(),
-        });
+        await _insertXpEventTxn(txn, XpEventType.taskStarted,
+            XpAmounts.taskStarted, task['id'] as int,
+            _dateKeyFromEpoch(startedAt));
       }
 
       // 3. Today's 5 worked-on → worked_on (10 XP each)
@@ -3899,43 +3925,11 @@ class DatabaseHelper {
       for (final row in workedOnRows) {
         final taskId = row['task_id'] as int;
         final date = row['date'] as String;
-
-        // Check if task was also in a pinned slot
-        final pinnedCheck = await txn.rawQuery('''
-          SELECT is_pinned FROM todays_five_state
-          WHERE task_id = ? AND date = ? AND is_pinned = 1
-        ''', [taskId, date]);
-
-        await txn.insert('xp_events', {
-          'event_type': XpEventType.workedOn,
-          'xp_amount': XpAmounts.workedOn,
-          'task_id': taskId,
-          'date': date,
-          'created_at': now,
-          'sync_id': _uuid.v4(),
-        });
-
+        await _insertXpEventTxn(
+            txn, XpEventType.workedOn, XpAmounts.workedOn, taskId, date);
         // Today's 5 bonus (it was in Today's 5 since it's in todays_five_state)
-        await txn.insert('xp_events', {
-          'event_type': XpEventType.todaysFiveBonus,
-          'xp_amount': XpAmounts.todaysFiveBonus,
-          'task_id': taskId,
-          'date': date,
-          'created_at': now,
-          'sync_id': _uuid.v4(),
-        });
-
-        // Pinned bonus
-        if (pinnedCheck.isNotEmpty) {
-          await txn.insert('xp_events', {
-            'event_type': XpEventType.pinnedBonus,
-            'xp_amount': XpAmounts.pinnedBonus,
-            'task_id': taskId,
-            'date': date,
-            'created_at': now,
-            'sync_id': _uuid.v4(),
-          });
-        }
+        await _insertXpEventTxn(txn, XpEventType.todaysFiveBonus,
+            XpAmounts.todaysFiveBonus, taskId, date);
       }
 
       // 4. Today's 5 all-complete days → todays_five_complete (30 XP each)
@@ -3948,14 +3942,8 @@ class DatabaseHelper {
           AND COUNT(*) = SUM(CASE WHEN is_completed = 1 OR is_worked_on = 1 THEN 1 ELSE 0 END)
       ''');
       for (final row in allCompleteDays) {
-        await txn.insert('xp_events', {
-          'event_type': XpEventType.todaysFiveComplete,
-          'xp_amount': XpAmounts.allTodaysFiveComplete,
-          'task_id': null,
-          'date': row['date'] as String,
-          'created_at': now,
-          'sync_id': _uuid.v4(),
-        });
+        await _insertXpEventTxn(txn, XpEventType.todaysFiveComplete,
+            XpAmounts.allTodaysFiveComplete, null, row['date'] as String);
       }
     });
   }
@@ -3972,27 +3960,35 @@ class DatabaseHelper {
   }
 
   /// Upserts an XP event from Firestore (pull). Matches on sync_id.
-  Future<void> upsertXpEventFromRemote({
+  /// [taskSyncId] is resolved to the local task, so an undo on this device
+  /// can find XP another device awarded. Returns true if a row was inserted.
+  Future<bool> upsertXpEventFromRemote({
     required String syncId,
     required String eventType,
     required int xpAmount,
-    int? taskId,
+    String? taskSyncId,
     required String date,
     required int createdAt,
   }) async {
     final db = await database;
     final existing = await db.query('xp_events',
       where: 'sync_id = ?', whereArgs: [syncId]);
-    if (existing.isEmpty) {
-      await db.insert('xp_events', {
-        'event_type': eventType,
-        'xp_amount': xpAmount,
-        'task_id': taskId,
-        'date': date,
-        'created_at': createdAt,
-        'sync_id': syncId,
-      });
+    if (existing.isNotEmpty) return false;
+    int? taskId;
+    if (taskSyncId != null) {
+      final rows = await db.query('tasks',
+          columns: ['id'], where: 'sync_id = ?', whereArgs: [taskSyncId]);
+      if (rows.isNotEmpty) taskId = rows.first['id'] as int;
     }
+    await db.insert('xp_events', {
+      'event_type': eventType,
+      'xp_amount': xpAmount,
+      'task_id': taskId,
+      'date': date,
+      'created_at': createdAt,
+      'sync_id': syncId,
+    });
+    return true;
   }
 
   /// Deletes all XP events (used by replaceLocalWithCloud).
@@ -4023,9 +4019,13 @@ class DatabaseHelper {
   }
 
   /// Deletes an XP event by sync_id (used during pull reconciliation).
-  Future<void> deleteXpEventBySyncId(String syncId) async {
+  /// Queues nothing: the removal came from the cloud. Returns true if a row
+  /// was deleted.
+  Future<bool> deleteXpEventBySyncId(String syncId) async {
     final db = await database;
-    await db.delete('xp_events', where: 'sync_id = ?', whereArgs: [syncId]);
+    final deleted = await db.delete('xp_events',
+        where: 'sync_id = ?', whereArgs: [syncId]);
+    return deleted > 0;
   }
 
   /// Returns YYYY-MM-DD date key from epoch milliseconds.

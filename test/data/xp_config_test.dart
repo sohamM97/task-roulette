@@ -112,7 +112,6 @@ void main() {
       expect(XpAmounts.taskStarted, greaterThan(0));
       expect(XpAmounts.todaysFiveBonus, greaterThan(0));
       expect(XpAmounts.highPriorityBonus, greaterThan(0));
-      expect(XpAmounts.pinnedBonus, greaterThan(0));
       expect(XpAmounts.allTodaysFiveComplete, greaterThan(0));
       expect(XpAmounts.streakBonus, greaterThan(0));
     });

@@ -122,15 +122,14 @@ class ProgressionProvider extends ChangeNotifier {
 
   /// Awards base XP plus any applicable bonuses for a task action.
   ///
-  /// Checks if the task is in Today's 5, high priority, or pinned,
-  /// and awards bonus XP accordingly.
+  /// Checks if the task is in Today's 5 or high priority, and awards bonus XP
+  /// accordingly.
   Future<void> awardXpWithBonuses({
     required String eventType,
     required int baseXp,
     required int taskId,
     required bool isInTodaysFive,
     required bool isHighPriority,
-    required bool isPinned,
   }) async {
     final date = _todayDateKey();
 
@@ -155,14 +154,6 @@ class ProgressionProvider extends ChangeNotifier {
       await _db.insertXpEvent(
         eventType: XpEventType.highPriorityBonus,
         xpAmount: XpAmounts.highPriorityBonus,
-        taskId: taskId,
-        date: date,
-      );
-    }
-    if (isPinned) {
-      await _db.insertXpEvent(
-        eventType: XpEventType.pinnedBonus,
-        xpAmount: XpAmounts.pinnedBonus,
         taskId: taskId,
         date: date,
       );

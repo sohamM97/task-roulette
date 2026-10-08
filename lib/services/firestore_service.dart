@@ -562,6 +562,10 @@ class FirestoreService {
     List<Map<String, dynamic>> xpEvents,
   ) async {
     if (xpEvents.isEmpty) return;
+    // updated_at lets other devices find this event in a delta pull. The
+    // whole document is replaced, which also clears the deleted_at of an
+    // event that was revoked and then awarded again.
+    final now = DateTime.now().millisecondsSinceEpoch;
     for (var i = 0; i < xpEvents.length; i += 500) {
       final batch = xpEvents.skip(i).take(500).toList();
       final writes = batch.map((e) {
@@ -571,6 +575,7 @@ class FirestoreService {
           'xp_amount': {'integerValue': (e['xp_amount'] as int).toString()},
           'date': {'stringValue': e['date'] as String},
           'created_at': {'integerValue': (e['created_at'] as int).toString()},
+          'updated_at': {'integerValue': now.toString()},
         };
         if (e['task_sync_id'] != null) {
           fields['task_sync_id'] = {'stringValue': e['task_sync_id'] as String};
@@ -597,23 +602,83 @@ class FirestoreService {
     }
   }
 
-  /// Deletes an xp_event document from Firestore.
+  /// Soft-deletes an xp_event: sets deleted_at so other devices see the
+  /// removal in their delta pull. A hard delete would leave nothing for a
+  /// delta pull to find.
   Future<void> deleteXpEvent(
     String uid,
     String idToken,
     String xpEventSyncId,
   ) async {
-    final url = Uri.parse('${_xpEventsPath(uid)}/$xpEventSyncId');
-    final future = _client != null
-        ? _client.delete(url, headers: _headers(idToken))
-        : http.delete(url, headers: _headers(idToken));
-    final response = await future.timeout(_httpTimeout);
-    if (response.statusCode != 200 && response.statusCode != 404) {
-      throw FirestoreException('Delete xp_event failed: ${response.statusCode} ${response.body}');
-    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    // Relative path — see deleteRelationship for why a full URL here is a bug.
+    await _softDelete('users/$uid/xp_events/$xpEventSyncId', idToken, {
+      'updated_at': {'integerValue': now.toString()},
+      'deleted_at': {'integerValue': now.toString()},
+    });
   }
 
-  /// Pulls all xp_events from Firestore.
+  /// Pulls xp_events updated since [lastSyncAt], tombstones included.
+  /// Each result has a `deleted` flag; tombstones carry only `sync_id`.
+  Future<List<Map<String, dynamic>>> pullXpEventsSince(
+    String uid,
+    String idToken,
+    int lastSyncAt,
+  ) async {
+    final queryUrl = Uri.parse(
+      'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/users/$uid:runQuery',
+    );
+    final response = await _post(
+      queryUrl,
+      headers: _headers(idToken),
+      body: json.encode({
+        'structuredQuery': {
+          'from': [{'collectionId': 'xp_events'}],
+          'where': {
+            'fieldFilter': {
+              'field': {'fieldPath': 'updated_at'},
+              'op': 'GREATER_THAN',
+              'value': {'integerValue': lastSyncAt.toString()},
+            },
+          },
+        },
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw FirestoreException('Query xp_events failed: ${response.statusCode}');
+    }
+    final decoded = json.decode(response.body);
+    if (decoded is! List) return [];
+    final results = <Map<String, dynamic>>[];
+    for (final result in decoded) {
+      final doc = (result as Map<String, dynamic>)['document'] as Map<String, dynamic>?;
+      if (doc == null) continue;
+      final fields = doc['fields'] as Map<String, dynamic>?;
+      if (fields == null) continue;
+      final syncId = (doc['name'] as String).split('/').last;
+      if (_intFieldNullable(fields, 'deleted_at') != null) {
+        results.add({'sync_id': syncId, 'deleted': true});
+        continue;
+      }
+      results.add(_xpEventFromFields(syncId, fields));
+    }
+    return results;
+  }
+
+  Map<String, dynamic> _xpEventFromFields(
+      String syncId, Map<String, dynamic> fields) {
+    return {
+      'sync_id': syncId,
+      'event_type': _stringField(fields, 'event_type', maxLength: _maxTypeFieldLen) ?? '',
+      'xp_amount': _intField(fields, 'xp_amount'),
+      'task_sync_id': _stringField(fields, 'task_sync_id', maxLength: _maxSyncIdLen),
+      'date': _stringField(fields, 'date', maxLength: _maxTypeFieldLen) ?? '',
+      'created_at': _intField(fields, 'created_at'),
+      'deleted': false,
+    };
+  }
+
+  /// Pulls all live (not tombstoned) xp_events from Firestore.
   Future<List<Map<String, dynamic>>> pullAllXpEvents(
     String uid,
     String idToken,
@@ -632,16 +697,11 @@ class FirestoreService {
       for (final doc in docs) {
         final fields = (doc as Map<String, dynamic>)['fields'] as Map<String, dynamic>?;
         if (fields == null) continue;
+        // Skip tombstoned docs — full pull only includes live data
+        if (_intFieldNullable(fields, 'deleted_at') != null) continue;
         final docName = doc['name'] as String;
         final syncId = docName.split('/').last;
-        results.add({
-          'sync_id': syncId,
-          'event_type': _stringField(fields, 'event_type', maxLength: _maxTypeFieldLen) ?? '',
-          'xp_amount': _intField(fields, 'xp_amount'),
-          'task_sync_id': _stringField(fields, 'task_sync_id', maxLength: _maxSyncIdLen),
-          'date': _stringField(fields, 'date', maxLength: _maxTypeFieldLen) ?? '',
-          'created_at': _intField(fields, 'created_at'),
-        });
+        results.add(_xpEventFromFields(syncId, fields));
       }
       pageToken = body['nextPageToken'] as String?;
     } while (pageToken != null);

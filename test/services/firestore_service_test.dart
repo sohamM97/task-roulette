@@ -1417,6 +1417,92 @@ void main() {
     });
   });
 
+  group('xp_events — tombstones and delta pull', () {
+    test('deleteXpEvent soft-deletes with deleted_at and updated_at', () async {
+      Map<String, dynamic>? capturedWrite;
+      final mockClient = MockClient((request) async {
+        if (request.url.toString().contains(':commit')) {
+          final body = json.decode(request.body) as Map<String, dynamic>;
+          capturedWrite = (body['writes'] as List)[0] as Map<String, dynamic>;
+        }
+        return http.Response('{}', 200);
+      });
+
+      await FirestoreService(client: mockClient)
+          .deleteXpEvent('u', 'token', 'xp-abc');
+
+      final update = capturedWrite!['update'] as Map<String, dynamic>;
+      expect(update['name'], endsWith('/documents/users/u/xp_events/xp-abc'));
+      final fields = update['fields'] as Map<String, dynamic>;
+      expect(fields.containsKey('deleted_at'), isTrue);
+      expect(fields.containsKey('updated_at'), isTrue);
+    });
+
+    test('pushXpEvents stamps updated_at so delta pulls find the event',
+        () async {
+      Map<String, dynamic>? capturedFields;
+      final mockClient = MockClient((request) async {
+        final body = json.decode(request.body) as Map<String, dynamic>;
+        final update = ((body['writes'] as List)[0] as Map)['update'] as Map;
+        capturedFields = update['fields'] as Map<String, dynamic>;
+        return http.Response('{}', 200);
+      });
+
+      await FirestoreService(client: mockClient).pushXpEvents('u', 'token', [
+        {
+          'sync_id': 'xp-1',
+          'event_type': 'worked_on',
+          'xp_amount': 10,
+          'date': '2026-10-07',
+          'created_at': 1,
+          'task_sync_id': null,
+        },
+      ]);
+
+      expect(capturedFields!.containsKey('updated_at'), isTrue);
+      expect(capturedFields!.containsKey('deleted_at'), isFalse);
+    });
+
+    test('pullXpEventsSince returns live events and tombstones', () async {
+      final mockClient = MockClient((request) async {
+        expect(request.url.toString(), contains(':runQuery'));
+        return http.Response(json.encode([
+          {
+            'document': {
+              'name': 'projects/p/databases/(default)/documents/users/u/xp_events/live',
+              'fields': {
+                'event_type': {'stringValue': 'worked_on'},
+                'xp_amount': {'integerValue': '10'},
+                'date': {'stringValue': '2026-10-07'},
+                'created_at': {'integerValue': '1'},
+                'updated_at': {'integerValue': '2'},
+                'task_sync_id': {'stringValue': 't1'},
+              },
+            },
+          },
+          {
+            'document': {
+              'name': 'projects/p/databases/(default)/documents/users/u/xp_events/dead',
+              'fields': {
+                'updated_at': {'integerValue': '3'},
+                'deleted_at': {'integerValue': '3'},
+              },
+            },
+          },
+        ]), 200);
+      });
+
+      final results = await FirestoreService(client: mockClient)
+          .pullXpEventsSince('u', 'token', 0);
+
+      expect(results, hasLength(2));
+      expect(results[0]['sync_id'], 'live');
+      expect(results[0]['deleted'], isFalse);
+      expect(results[0]['task_sync_id'], 't1');
+      expect(results[1], {'sync_id': 'dead', 'deleted': true});
+    });
+  });
+
   group('cleanupTombstones', () {
     test('queries tombstones with composite filter and deletes them', () async {
       final requests = <http.Request>[];

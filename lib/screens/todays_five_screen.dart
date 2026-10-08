@@ -819,7 +819,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
       taskId: task.id!,
       isInTodaysFive: true,
       isHighPriority: task.priority == 1,
-      isPinned: false, // see _markTaskDone
     );
     if (!mounted) return;
     setState(() {});
@@ -847,9 +846,6 @@ class TodaysFiveScreenState extends State<TodaysFiveScreen>
           taskId: id,
           isInTodaysFive: true,
           isHighPriority: task.priority == 1,
-          // Every Today's 5 member is implicitly pinned, so a pinned bonus
-          // would only repeat the Today's 5 bonus.
-          isPinned: false,
         );
         _maybeAwardAllComplete(progression);
       } else {

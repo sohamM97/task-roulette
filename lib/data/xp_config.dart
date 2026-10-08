@@ -16,7 +16,6 @@ class XpAmounts {
   // Bonus multipliers (additive, stackable)
   static const todaysFiveBonus = 5; // Action on a Today's 5 task
   static const highPriorityBonus = 5; // Action on a priority=1 task
-  static const pinnedBonus = 5; // Action on a pinned Today's 5 task
 
   // Special events
   static const allTodaysFiveComplete = 30; // All Today's 5 done
@@ -37,7 +36,6 @@ class XpEventType {
   // Bonus events (separate rows so they can be individually revoked)
   static const todaysFiveBonus = 'todays_five_bonus';
   static const highPriorityBonus = 'high_priority_bonus';
-  static const pinnedBonus = 'pinned_bonus';
 }
 
 /// The three class paths a user can choose from.

@@ -155,7 +155,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     taskProvider.onMutation = () => syncService.schedulePush();
 
     // Wire up XP callback so progression updates on task actions from All Tasks.
-    // Today's 5 screen handles its own XP awards (it has pinned/Today's 5 context).
+    // Today's 5 screen handles its own XP awards (it has Today's 5 context).
     taskProvider.onXpEarned = (eventType, xpAmount, taskId, {isHighPriority = false}) {
       progressionProvider.awardXpWithBonuses(
         eventType: eventType,
@@ -163,13 +163,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         taskId: taskId ?? 0,
         isInTodaysFive: false, // All Tasks context — never in Today's 5
         isHighPriority: isHighPriority,
-        isPinned: false,
       );
     };
 
     // Wire up data-changed callback so UI refreshes on remote changes
     syncService.onDataChanged = () {
-      if (mounted) taskProvider.refreshCurrentView();
+      if (!mounted) return;
+      taskProvider.refreshCurrentView();
+      // A pull may have brought XP earned or revoked on another device.
+      progressionProvider.refresh();
     };
 
     try {

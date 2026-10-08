@@ -29,7 +29,6 @@ void main() {
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-04-01',
       );
       final total = await db.getTotalXp();
@@ -41,13 +40,11 @@ void main() {
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-04-01',
       );
       await db.insertXpEvent(
         eventType: XpEventType.workedOn,
         xpAmount: 10,
-        taskId: null,
         date: '2026-04-01',
       );
       final total = await db.getTotalXp();
@@ -134,7 +131,7 @@ void main() {
   });
 
   group('deleteXpBonusesForTask', () {
-    // Mechanism: deletes all three bonus types for a task on a date
+    // Mechanism: deletes both bonus types for a task on a date
     test('deletes all bonus types for task on date', () async {
       final taskId = await db.insertTask(Task(name: 'Test'));
       await db.insertXpEvent(
@@ -149,12 +146,6 @@ void main() {
         taskId: taskId,
         date: '2026-04-01',
       );
-      await db.insertXpEvent(
-        eventType: XpEventType.pinnedBonus,
-        xpAmount: 5,
-        taskId: taskId,
-        date: '2026-04-01',
-      );
       // Also a base event that should NOT be deleted
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
@@ -163,7 +154,7 @@ void main() {
         date: '2026-04-01',
       );
       final deleted = await db.deleteXpBonusesForTask(taskId, '2026-04-01');
-      expect(deleted, 3);
+      expect(deleted, 2);
       final total = await db.getTotalXp();
       expect(total, 20); // only base event remains
     });
@@ -176,19 +167,16 @@ void main() {
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-03-30', // Monday
       );
       await db.insertXpEvent(
         eventType: XpEventType.workedOn,
         xpAmount: 10,
-        taskId: null,
         date: '2026-03-30', // Monday again
       );
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-04-02', // Thursday
       );
       final week = await db.getXpForWeek('2026-03-30');
@@ -209,13 +197,11 @@ void main() {
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-03-29', // Sunday before the week
       );
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-04-06', // Monday of next week
       );
       final week = await db.getXpForWeek('2026-03-30');
@@ -238,7 +224,6 @@ void main() {
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: dateKey,
       );
       final streak = await db.getActiveDaysStreak();
@@ -254,8 +239,7 @@ void main() {
         await db.insertXpEvent(
           eventType: XpEventType.taskComplete,
           xpAmount: 20,
-          taskId: null,
-          date: _dateKey(date),
+            date: _dateKey(date),
         );
       }
       final streak = await db.getActiveDaysStreak();
@@ -270,13 +254,11 @@ void main() {
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: _dateKey(today),
       );
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: _dateKey(today.subtract(const Duration(days: 1))),
       );
       // Skip a day, then 4 consecutive days (old best = 4)
@@ -284,8 +266,7 @@ void main() {
         await db.insertXpEvent(
           eventType: XpEventType.taskComplete,
           xpAmount: 20,
-          taskId: null,
-          date: _dateKey(today.subtract(Duration(days: i))),
+            date: _dateKey(today.subtract(Duration(days: i))),
         );
       }
       final streak = await db.getActiveDaysStreak();
@@ -299,7 +280,6 @@ void main() {
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: _dateKey(yesterday),
       );
       final streak = await db.getActiveDaysStreak();
@@ -312,7 +292,6 @@ void main() {
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: _dateKey(twoDaysAgo),
       );
       final streak = await db.getActiveDaysStreak();
@@ -327,19 +306,16 @@ void main() {
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-03-30', // Monday
       );
       await db.insertXpEvent(
         eventType: XpEventType.workedOn,
         xpAmount: 10,
-        taskId: null,
         date: '2026-03-30', // Monday (duplicate day)
       );
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-04-01', // Wednesday
       );
       final count = await db.getWeekActiveDays('2026-03-30');
@@ -359,13 +335,11 @@ void main() {
       await db.insertXpEvent(
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-04-01',
       );
       await db.insertXpEvent(
         eventType: XpEventType.workedOn,
         xpAmount: 10,
-        taskId: null,
         date: '2026-04-01',
       );
       await db.deleteAllXpEvents();
@@ -381,7 +355,6 @@ void main() {
         syncId: 'remote-1',
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-04-01',
         createdAt: 1000,
       );
@@ -395,7 +368,6 @@ void main() {
         syncId: 'remote-1',
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-04-01',
         createdAt: 1000,
       );
@@ -403,7 +375,6 @@ void main() {
         syncId: 'remote-1',
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-04-01',
         createdAt: 2000,
       );
@@ -419,7 +390,6 @@ void main() {
         syncId: 'find-me',
         eventType: XpEventType.workedOn,
         xpAmount: 10,
-        taskId: null,
         date: '2026-04-01',
         createdAt: 1000,
       );
@@ -443,7 +413,6 @@ void main() {
         syncId: 'id-1',
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-04-01',
         createdAt: 1000,
       );
@@ -451,7 +420,6 @@ void main() {
         syncId: 'id-2',
         eventType: XpEventType.workedOn,
         xpAmount: 10,
-        taskId: null,
         date: '2026-04-01',
         createdAt: 1000,
       );
@@ -473,7 +441,6 @@ void main() {
         syncId: 'del-me',
         eventType: XpEventType.taskComplete,
         xpAmount: 20,
-        taskId: null,
         date: '2026-04-01',
         createdAt: 1000,
       );
@@ -527,6 +494,47 @@ void main() {
       await db.backfillXpEvents();
       final total = await db.getTotalXp();
       expect(total, 0);
+    });
+
+    // Regression: each device runs the backfill once. With random sync ids,
+    // two devices backfilling the same history produced different ids for the
+    // same completion, and syncing both copies doubled the XP.
+    test('gives the same completion the same sync id on every run', () async {
+      final taskId = await db.insertTask(Task(name: 'Done', syncId: 'done-1'));
+      await db.completeTask(taskId);
+      await db.backfillXpEvents();
+      final firstRun = await db.getAllXpEventSyncIds();
+      await db.deleteAllXpEvents();
+      await db.backfillXpEvents();
+      expect(await db.getAllXpEventSyncIds(), firstRun);
+    });
+
+    // Regression: the backfill emptied xp_events before re-inserting, which
+    // also deleted XP earned live or pulled from another device.
+    test('keeps XP events it did not create', () async {
+      await db.insertXpEvent(
+        eventType: XpEventType.streakBonus,
+        xpAmount: XpAmounts.streakBonus,
+        date: '2026-10-06',
+      );
+      await db.backfillXpEvents();
+      expect(await db.getTotalXp(), XpAmounts.streakBonus);
+    });
+  });
+
+  group('one event per action per day', () {
+    // Regression: the "all Today's 5 complete" bonus was inserted again every
+    // time a task was marked done once all five were done.
+    test('awarding the all-complete bonus twice on one day counts once',
+        () async {
+      for (var i = 0; i < 2; i++) {
+        await db.insertXpEvent(
+          eventType: XpEventType.todaysFiveComplete,
+          xpAmount: XpAmounts.allTodaysFiveComplete,
+          date: '2026-10-07',
+        );
+      }
+      expect(await db.getTotalXp(), XpAmounts.allTodaysFiveComplete);
     });
   });
 
